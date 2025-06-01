@@ -1,5 +1,3 @@
-
-# ✅ GPT Structured Output 기반 + 실거래 + 모의투자 전환 가능 + DB 기록 + 텔레그램 + 분할매매 + 위험관리 통합본
 import sqlite3
 import os
 import time
@@ -9,21 +7,18 @@ import schedule
 from datetime import datetime
 from dotenv import load_dotenv
 
-# 환경변수 로드
 load_dotenv()
 UPBIT_ACCESS_KEY = os.getenv("UPBIT_ACCESS_KEY")
 UPBIT_SECRET_KEY = os.getenv("UPBIT_SECRET_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-IS_LIVE = os.getenv("IS_LIVE", "false").lower() == "true"
+IS_LIVE = True
 
-# 업비트 로그인
 upbit = pyupbit.Upbit(UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY)
-
-# DB 초기화
 DB_PATH = "trading.db"
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS trading_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,38 +35,45 @@ CREATE TABLE IF NOT EXISTS trading_history (
     coin_price REAL
 )
 """)
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS trading_reflection (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trading_id INTEGER NOT NULL,
+    reflection_date DATETIME NOT NULL,
+    market_condition TEXT NOT NULL,
+    decision_analysis TEXT NOT NULL,
+    improvement_points TEXT NOT NULL,
+    success_rate REAL NOT NULL,
+    learning_points TEXT NOT NULL,
+    FOREIGN KEY (trading_id) REFERENCES trading_history(id)
+)
+""")
 conn.commit()
 
-# 텔레그램 메시지
-def send_telegram(message):
+def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": message})
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
     except Exception as e:
-        print("텔레그램 전송 실패:", e)
+        print("텔레그램 오류:", e)
 
-# 거래 기록
 def record_trade(coin, decision, percentage, confidence_score, reason, reaction, coin_balance, krw_balance, avg_price, coin_price):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("""
-        INSERT INTO trading_history (timestamp, coin, decision, percentage, confidence_score, reason, reaction, coin_balance, krw_balance, avg_buy_price, coin_price)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (timestamp, coin, decision, percentage, confidence_score, reason, reaction, coin_balance, krw_balance, avg_price, coin_price))
+    cursor.execute(
+        "INSERT INTO trading_history (timestamp, coin, decision, percentage, confidence_score, reason, reaction, coin_balance, krw_balance, avg_buy_price, coin_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (timestamp, coin, decision, percentage, confidence_score, reason, reaction, coin_balance, krw_balance, avg_price, coin_price)
+    )
     conn.commit()
 
-# 시그널 생성 (임시 전략)
 def analyze_market(coin):
     return {
         "decision": "buy",
-        "reason": f"{coin} 기술적 상승 신호 + 재무 안정성 및 가치 투자 고려",
-        "confidence_score": 91,
-        "percentage": 35
+        "reason": f"{coin} 기술적 분석 기반 상승 예상",
+        "confidence_score": 84,
+        "percentage": 30
     }
 
-# 자동매매 실행
-COINS = ["BTC", "ETH", "XRP", "SOL"]
-MAX_TRADE_RATIO = 0.7
-
+COINS = ["BTC", "ETH", "XRP"]
 def run_auto_trade():
     for coin in COINS:
         try:
@@ -113,7 +115,6 @@ def run_auto_trade():
         except Exception as e:
             send_telegram(f"❌ [{coin}] 오류 발생: {e}")
 
-# 스케줄 설정
 def run_scheduler():
     schedule.every().day.at("09:00").do(run_auto_trade)
     schedule.every().day.at("15:00").do(run_auto_trade)
@@ -122,6 +123,6 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(10)
 
-# 실행
 if __name__ == "__main__":
     run_scheduler()
+
