@@ -20,8 +20,9 @@ def run():
 if __name__ == "__main__":
     schedule.every().day.at("08:30").do(run)
     schedule.every().day.at("09:00").do(run)
+    schedule.every().day.at("14:30").do(run)  # ✅ 추가된 14:30 실행 시간
     schedule.every().day.at("15:00").do(run)
-    send_telegram("✅ AI 자동매매 스케줄러 시작 (08:30 / 09:00 / 15:00)")
+    send_telegram("✅ AI 자동매매 스케줄러 시작 (08:30 / 09:00 / 14:30 / 15:00)")
     while True:
         schedule.run_pending()
         time.sleep(10)
@@ -149,14 +150,12 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-
 def send_telegram(msg):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
     except Exception as e:
         print("텔레그램 오류:", e)
-
 
 def get_fear_greed_index():
     try:
@@ -166,7 +165,6 @@ def get_fear_greed_index():
     except:
         return 50
 
-
 def fetch_news(coin):
     try:
         url = f"https://serpapi.com/search.json?q={coin}+crypto+news&hl=ko&gl=kr&api_key={os.getenv('SERPAPI_API_KEY')}"
@@ -175,7 +173,6 @@ def fetch_news(coin):
         return [r['title'] for r in results[:3]]
     except:
         return []
-
 
 def evaluate_news(articles):
     prompt = f"다음 뉴스 제목들을 바탕으로 시황을 요약하고 매수/매도/보류 중 하나로 판단해줘:\n{articles}"
@@ -191,7 +188,6 @@ def evaluate_news(articles):
         return response.json()['choices'][0]['message']['content']
     except:
         return "뉴스 평가 실패"
-
 
 def log_trade(coin, signal, coin_balance, krw_balance, avg_price, now_price):
     try:
