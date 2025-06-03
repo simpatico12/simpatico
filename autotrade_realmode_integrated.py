@@ -8,7 +8,6 @@ from utils import send_telegram
 
 COINS = ["BTC", "ETH", "XRP", "SOL", "ADA", "DOGE", "AVAX", "TRX", "DOT", "MATIC"]
 
-
 def run():
     for coin in COINS:
         try:
@@ -18,16 +17,14 @@ def run():
         except Exception as e:
             send_telegram(f"❌ [{coin}] 시스템 오류 발생: {e}")
 
-
 if __name__ == "__main__":
-    schedule.every().day.at("08:30").do(run)  # 매매 30분 전 판단 포함
+    schedule.every().day.at("08:30").do(run)
     schedule.every().day.at("09:00").do(run)
     schedule.every().day.at("15:00").do(run)
     send_telegram("✅ AI 자동매매 스케줄러 시작 (08:30 / 09:00 / 15:00)")
     while True:
         schedule.run_pending()
         time.sleep(10)
-
 
 # core/strategy.py
 
@@ -41,12 +38,10 @@ load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 
-
 def get_news_sentiment(coin):
     articles = fetch_news(coin)
     summary = evaluate_news(articles)
     return summary
-
 
 def strategy_buffett():
     return "hold"
@@ -59,7 +54,6 @@ def strategy_wonyo():
 
 def strategy_jim_rogers():
     return "buy"
-
 
 def analyze_coin(coin):
     sentiment = get_news_sentiment(coin)
@@ -78,21 +72,27 @@ def analyze_coin(coin):
         "reason": f"FG지수:{fg_index} | 뉴스요약:{sentiment}"
     }
 
-
 # core/trade_engine.py
 
 import pyupbit
 import time
 from utils import send_telegram, log_trade
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+UPBIT_ACCESS_KEY = os.getenv("UPBIT_ACCESS_KEY")
+UPBIT_SECRET_KEY = os.getenv("UPBIT_SECRET_KEY")
+upbit = pyupbit.Upbit(UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY)
 
 IS_LIVE = True
 MAX_COIN_RATIO = 0.3
-
+ALLOWED_RATIO = 0.7
 
 def execute_trading_decision(coin, signal):
     ticker = f"KRW-{coin}"
-    balance_krw = pyupbit.get_balance("KRW")
-    balances = pyupbit.get_balances()
+    balance_krw = upbit.get_balance("KRW")
+    balances = upbit.get_balances()
     coin_data = next((b for b in balances if b['currency'] == coin), {})
     coin_balance = float(coin_data.get("balance", 0))
     avg_price = float(coin_data.get("avg_buy_price", 0))
@@ -102,14 +102,22 @@ def execute_trading_decision(coin, signal):
     coin_value_ratio = (coin_balance * now_price) / total_asset if total_asset > 0 else 0
 
     ratio = signal["percentage"] / 100
+
+    if signal["confidence_score"] < 70:
+        send_telegram(f"⛔ 신뢰도 낮음({signal['confidence_score']}%), {coin} 매수 보류")
+        return
+
     if signal["decision"] == "buy" and balance_krw * ratio > 5000:
         if coin_value_ratio > MAX_COIN_RATIO:
             send_telegram(f"🚫 {coin} 보유 비중 초과로 매수 보류")
             return
+        if (balance_krw / total_asset) > ALLOWED_RATIO:
+            send_telegram(f"💡 총 자산 중 70% 초과 사용 방지로 매수 보류")
+            return
         unit = (balance_krw * ratio) / 3
         for i in range(3):
             if IS_LIVE:
-                pyupbit.buy_market_order(ticker, unit)
+                upbit.buy_market_order(ticker, unit)
             send_telegram(f"💸 [{coin}] {i+1}차 분할매수 - {unit:,.0f}원")
             time.sleep(1)
 
@@ -119,24 +127,22 @@ def execute_trading_decision(coin, signal):
             sell_qty = coin_balance * 0.5
             for i in range(2):
                 if IS_LIVE:
-                    pyupbit.sell_market_order(ticker, sell_qty / 2)
+                    upbit.sell_market_order(ticker, sell_qty / 2)
                 send_telegram(f"📈 익절 [{coin}] {i+1}차 매도 - {sell_qty/2:.6f}개")
                 time.sleep(1)
         elif profit_rate <= -0.03:
             if IS_LIVE:
-                pyupbit.sell_market_order(ticker, coin_balance)
+                upbit.sell_market_order(ticker, coin_balance)
             send_telegram(f"🛑 손절 [{coin}] 전체 매도 - {coin_balance:.6f}개")
         else:
             send_telegram(f"⏸️ {coin} 매도 보류 (익절/손절 조건 불충분)")
 
     log_trade(coin, signal, coin_balance, balance_krw, avg_price, now_price)
 
-
 # utils.py
 
 import os
 import requests
-import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -193,7 +199,5 @@ def log_trade(coin, signal, coin_balance, krw_balance, avg_price, now_price):
             f.write(f"[{coin}] {signal['decision']} | 신뢰도:{signal['confidence_score']}% | 코인:{coin_balance:.4f}, 원화:{krw_balance:,.0f}, 평균가:{avg_price:.0f}, 현재가:{now_price:.0f}\n")
     except Exception as e:
         print("로그 저장 실패:", e)
-
-
 
 
