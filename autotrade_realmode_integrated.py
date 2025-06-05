@@ -6,7 +6,7 @@ from core.strategy import analyze_coin
 from core.trade_engine import execute_trading_decision
 from utils import send_telegram
 
-COINS = ["BTC", "ETH", "XRP", "SOL", "ADA", "DOGE", "AVAX", "TRX", "DOT", "MATIC"]
+COINS = ["ETH","XRP","ADA",]
 
 def run():
     for coin in COINS:
