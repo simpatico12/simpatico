@@ -17,7 +17,6 @@ def fetch_all_news(coin):
     news_titles = []
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    # 코인별 검색 키워드 매핑
     coin_keywords = {
         "BTC": ["btc", "bitcoin", "비트코인"],
         "ETH": ["eth", "ethereum", "이더리움"],
@@ -26,7 +25,7 @@ def fetch_all_news(coin):
     keywords = coin_keywords.get(coin.upper(), [coin])
 
     for keyword in keywords:
-        # 네이버 뉴스 (한글)
+        # 1. 네이버
         try:
             url = f"https://search.naver.com/search.naver?where=news&query={keyword}+암호화폐"
             res = requests.get(url, headers=headers)
@@ -36,7 +35,7 @@ def fetch_all_news(coin):
         except Exception as e:
             print("네이버 오류:", e)
 
-        # Google News (영문)
+        # 2. Google News
         try:
             url = f"https://news.google.com/search?q={keyword}+crypto&hl=en-US&gl=US&ceid=US:en"
             res = requests.get(url, headers=headers)
@@ -46,7 +45,7 @@ def fetch_all_news(coin):
         except Exception as e:
             print("Google 오류:", e)
 
-        # CoinDesk
+        # 3. CoinDesk
         try:
             res = requests.get("https://www.coindesk.com/", headers=headers)
             soup = BeautifulSoup(res.text, "html.parser")
@@ -56,7 +55,7 @@ def fetch_all_news(coin):
         except Exception as e:
             print("CoinDesk 오류:", e)
 
-        # Cointelegraph
+        # 4. Cointelegraph
         try:
             res = requests.get("https://cointelegraph.com/", headers=headers)
             soup = BeautifulSoup(res.text, "html.parser")
@@ -66,7 +65,7 @@ def fetch_all_news(coin):
         except Exception as e:
             print("Cointelegraph 오류:", e)
 
-        # Yahoo Finance
+        # 5. Yahoo Finance
         try:
             url = f"https://finance.yahoo.com/quote/{keyword.upper()}-USD/news"
             res = requests.get(url, headers=headers)
@@ -76,7 +75,7 @@ def fetch_all_news(coin):
         except Exception as e:
             print("Yahoo 오류:", e)
 
-        # Binance Blog
+        # 6. Binance Blog
         try:
             res = requests.get("https://www.binance.com/en/blog", headers=headers)
             soup = BeautifulSoup(res.text, "html.parser")
@@ -107,3 +106,12 @@ def evaluate_news(articles):
         return response.json()['choices'][0]['message']['content']
     except:
         return "뉴스 평가 실패"
+
+def send_telegram(msg):
+    try:
+        token = os.getenv("TELEGRAM_TOKEN")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, data={"chat_id": chat_id, "text": msg})
+    except Exception as e:
+        print("📛 텔레그램 전송 오류:", e)
