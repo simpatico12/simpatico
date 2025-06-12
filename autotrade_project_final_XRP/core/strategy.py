@@ -4,50 +4,40 @@ from utils import get_fear_greed_index, fetch_all_news, evaluate_news
 
 load_dotenv()
 
-# 투자자 전략 정의
-def strategy_buffett():
-    return "hold"
+# ✅ 전략 4인방
+def strategy_buffett(): return "hold"
+def strategy_jesse(): return "buy"
+def strategy_wonyo(): return "buy"
+def strategy_jim_rogers(): return "buy"
 
-def strategy_jesse():
-    return "buy"
-
-def strategy_wonyo():
-    return "buy"
-
-def strategy_jim_rogers():
-    return "buy"
-
-# 전체 전략 분석 함수
+# ✅ 분석 메인 함수
 def analyze_coin(coin):
-    # 뉴스 수집 및 평가
+    # 뉴스 가져오기 및 평가
     articles = fetch_all_news(coin)
-    sentiment = evaluate_news(articles)
+    sentiment_summary = evaluate_news(articles)
 
-    # 공포탐욕지수 확인
+    # 공포탐욕지수
     fg_index = get_fear_greed_index()
 
-    # 전략 투표
+    # 전략별 판단
     votes = [
         strategy_buffett(),
         strategy_jesse(),
         strategy_wonyo(),
         strategy_jim_rogers()
     ]
+    majority_decision = max(set(votes), key=votes.count)
 
-    # 다수결 판단
-    result = max(set(votes), key=votes.count)
+    # FG 기준 적용 (기본 70 이하일 때만 매매)
+    decision = majority_decision if fg_index <= 70 else "보류"
 
-    # FG 지수가 70 이하일 때만 매수 고려
-    decision = result if fg_index <= 70 else "보류"
-
-    # 신뢰도 설정
+    # 신뢰도 점수
     confidence = 85 if decision == "buy" else 60
 
-    # 결과 반환
     return {
         "decision": decision,
         "confidence_score": confidence,
         "percentage": 30,
-        "reason": f"FG지수: {fg_index} | 뉴스 평가: {sentiment}"
+        "reason": f"FG지수: {fg_index} | 뉴스요약: {sentiment_summary}"
     }
 
