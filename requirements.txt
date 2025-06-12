@@ -1,7 +1,6 @@
 openai 
 requests
 matplotlib
-Pillow
 fpdf2
 pyupbit
 python-dotenv
@@ -15,3 +14,4 @@ python-telegram-bot
 plotly
 pandas
 numpy
+beautifulsoup4
