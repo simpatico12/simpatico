@@ -11,8 +11,8 @@ UPBIT_SECRET_KEY = os.getenv("UPBIT_SECRET_KEY")
 upbit = pyupbit.Upbit(UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY)
 
 IS_LIVE = True  # 실매매 여부
-MAX_COIN_RATIO = 0.4  # 개별 코인당 최대 비중
-ALLOWED_RATIO = 0.8   # 전체 자산 중 현금 최대 사용 비중
+MAX_COIN_RATIO = 0.4  # 개별 코인당 최대 비중 (40%)
+ALLOWED_RATIO = 0.8   # 전체 자산 중 현금 사용 비중 제한 (80%)
 
 def execute_trading_decision(coin, signal):
     ticker = f"KRW-{coin}"
@@ -23,7 +23,11 @@ def execute_trading_decision(coin, signal):
     avg_price = float(coin_data.get("avg_buy_price", 0))
     now_price = pyupbit.get_current_price(ticker) or 1
 
-    total_asset = balance_krw + (coin_balance * now_price)
+    total_asset = balance_krw + sum(
+        float(b["balance"]) * pyupbit.get_current_price(f"KRW-{b['currency']}")
+        for b in balances if b["currency"] != "KRW"
+    )
+
     coin_value_ratio = (coin_balance * now_price) / total_asset if total_asset > 0 else 0
     ratio = signal["percentage"] / 100
 
@@ -66,4 +70,3 @@ def execute_trading_decision(coin, signal):
 
     # 로그 저장
     log_trade(coin, signal, coin_balance, balance_krw, avg_price, now_price)
-
