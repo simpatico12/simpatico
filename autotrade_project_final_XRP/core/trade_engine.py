@@ -11,7 +11,7 @@ UPBIT_SECRET_KEY = os.getenv("UPBIT_SECRET_KEY")
 upbit = pyupbit.Upbit(UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY)
 
 IS_LIVE = True  # 실매매 여부
-MAX_COIN_RATIO = 0.4  # 개별 코인당 최대 비중
+MAX_COIN_RATIO = 0.5  # 개별 코인당 최대 비중
 ALLOWED_RATIO = 0.9   # 💡 현금 비중 기준 상향 (기존 0.8 → 0.9)
 
 def execute_trading_decision(coin, signal):
