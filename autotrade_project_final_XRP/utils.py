@@ -117,3 +117,13 @@ def evaluate_news(articles):
         return response.json()['choices'][0]['message']['content']
     except:
         return "뉴스 평가 실패"
+def log_trade(coin, signal, coin_balance, krw_balance, avg_price, now_price):
+    try:
+        with open("trade_log.txt", "a", encoding="utf-8") as f:
+            f.write(
+                f"[{coin}] {signal['decision']} | 신뢰도:{signal['confidence_score']}% | "
+                f"코인:{coin_balance:.4f}, 원화:{krw_balance:,.0f}, 평균가:{avg_price:,.0f}, 현재가:{now_price:,.0f}\n"
+            )
+    except Exception as e:
+        print("📛 거래 로그 저장 오류:", e)
+        
