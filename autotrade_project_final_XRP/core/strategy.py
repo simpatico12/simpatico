@@ -30,3 +30,4 @@ def analyze_coin(coin):
         "reason": f"[FG:{fg_index}] | 요약: {summary}"
     }
 
+
