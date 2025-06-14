@@ -6,7 +6,7 @@ from core.strategy import analyze_coin
 from core.trade_engine import execute_trading_decision
 from utils import send_telegram
 
-COINS = ["BTC", "ETH", "XRP"]  # 현재 설정된 3개 코인
+COINS = ["BTC", "ETH",]  # 현재 설정된 2개 코인
 
 def analyze_only():
     for coin in COINS:
