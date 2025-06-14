@@ -23,7 +23,7 @@ def analyze_coin(coin):
     return {
         "decision": decision,
         "confidence_score": confidence,
-        "percentage": 30,
+        "percentage": 20,
         "reason": f"FG지수:{fg_index} | 뉴스:{sentiment}"
     }
 
