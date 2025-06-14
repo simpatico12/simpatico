@@ -10,9 +10,9 @@ UPBIT_ACCESS_KEY = os.getenv("UPBIT_ACCESS_KEY")
 UPBIT_SECRET_KEY = os.getenv("UPBIT_SECRET_KEY")
 upbit = pyupbit.Upbit(UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY)
 
-IS_LIVE = True  # 실매매 여부
-ALLOWED_RATIO = 0.9   # 전체 자산 중 현금 최대 사용 비중
-MAX_COIN_RATIO = 0.55 # 개별 코인당 최대 비중
+IS_LIVE = True
+MAX_COIN_RATIO = 0.45  # 개별 코인당 최대 비중
+ALLOWED_RATIO = 0.9   # 총 자산의 현금 사용 최대 비율
 
 def execute_trading_decision(coin, signal):
     ticker = f"KRW-{coin}"
@@ -25,14 +25,12 @@ def execute_trading_decision(coin, signal):
 
     total_asset = balance_krw + (coin_balance * now_price)
     coin_value_ratio = (coin_balance * now_price) / total_asset if total_asset > 0 else 0
-    ratio = signal["percentage"] / 100
+    ratio = 0.2  # 매수 퍼센트 20%로 낮춤
 
-    # 신뢰도 체크
     if signal["confidence_score"] < 70:
         send_telegram(f"🚫 신뢰도 낮음({signal['confidence_score']}%), {coin} 매수 보류")
         return
 
-    # 매수 판단
     if signal["decision"] == "buy" and balance_krw * ratio > 5000:
         if coin_value_ratio > MAX_COIN_RATIO:
             send_telegram(f"🚫 {coin} 매수 보류 (비중 초과)")
@@ -40,14 +38,13 @@ def execute_trading_decision(coin, signal):
         if (balance_krw / total_asset) > ALLOWED_RATIO:
             send_telegram(f"🚫 현금 비중 초과로 {coin} 매수 보류")
             return
-        unit = (balance_krw * ratio) / 3
+        unit = (balance_krw * ratio) / 3  # 분할매수 단위
         for i in range(3):
             if IS_LIVE:
                 upbit.buy_market_order(ticker, unit)
             send_telegram(f"✅ [{coin}] {i+1}차 분할매수 - {unit:,.0f}원")
             time.sleep(1)
 
-    # 매도 판단
     elif signal["decision"] == "sell" and coin_balance > 0:
         profit_rate = (now_price - avg_price) / avg_price
         if profit_rate >= 0.05:
@@ -64,7 +61,6 @@ def execute_trading_decision(coin, signal):
         else:
             send_telegram(f"⏸️ {coin} 매도 보류 (익절/손절 조건 불충분)")
 
-    # 거래 로그 기록
     log_trade(coin, signal, coin_balance, balance_krw, avg_price, now_price)
 
 
