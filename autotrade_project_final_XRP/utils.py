@@ -23,22 +23,31 @@ def get_fear_greed_index():
     except:
         return 50
 
-def fetch_all_news(coin):
+def fetch_all_news(asset):
     news_titles = []
     headers = {"User-Agent": "Mozilla/5.0"}
-    keywords = {
+    
+    # 자산 종류별 키워드 매핑
+    keywords_map = {
         "XRP": ["XRP", "엑스알피", "리플"],
         "ADA": ["ADA", "카르다노", "에이다"],
-    }.get(coin.upper(), [coin])
+        "7203.T": ["도요타", "トヨタ", "トヨタ自動車"],
+        "6758.T": ["소니", "ソニー"],
+        "AAPL": ["애플", "Apple"],
+        "MSFT": ["마이크로소프트", "Microsoft"]
+    }
+    
+    keywords = keywords_map.get(asset.upper(), [asset])
 
     for kw in keywords:
         try:
-            url = f"https://search.naver.com/search.naver?where=news&query={kw}+암호화폐"
+            url = f"https://search.naver.com/search.naver?where=news&query={kw}"
             res = requests.get(url, headers=headers)
             soup = BeautifulSoup(res.text, "html.parser")
             news_titles += [a.text for a in soup.select(".news_tit")[:2]]
         except:
             continue
+
     return news_titles if news_titles else ["뉴스 없음 (평가 불가)"]
 
 def evaluate_news(articles):
@@ -61,14 +70,18 @@ def evaluate_news(articles):
     except:
         return "뉴스 평가 실패"
 
-def log_trade(coin, signal, coin_balance, krw_balance, avg_price, now_price):
+def log_trade(asset, signal, balance_info, now_price):
     try:
         with open("trade_log.txt", "a", encoding="utf-8") as f:
             f.write(
-                f"[{coin}] {signal['decision']} | 신뢰도:{signal['confidence_score']}% | "
-                f"코인:{coin_balance:.4f}, 원화:{krw_balance:,.0f}, 평균가:{avg_price:,.0f}, 현재가:{now_price:,.0f}\n"
+                f"[{asset}] {signal['decision']} | 신뢰도:{signal['confidence_score']}% | "
+                f"자산잔고:{balance_info.get('asset_balance', 0):,.4f}, "
+                f"현금:{balance_info.get('cash_balance', 0):,.0f}, "
+                f"평균가:{balance_info.get('avg_price', 0):,.0f}, "
+                f"현재가:{now_price:,.0f}\n"
             )
     except Exception as e:
         print("📛 거래 로그 저장 오류:", e)
+
 
         
