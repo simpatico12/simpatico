@@ -27,8 +27,8 @@ def fetch_all_news(coin):
     news_titles = []
     headers = {"User-Agent": "Mozilla/5.0"}
     keywords = {
-        "BTC": ["XRP", "엑스알피", "리플"],
-        "ETH": ["ADA", "카르다노", "에이다"],
+        "XRP": ["XRP", "엑스알피", "리플"],
+        "ADA": ["ADA", "카르다노", "에이다"],
     }.get(coin.upper(), [coin])
 
     for kw in keywords:
