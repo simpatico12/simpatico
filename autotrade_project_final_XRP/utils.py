@@ -32,6 +32,7 @@ def get_fear_greed_index():
         return int(data['data'][0]['value'])
     except Exception as e:
         print(f"❌ FG 지수 가져오기 실패: {e}")
+        send_telegram(f"❌ FG 지수 가져오기 실패: {e}")
         return 50
 
 def fetch_all_news(asset):
@@ -54,12 +55,15 @@ def fetch_all_news(asset):
 
     for kw in keywords:
         try:
-            url = f"https://search.naver.com/search.naver?where=news&query={kw}"
+            # 코인은 암호화폐 키워드 추가
+            query_kw = f"{kw} 암호화폐" if asset.upper() in ["XRP", "ADA"] else kw
+            url = f"https://search.naver.com/search.naver?where=news&query={query_kw}"
             res = requests.get(url, headers=headers)
             soup = BeautifulSoup(res.text, "html.parser")
             news_titles += [a.text for a in soup.select(".news_tit")[:2]]
         except Exception as e:
             print(f"❌ 뉴스 크롤링 실패 ({kw}): {e}")
+            send_telegram(f"❌ 뉴스 크롤링 실패 ({kw})")
             continue
 
     return news_titles if news_titles else ["뉴스 없음 (평가 불가)"]
@@ -71,6 +75,7 @@ def evaluate_news(articles):
 
     if not OPENAI_API_KEY:
         print("❗ OPENAI_API_KEY가 .env에 없습니다.")
+        send_telegram("❗ OpenAI API 키 없음 - 뉴스 평가 실패")
         return "뉴스 평가 실패 (API 키 없음)"
 
     try:
@@ -87,10 +92,12 @@ def evaluate_news(articles):
         )
         if res.status_code != 200:
             print(f"❗ OpenAI 응답 실패 - 코드: {res.status_code}, 응답: {res.text}")
+            send_telegram(f"❌ 뉴스 평가 실패 - OpenAI 응답 코드: {res.status_code}")
             return "뉴스 평가 실패"
         return res.json()['choices'][0]['message']['content']
     except Exception as e:
         print(f"❌ 뉴스 평가 중 예외 발생: {e}")
+        send_telegram(f"❌ 뉴스 평가 예외: {e}")
         return "뉴스 평가 실패"
 
 def log_trade(asset, signal, balance_info, now_price):
@@ -101,10 +108,11 @@ def log_trade(asset, signal, balance_info, now_price):
                 f"자산잔고:{balance_info.get('asset_balance', 0):,.4f}, "
                 f"현금:{balance_info.get('cash_balance', 0):,.0f}, "
                 f"평균가:{balance_info.get('avg_price', 0):,.0f}, "
-                f"현재가:{now_price:,.0f}\n"
+                f"현재가:{now_price:,.0f}, "
+                f"총자산:{balance_info.get('total_asset', 0):,.0f}\n"
             )
     except Exception as e:
         print(f"📛 거래 로그 저장 오류: {e}")
-
+        send_telegram(f"📛 거래 로그 저장 오류: {e}")
 
         
