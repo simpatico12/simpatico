@@ -1,2 +1,22 @@
-schedule
+openai
 requests
+matplotlib
+Pillow
+fpdf2
+pyupbit
+python-dotenv
+selenium
+pydantic
+telegram
+streamlit
+schedule
+python-telegram-bot
+plotly
+pandas
+numpy
+beautifulsoup4       # 뉴스 크롤링용
+lxml                  # 뉴스 파싱용
+yfinance              # 미국 주식 데이터 수집용
+ta                    # 기술적 지표 (RSI, 볼린저밴드 등)
+scikit-learn          # 감성 분석, 간단 ML 판단용
+tqdm                  # 진행 표시 (로깅/백테스트 시)
