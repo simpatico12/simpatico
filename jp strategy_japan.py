@@ -8,7 +8,7 @@ def analyze_japan(stock):
     volume_spike = random.choice([True, False])
 
     reason = f"뉴스 감성: {news_sentiment_score:.2f}, 이치모쿠: {ichimoku_signal}, 거래량 급등: {volume_spike}"
-    
+
     # 조건 종합
     if ichimoku_signal == "buy" and news_sentiment_score > 0.6 and volume_spike:
         decision = "buy"
@@ -20,9 +20,14 @@ def analyze_japan(stock):
         decision = "hold"
         confidence = 60
 
-    return {
+    result = {
         "decision": decision,
         "confidence_score": confidence,
         "percentage": 40,  # 자본의 40% 분할매수
         "reason": reason
     }
+
+    # 판단 결과를 텔레그램으로 전송
+    send_telegram(f"🔎 [일본 {stock}] 판단: {result['decision']} | 신뢰도: {result['confidence_score']}%\n이유: {result['reason']}")
+    
+    return result
