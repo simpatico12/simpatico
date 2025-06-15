@@ -11,8 +11,9 @@ UPBIT_SECRET_KEY = os.getenv("UPBIT_SECRET_KEY")
 upbit = pyupbit.Upbit(UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY)
 
 IS_LIVE = True
-MAX_COIN_RATIO = 0.3
-ALLOWED_RATIO = 0.9
+MAX_COIN_RATIO = 0.3        # 한 코인당 최대 비중
+ALLOWED_COIN_TOTAL_RATIO = 0.9  # 전체 코인 총 비중
+ALLOWED_CASH_RATIO = 0.1    # 최소 현금 비중 유지
 
 def execute_trading_decision(coin, signal):
     ticker = f"KRW-{coin}"
@@ -22,8 +23,34 @@ def execute_trading_decision(coin, signal):
     coin_balance = float(coin_data.get("balance", 0))
     avg_price = float(coin_data.get("avg_buy_price", 0))
     now_price = pyupbit.get_current_price(ticker) or 1
-    total_asset = balance_krw + (coin_balance * now_price)
-    coin_value_ratio = (coin_balance * now_price) / total_asset if total_asset > 0 else 0
+
+    # 총 자산 계산
+    total_asset = balance_krw + sum(
+        float(b["balance"]) * (pyupbit.get_current_price(f'KRW-{b["currency"]}') or 1)
+        for b in balances if b["currency"] != "KRW"
+    )
+
+    # 개별 코인 비중
+    coin_value = coin_balance * now_price
+    coin_value_ratio = coin_value / total_asset if total_asset > 0 else 0
+
+    # 전체 코인 비중
+    total_coin_value = sum(
+        float(b["balance"]) * (pyupbit.get_current_price(f'KRW-{b["currency"]}') or 1)
+        for b in balances if b["currency"] != "KRW"
+    )
+    total_coin_ratio = total_coin_value / total_asset if total_asset > 0 else 0
+
+    # 비중 초과 검사
+    if coin_value_ratio > MAX_COIN_RATIO:
+        send_telegram(f"🚫 {coin} 매수 보류 (개별 비중 초과 {coin_value_ratio:.2%})")
+        return
+    if total_coin_ratio > ALLOWED_COIN_TOTAL_RATIO:
+        send_telegram(f"🚫 {coin} 매수 보류 (전체 코인 비중 초과 {total_coin_ratio:.2%})")
+        return
+    if (balance_krw / total_asset) < ALLOWED_CASH_RATIO:
+        send_telegram(f"🚫 {coin} 매수 보류 (현금 비중 부족)")
+        return
 
     if signal["confidence_score"] < 70:
         send_telegram(f"🚫 신뢰도 낮음({signal['confidence_score']}%), {coin} 매수 보류")
@@ -31,13 +58,6 @@ def execute_trading_decision(coin, signal):
 
     # 매수 로직
     if signal["decision"] == "buy" and balance_krw > 5000:
-        if coin_value_ratio > MAX_COIN_RATIO:
-            send_telegram(f"🚫 {coin} 매수 보류 (비중 초과)")
-            return
-        if (balance_krw / total_asset) > ALLOWED_RATIO:
-            send_telegram(f"🚫 현금 비중 초과로 {coin} 매수 보류")
-            return
-
         for i in range(2):
             unit = total_asset * 0.075
             if IS_LIVE:
@@ -48,8 +68,6 @@ def execute_trading_decision(coin, signal):
     # 매도 로직
     elif signal["decision"] == "sell" and coin_balance > 0:
         profit_rate = (now_price - avg_price) / avg_price
-
-        # 변동성에 따른 익절/손절 조건
         if signal.get("volatility", "low") == "high":
             target_profit = 0.10
             target_loss = -0.05
@@ -71,7 +89,5 @@ def execute_trading_decision(coin, signal):
         else:
             send_telegram(f"⏸️ {coin} 매도 보류 (익절/손절 조건 불충분)")
 
-    # 거래 기록
+    # 거래 로그 기록
     log_trade(coin, signal, coin_balance, balance_krw, avg_price, now_price)
-
-
