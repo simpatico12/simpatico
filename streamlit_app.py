@@ -41,4 +41,3 @@ if not trades_df.empty:
         (pd.to_datetime(trades_df["timestamp"]) <= pd.to_datetime(end_date))
     ]
     st.dataframe(filtered)
-
