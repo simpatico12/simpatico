@@ -87,4 +87,5 @@ def get_price(asset, asset_type):
     else:
         return 100000  # IBKR 연동 필요
 
+
         
