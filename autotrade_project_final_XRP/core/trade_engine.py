@@ -55,18 +55,22 @@ def execute_trade(asset, asset_type, fg, sentiment, rsi, momentum, price_change,
         balances = upbit.get_balances()
         coin_data = next((b for b in balances if b["currency"] == asset), {})
         coin_balance = float(coin_data.get("balance", 0))
-        avg_price = float(coin_data.get("avg_buy_price", now_price))  # 첫 매수 시 현재가 사용
+        avg_price = float(coin_data.get("avg_buy_price", now_price))
 
         total_asset = balance_krw + sum(
             float(b["balance"]) * (pyupbit.get_current_price(f'KRW-{b["currency"]}') or 1)
             for b in balances if b["currency"] != "KRW"
         )
 
+        coin_value = coin_balance * now_price
+        coin_value_ratio = coin_value / total_asset if total_asset > 0 else 0
+        total_coin_value = sum(
+            float(b["balance"]) * (pyupbit.get_current_price(f'KRW-{b["currency"]}') or 1)
+            for b in balances if b["currency"] != "KRW"
+        )
+        total_coin_ratio = total_coin_value / total_asset if total_asset > 0 else 0
+
         if decision == "buy":
-            if (balance_krw / total_asset) < ALLOWED_CASH_RATIO:
-                send_telegram(f"🚫 {asset} 매수 보류 (현금 부족)")
-                return
-            # 2% 하락마다 5% 매수 (최대 3회)
             target_prices = [now_price, now_price * 0.98, now_price * 0.96]
             bought_count = 0
 
@@ -74,6 +78,17 @@ def execute_trade(asset, asset_type, fg, sentiment, rsi, momentum, price_change,
                 while True:
                     current = pyupbit.get_current_price(ticker)
                     if current <= target:
+                        # 비중 체크
+                        if coin_value_ratio > MAX_ASSET_RATIO:
+                            send_telegram(f"🚫 {asset} 매수 중단 (개별 코인 비중 초과)")
+                            return
+                        if total_coin_ratio > ALLOWED_ASSET_TOTAL_RATIO:
+                            send_telegram(f"🚫 {asset} 매수 중단 (전체 코인 비중 초과)")
+                            return
+                        if (balance_krw / total_asset) < ALLOWED_CASH_RATIO:
+                            send_telegram(f"🚫 {asset} 매수 중단 (현금 부족)")
+                            return
+
                         unit = total_asset * 0.05
                         if IS_LIVE:
                             upbit.buy_market_order(ticker, unit)
@@ -84,8 +99,7 @@ def execute_trade(asset, asset_type, fg, sentiment, rsi, momentum, price_change,
                         time.sleep(1)
                         break
                     else:
-                        time.sleep(5)  # 5초 간격으로 가격 확인
-
+                        time.sleep(5)
                     if bought_count >= 3:
                         break
 
@@ -112,3 +126,4 @@ def execute_trade(asset, asset_type, fg, sentiment, rsi, momentum, price_change,
             ibkr_buy(asset, 1000000)
         elif decision == "sell":
             ibkr_sell(asset, 10)
+
