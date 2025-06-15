@@ -1,25 +1,22 @@
 import sqlite3
 import pandas as pd
+import streamlit as st
 
 def get_db_columns(conn, table_name):
     cursor = conn.cursor()
     cursor.execute(f"PRAGMA table_info({table_name})")
     columns = cursor.fetchall()
-    print(f"\n📌 {table_name} 컬럼 정보:")
-    for col in columns:
-        print(f"- {col[1]} ({col[2]})")
     return [col[1] for col in columns]
 
 def load_reflection_history(conn, trading_cols):
-    # 존재하는 컬럼만 선택
+    # 실제 존재하는 컬럼으로 쿼리 작성
     select_cols = ["r.*"]
     for col in ["asset_name", "asset_type", "timestamp"]:
         if col in trading_cols:
             select_cols.append(f"t.{col}")
         else:
-            print(f"⚠️ trading_history 테이블에 {col} 컬럼 없음 → 쿼리에서 제외")
+            st.warning(f"⚠️ trading_history 테이블에 '{col}' 컬럼 없음 → 쿼리에서 제외")
 
-    # 쿼리 생성
     select_clause = ", ".join(select_cols)
     query = f"""
         SELECT {select_clause}
@@ -27,26 +24,48 @@ def load_reflection_history(conn, trading_cols):
         JOIN trading_history t ON r.trading_id = t.id
         ORDER BY r.reflection_date DESC
     """
-    print(f"\n✅ 최종 실행 쿼리:\n{query}")
+
+    st.code(query, language="sql")
     
-    # 쿼리 실행
     df = pd.read_sql_query(query, conn)
     return df
 
-if __name__ == "__main__":
-    conn = sqlite3.connect("trading.db")
-    
-    # 컬럼 정보 확인
-    trading_cols = get_db_columns(conn, "trading_history")
-    _ = get_db_columns(conn, "trading_reflection")
+def main():
+    st.title("📈 AI 코인/미국/일본 자동매매 대시보드")
 
-    # 데이터 로드
+    conn = sqlite3.connect("trading.db")
+
+    # 날짜 필터
+    start_date = st.date_input("시작 날짜", pd.to_datetime("2025-01-01"))
+    end_date = st.date_input("종료 날짜", pd.to_datetime("2025-06-15"))
+
+    # 자산 유형 필터
+    asset_filter = st.multiselect("자산 유형", ["coin", "us", "japan"], default=["coin", "us", "japan"])
+
     try:
+        trading_cols = get_db_columns(conn, "trading_history")
         df = load_reflection_history(conn, trading_cols)
-        print("\n📊 데이터 미리보기:")
-        print(df.head())
+
+        # 필터링
+        if not df.empty:
+            df["reflection_date"] = pd.to_datetime(df["reflection_date"], errors="coerce")
+            df = df[(df["reflection_date"] >= pd.to_datetime(start_date)) & (df["reflection_date"] <= pd.to_datetime(end_date))]
+            if "asset_type" in df.columns:
+                df = df[df["asset_type"].isin(asset_filter)]
+
+            st.subheader("거래 기록")
+            if df.empty:
+                st.warning("선택한 조건에 맞는 거래 기록이 없습니다.")
+            else:
+                st.dataframe(df)
+
+        else:
+            st.warning("데이터가 없습니다.")
+
     except Exception as e:
-        print(f"\n❌ 쿼리 실행 중 에러: {e}")
+        st.error(f"❌ 쿼리 실행 중 에러: {e}")
 
     conn.close()
 
+if __name__ == "__main__":
+    main()
