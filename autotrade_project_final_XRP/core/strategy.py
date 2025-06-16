@@ -1,28 +1,27 @@
-def decision_coin(fg, sentiment, rsi, momentum, price_change, volatility):
-    votes = []
-    
-    # 워렌 버핏
-    if fg > 60 and rsi > 60 and "긍정" in sentiment:
-        votes.append("buy")
-    
-    # 제시 리버모어
-    if momentum == "strong":
-        votes.append("buy")
-    
-    # 워뇨띠
-    if price_change < -0.05:
-        votes.append("buy")
-    
-    # 짐 로저스
-    if fg < 30 and price_change < -0.10:
-        votes.append("buy")
-    
-    # 안정성 필터
-    if volatility <= 0.05:
-        votes.append("buy")
+from utils import get_fear_greed_index, fetch_all_news, evaluate_news
 
-    decision = "buy" if votes.count("buy") >= 3 else "hold"
-    confidence = 40 + votes.count(decision) * 12
-    return decision, confidence, votes
+def strategy_buffett(): return "hold"
+def strategy_jesse(): return "buy"
+def strategy_wonyo(): return "buy"
+def strategy_jim_rogers(): return "buy"
 
+def analyze_coin(coin):
+    fg = get_fear_greed_index()
+    news = fetch_all_news(coin)
+    sentiment = evaluate_news(news)
 
+    votes = [strategy_buffett(), strategy_jesse(), strategy_wonyo(), strategy_jim_rogers()]
+    result = max(set(votes), key=votes.count)
+
+    if fg <= 70 and "부정" not in sentiment:
+        decision = result
+    else:
+        decision = "hold"
+
+    confidence = 85 if decision == "buy" else 80 if decision == "sell" else 60
+
+    return {
+        "decision": decision,
+        "confidence_score": confidence,
+        "reason": f"FG: {fg}, 뉴스: {sentiment}, 전략투표: {votes}"
+    }
