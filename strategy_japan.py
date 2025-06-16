@@ -1,22 +1,26 @@
-def decision_japan(ichimoku, candlestick, volume_spike, turnover, pattern):
-    votes = []
+from utils import fetch_all_news, evaluate_news
 
-    # 혼마 무네히사
-    if ichimoku == "buy" and "강한양봉" in candlestick:
-        votes.append("buy")
+def strategy_honma(): return "buy"
+def strategy_ichimoku(): return "buy"
+def strategy_bnf(): return "buy"
+def strategy_cis(): return "hold"
 
-    # cis
-    if volume_spike:
-        votes.append("buy")
+def analyze_japan(stock):
+    news = fetch_all_news(stock)
+    sentiment = evaluate_news(news)
 
-    # BNF
-    if turnover > 2.0:
-        votes.append("buy")
+    votes = [strategy_honma(), strategy_ichimoku(), strategy_bnf(), strategy_cis()]
+    result = max(set(votes), key=votes.count)
 
-    # 하라 요시유키
-    if pattern == "상승형":
-        votes.append("buy")
+    if "부정" not in sentiment:
+        decision = result
+    else:
+        decision = "sell"
 
-    decision = "buy" if votes.count("buy") >= 2 else "hold"
-    confidence = 40 + votes.count(decision) * 15
-    return decision, confidence, votes
+    confidence = 85 if decision == "buy" else 80 if decision == "sell" else 60
+
+    return {
+        "decision": decision,
+        "confidence_score": confidence,
+        "reason": f"뉴스: {sentiment}, 전략투표: {votes}"
+    }
