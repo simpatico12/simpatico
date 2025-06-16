@@ -1,129 +1,112 @@
 import pyupbit
-import os
 import time
-from dotenv import load_dotenv
-from utils import send_telegram, get_price
-
-load_dotenv()
-UPBIT_ACCESS_KEY = os.getenv("UPBIT_ACCESS_KEY")
-UPBIT_SECRET_KEY = os.getenv("UPBIT_SECRET_KEY")
-upbit = pyupbit.Upbit(UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY)
+from utils import send_telegram, log_trade, get_price, save_trade
+from ib_insync import IB, Stock, MarketOrder
 
 IS_LIVE = True
 
-MAX_ASSET_RATIO = 0.45
-ALLOWED_ASSET_TOTAL_RATIO = 0.9
-ALLOWED_CASH_RATIO = 0.1
+MAX_ASSET_RATIO = {
+    "coin": 0.3,
+    "japan": 0.3,
+    "us": 0.3
+}
+MAX_TOTAL_RATIO = {
+    "coin": 0.9,
+    "japan": 0.9,
+    "us": 0.9
+}
+MIN_CASH_RATIO = 0.1
 
-def ibkr_buy(stock, amount):
-    send_telegram(f"✅ IBKR 매수 실행: {stock}, 금액: {amount:,.0f}")
+ib = IB()
+ib.connect('127.0.0.1', 7497, clientId=1)  # IBKR Gateway에 연결
 
-def ibkr_sell(stock, qty):
-    send_telegram(f"✅ IBKR 매도 실행: {stock}, 수량: {qty:.4f}")
+def ibkr_buy(stock_code, amount):
+    contract = Stock(stock_code, 'SMART', 'JPY' if stock_code.endswith('.T') else 'USD')
+    order = MarketOrder('BUY', amount)
+    ib.placeOrder(contract, order)
+    send_telegram(f"✅ IBKR 매수: {stock_code}, 수량: {amount}")
+
+def ibkr_sell(stock_code, amount):
+    contract = Stock(stock_code, 'SMART', 'JPY' if stock_code.endswith('.T') else 'USD')
+    order = MarketOrder('SELL', amount)
+    ib.placeOrder(contract, order)
+    send_telegram(f"✅ IBKR 매도: {stock_code}, 수량: {amount}")
+
+def check_asset_ratio(asset, asset_type, asset_value, total_asset_value, cash_balance):
+    asset_ratio = asset_value / total_asset_value if total_asset_value > 0 else 0
+    if asset_ratio > MAX_ASSET_RATIO[asset_type]:
+        send_telegram(f"🚫 {asset_type.upper()} {asset} 매수 보류 (개별 비중 초과)")
+        return False
+    cash_ratio = cash_balance / total_asset_value if total_asset_value > 0 else 0
+    if cash_ratio < MIN_CASH_RATIO:
+        send_telegram(f"🚫 {asset_type.upper()} {asset} 매수 보류 (현금 부족)")
+        return False
+    return True
 
 def execute_trade(asset, asset_type, fg, sentiment, rsi, momentum, price_change,
                   ichimoku, candlestick, volume_spike, turnover,
-                  pattern, sector_trend, earnings_near, volatility, upbit):
-
+                  pattern, sector_trend, earnings_near, volatility,
+                  total_asset_value, cash_balance, upbit):
+    
     now_price = get_price(asset, asset_type)
+    asset_value = now_price * 1  # 보유 수량 곱하여 수정 필요 (IBKR API 연동 시)
+
     decision = "hold"
     confidence = 60
 
-    if asset_type == "coin":
-        if momentum == "strong" and fg > 60 and price_change > 0:
-            decision = "buy"
-            confidence = 85
-        elif price_change < -0.05:
-            decision = "buy"
-            confidence = 80
-        elif price_change > 0.05:
-            decision = "sell"
-            confidence = 80
-    else:
-        if momentum == "strong" and volatility <= 0.05 and not earnings_near:
-            decision = "buy"
-            confidence = 85
-        elif volatility > 0.07:
-            decision = "sell"
-            confidence = 80
+    if asset_type == "coin" and fg <= 70 and "부정" not in sentiment:
+        decision = "buy"
+        confidence = 85
+    elif "부정" in sentiment:
+        decision = "sell"
+        confidence = 80
 
     send_telegram(f"🔎 [{asset_type.upper()} {asset}] 결정: {decision} | 신뢰도: {confidence}%")
 
-    if asset_type == "coin":
-        ticker = f"KRW-{asset}"
-        balance_krw = upbit.get_balance("KRW")
-        balances = upbit.get_balances()
-        coin_data = next((b for b in balances if b["currency"] == asset), {})
-        coin_balance = float(coin_data.get("balance", 0))
-        avg_price = float(coin_data.get("avg_buy_price", now_price))
-
-        total_asset = balance_krw + sum(
-            float(b["balance"]) * (pyupbit.get_current_price(f'KRW-{b["currency"]}') or 1)
-            for b in balances if b["currency"] != "KRW"
-        )
-
-        coin_value = coin_balance * now_price
-        coin_value_ratio = coin_value / total_asset if total_asset > 0 else 0
-        total_coin_value = sum(
-            float(b["balance"]) * (pyupbit.get_current_price(f'KRW-{b["currency"]}') or 1)
-            for b in balances if b["currency"] != "KRW"
-        )
-        total_coin_ratio = total_coin_value / total_asset if total_asset > 0 else 0
-
-        if decision == "buy":
-            target_prices = [now_price, now_price * 0.98, now_price * 0.96]
-            bought_count = 0
-
-            for target in target_prices:
-                while True:
-                    current = pyupbit.get_current_price(ticker)
-                    if current <= target:
-                        # 비중 체크
-                        if coin_value_ratio > MAX_ASSET_RATIO:
-                            send_telegram(f"🚫 {asset} 매수 중단 (개별 코인 비중 초과)")
-                            return
-                        if total_coin_ratio > ALLOWED_ASSET_TOTAL_RATIO:
-                            send_telegram(f"🚫 {asset} 매수 중단 (전체 코인 비중 초과)")
-                            return
-                        if (balance_krw / total_asset) < ALLOWED_CASH_RATIO:
-                            send_telegram(f"🚫 {asset} 매수 중단 (현금 부족)")
-                            return
-
-                        unit = total_asset * 0.05
-                        if IS_LIVE:
-                            upbit.buy_market_order(ticker, unit)
-                            send_telegram(f"✅ {asset} {bought_count+1}차 매수: {unit:,.0f} KRW (가격: {current:,.0f})")
-                        else:
-                            send_telegram(f"📝 {asset} {bought_count+1}차 모의매수: {unit:,.0f} KRW (가격: {current:,.0f})")
-                        bought_count += 1
-                        time.sleep(1)
-                        break
-                    else:
-                        time.sleep(5)
-                    if bought_count >= 3:
-                        break
-
-        elif decision == "sell" and coin_balance > 0:
-            profit_rate = (now_price - avg_price) / avg_price
-            qty = coin_balance
-            if profit_rate >= 0.05:
-                if IS_LIVE:
-                    upbit.sell_market_order(ticker, qty)
-                    send_telegram(f"📈 {asset} 익절 매도 - {qty:.6f} (익절율: {profit_rate:.2%})")
+    if decision == "buy":
+        if not check_asset_ratio(asset, asset_type, asset_value, total_asset_value, cash_balance):
+            return
+        unit = total_asset_value * 0.3
+        if asset_type == "coin":
+            upbit.buy_market_order(f"KRW-{asset}", unit)
+            send_telegram(f"✅ 코인 {asset} 매수 - {unit:,.0f} KRW")
+        else:
+            ibkr_buy(asset, unit / now_price)
+        for i in range(3):
+            time.sleep(1)
+            current_price = get_price(asset, asset_type)
+            if current_price <= now_price * (1 - 0.02 * (i + 1)):
+                unit_split = total_asset_value * 0.05
+                if asset_type == "coin":
+                    upbit.buy_market_order(f"KRW-{asset}", unit_split)
+                    send_telegram(f"✅ 코인 {asset} {i+1}차 분할매수 - {unit_split:,.0f} KRW")
                 else:
-                    send_telegram(f"📝 {asset} 모의 익절 - {qty:.6f} (익절율: {profit_rate:.2%})")
-            elif profit_rate <= -0.03:
-                if IS_LIVE:
-                    upbit.sell_market_order(ticker, qty)
-                    send_telegram(f"🛑 {asset} 손절 매도 - {qty:.6f} (손실율: {profit_rate:.2%})")
-                else:
-                    send_telegram(f"📝 {asset} 모의 손절 - {qty:.6f} (손실율: {profit_rate:.2%})")
-            else:
-                send_telegram(f"⏸️ {asset} 매도 보류 (익절/손절 조건 부족, 현재 수익률: {profit_rate:.2%})")
+                    ibkr_buy(asset, unit_split / current_price)
 
-    elif asset_type in ["japan", "us"]:
-        if decision == "buy":
-            ibkr_buy(asset, 1000000)
-        elif decision == "sell":
-            ibkr_sell(asset, 10)
+    elif decision == "sell":
+        if asset_type == "coin":
+            balance = upbit.get_balance(asset)
+            upbit.sell_market_order(f"KRW-{asset}", balance)
+            send_telegram(f"✅ 코인 {asset} 전량 매도")
+        else:
+            ibkr_sell(asset, 1)
 
+    save_trade(asset, asset_type, {
+        "decision": decision,
+        "confidence_score": confidence
+    }, {
+        "asset_balance": 0,
+        "cash_balance": cash_balance,
+        "avg_price": now_price * 0.95,
+        "total_asset": total_asset_value
+    }, now_price)
+
+    log_trade(asset, {
+        "decision": decision,
+        "confidence_score": confidence
+    }, {
+        "asset_balance": 0,
+        "cash_balance": cash_balance,
+        "avg_price": now_price * 0.95,
+        "total_asset": total_asset_value
+    }, now_price)
