@@ -1,18 +1,26 @@
-def decision_us(sector_trend, earnings_near, volatility, momentum):
-    votes = []
+from utils import fetch_all_news, evaluate_news
 
-    # 성장주 전략
-    if sector_trend == "positive" and not earnings_near:
-        votes.append("buy")
+def strategy_buffett(): return "hold"
+def strategy_lynch(): return "buy"
+def strategy_dalio(): return "buy"
+def strategy_jesse(): return "buy"
 
-    # 변동성 안정성
-    if volatility <= 0.05:
-        votes.append("buy")
+def analyze_us(stock):
+    news = fetch_all_news(stock)
+    sentiment = evaluate_news(news)
 
-    # 모멘텀 전략
-    if momentum == "strong":
-        votes.append("buy")
+    votes = [strategy_buffett(), strategy_lynch(), strategy_dalio(), strategy_jesse()]
+    result = max(set(votes), key=votes.count)
 
-    decision = "buy" if votes.count("buy") >= 2 else "hold"
-    confidence = 40 + votes.count(decision) * 15
-    return decision, confidence, votes
+    if "부정" not in sentiment:
+        decision = result
+    else:
+        decision = "sell"
+
+    confidence = 85 if decision == "buy" else 80 if decision == "sell" else 60
+
+    return {
+        "decision": decision,
+        "confidence_score": confidence,
+        "reason": f"뉴스: {sentiment}, 전략투표: {votes}"
+    }
