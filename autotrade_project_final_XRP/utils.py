@@ -5,6 +5,8 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import os
 import pyupbit
+import sqlite3
+from datetime import datetime as dt
 
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -82,7 +84,7 @@ def get_price(asset, asset_type):
     if asset_type == "coin":
         return pyupbit.get_current_price(f"KRW-{asset}") or 100000
     else:
-        return 100000  # IBKR API 연동 시 실가격 적용
+        return 100000  # IBKR 연동 시 실가격 적용
 
 def get_total_asset_value(upbit):
     krw = upbit.get_balance("KRW")
@@ -111,6 +113,31 @@ def log_trade(asset, signal, balance_info, now_price):
     except Exception as e:
         send_telegram(f"📛 거래 로그 저장 오류: {e}")
 
+def save_trade(asset, asset_type, decision, qty, price, memo=""):
+    try:
+        conn = sqlite3.connect("trades.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                asset TEXT,
+                asset_type TEXT,
+                decision TEXT,
+                qty REAL,
+                price REAL,
+                memo TEXT
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO trades (timestamp, asset, asset_type, decision, qty, price, memo)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (dt.now().isoformat(), asset, asset_type, decision, qty, price, memo))
+        conn.commit()
+        conn.close()
+        send_telegram(f"✅ DB 저장 완료: {asset} {decision} {qty} @ {price}")
+    except Exception as e:
+        send_telegram(f"❌ DB 저장 실패: {e}")
 
 
         
