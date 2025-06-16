@@ -1,13 +1,12 @@
-import os
 import requests
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
 import datetime
 import holidays
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+import os
 import pyupbit
 
 load_dotenv()
-
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -18,7 +17,7 @@ def send_telegram(msg):
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
     except Exception as e:
-        print(f"❌ 텔레그램 오류: {e}")
+        print(f"❌ 텔레그램 전송 오류: {e}")
 
 def get_fear_greed_index():
     try:
@@ -33,13 +32,14 @@ def fetch_all_news(asset):
     keywords_map = {
         "XRP": ["XRP", "엑스알피", "리플"],
         "ADA": ["ADA", "카르다노", "에이다"],
-        "7203.T": ["도요타", "トヨタ", "トヨタ自動車"],
+        "7203.T": ["도요타", "トヨタ"],
         "6758.T": ["소니", "ソニー"],
-        "AAPL": ["애플", "Apple"],
-        "MSFT": ["마이크로소프트", "Microsoft"]
+        "AAPL": ["Apple", "애플"],
+        "MSFT": ["Microsoft", "마이크로소프트"]
     }
     keywords = keywords_map.get(asset.upper(), [asset])
     news = []
+
     for kw in keywords:
         try:
             url = f"https://search.naver.com/search.naver?where=news&query={kw}"
@@ -57,13 +57,11 @@ def fetch_all_news(asset):
                 except:
                     pass
                 news.append({"title": title, "content": content})
-        except Exception as e:
-            send_telegram(f"❌ 뉴스 크롤링 실패: {e}")
+        except:
+            send_telegram(f"❌ 뉴스 크롤링 실패: {kw}")
     return news
 
 def evaluate_news(news):
-    if not news:
-        return "뉴스 없음"
     prompt = "\n".join([f"{n['title']} 본문: {n['content']}" for n in news])
     prompt = f"다음 뉴스 내용을 요약하고 긍정/부정/중립 평가:\n{prompt}"
     try:
@@ -73,8 +71,7 @@ def evaluate_news(news):
             json={"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": prompt}]}
         )
         return res.json()['choices'][0]['message']['content']
-    except Exception as e:
-        send_telegram(f"❌ 뉴스 평가 실패: {e}")
+    except:
         return "평가 실패"
 
 def is_holiday_or_weekend():
@@ -85,7 +82,35 @@ def get_price(asset, asset_type):
     if asset_type == "coin":
         return pyupbit.get_current_price(f"KRW-{asset}") or 100000
     else:
-        return 100000  # IBKR 연동 필요
+        return 100000  # IBKR API 연동 시 실가격 적용
+
+def get_total_asset_value(upbit):
+    krw = upbit.get_balance("KRW")
+    balances = upbit.get_balances()
+    total = krw
+    for b in balances:
+        if b['currency'] != "KRW":
+            price = pyupbit.get_current_price(f"KRW-{b['currency']}") or 0
+            total += float(b['balance']) * price
+    return total
+
+def get_cash_balance(upbit):
+    return upbit.get_balance("KRW")
+
+def log_trade(asset, signal, balance_info, now_price):
+    try:
+        with open("trade_log.txt", "a", encoding="utf-8") as f:
+            f.write(
+                f"[{asset}] {signal['decision']} | 신뢰도:{signal['confidence_score']}% | "
+                f"자산잔고:{balance_info.get('asset_balance', 0):,.4f}, "
+                f"현금:{balance_info.get('cash_balance', 0):,.0f}, "
+                f"평균가:{balance_info.get('avg_price', 0):,.0f}, "
+                f"현재가:{now_price:,.0f}, "
+                f"총자산:{balance_info.get('total_asset', 0):,.0f}\n"
+            )
+    except Exception as e:
+        send_telegram(f"📛 거래 로그 저장 오류: {e}")
+
 
 
         
