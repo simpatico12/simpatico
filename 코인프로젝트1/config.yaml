@@ -1,0 +1,95 @@
+# ─ API 설정 ───────────────────────────────────────────
+api:
+  upbit:
+    access_key: "${UPBIT_ACCESS_KEY}"
+    secret_key: "${UPBIT_SECRET_KEY}"
+  ibkr_japan:
+    client_id: "${IBKR_JAPAN_CLIENT_ID}"
+    secret:    "${IBKR_JAPAN_SECRET}"
+  ibkr_us:
+    client_id: "${IBKR_US_CLIENT_ID}"
+    secret:    "${IBKR_US_SECRET}"
+  openai:
+    key:       "${OPENAI_API_KEY}"
+
+telegram:
+  token:   "${TELEGRAM_TOKEN}"
+  chat_id: "${TELEGRAM_CHAT_ID}"
+  alerts:
+    trade: true      # 거래 실행시
+    error: true      # 에러 발생시
+    daily: true      # 일일 리포트
+
+# ─ 스케줄 설정 ────────────────────────────────────────
+schedule:
+  coin:
+    - { day: monday,  time: "08:30", retry: 3 }
+    - { day: friday,  time: "08:30", retry: 3 }
+  japan:
+    - { day: tuesday, time: "10:00", retry: 3 }
+    - { day: thursday,time: "10:00", retry: 3 }
+  us:
+    - { day: tuesday, time: "22:30", retry: 3 }
+    - { day: thursday,time: "22:30", retry: 3 }
+  maintenance:
+    daily_report: "23:00"
+    health_check: "*/30 * * * *"  # 30분마다
+
+# ─ 대상 자산 목록 ─────────────────────────────────────
+assets:
+  coin:  
+    active: ["KRW-XRP", "KRW-ADA"]
+    min_volume: 1000000      # 최소 거래량
+    max_positions: 3         # 최대 보유 개수
+  japan: 
+    active: ["7203.T", "6758.T"]  # Toyota, Sony
+    max_positions: 2
+  us:    
+    active: ["AAPL", "MSFT"]
+    max_positions: 2
+
+# ─ 거래 전략 ──────────────────────────────────────────
+strategy:
+  coin:
+    trading_percentage: "${TRADING_PERCENTAGE_COIN}"
+    min_cash_ratio: "${MIN_CASH_RATIO_COIN}"
+    stop_loss: "${STOP_LOSS_COIN}"
+    take_profit: "${TAKE_PROFIT_COIN}"
+    indicators:
+      rsi_period: 14
+      rsi_oversold: 30
+      rsi_overbought: 70
+  japan:
+    trading_percentage: "${TRADING_PERCENTAGE_JAPAN}"
+    min_cash_ratio: "${MIN_CASH_RATIO_JAPAN}"
+    stop_loss: "${STOP_LOSS_JAPAN}"
+    take_profit: "${TAKE_PROFIT_JAPAN}"
+  us:
+    trading_percentage: "${TRADING_PERCENTAGE_US}"
+    min_cash_ratio: "${MIN_CASH_RATIO_US}"
+    stop_loss: "${STOP_LOSS_US}"
+    take_profit: "${TAKE_PROFIT_US}"
+
+# ─ 리스크 관리 ────────────────────────────────────────
+risk_management:
+  daily_loss_limit: "${DAILY_LOSS_LIMIT}"
+  emergency_stop: "${EMERGENCY_STOP_ENABLED}"
+  max_retry: "${MAX_RETRY_COUNT}"
+
+# ─ 데이터베이스 ───────────────────────────────────────
+database:
+  type: "sqlite"
+  path: "./data/trading.db"
+
+# ─ 로깅 ──────────────────────────────────────────────
+logging:
+  level: "${LOG_LEVEL}"
+  file: "./logs/trading.log"
+  rotation:
+    when: "midnight"
+    backup_count: 30
+
+# ─ 시스템 ─────────────────────────────────────────────
+system:
+  dry_run: "${DRY_RUN}"
+  environment: "${ENVIRONMENT}"
