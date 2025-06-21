@@ -1,286 +1,336 @@
-# main.py
 """
-퀸트 트레이딩 시스템 메인 실행 파일
-우아한 시작/종료와 상태 모니터링 포함
+퀀트 트레이딩 시스템 메인 실행 파일
+- 시스템 초기화 및 구성요소 통합
+- 실시간 모니터링 및 시그널 생성
+- 포트폴리오 관리 및 리스크 모니터링
 """
+
 import asyncio
-import signal
 import sys
-from datetime import datetime
-import argparse
 import os
+from datetime import datetime
+from typing import Dict, List
 
-from scheduler import scheduler
-from notifier import notifier
-from logger import logger
-from config import get_config
-from db import db_manager
-from exceptions import handle_errors, error_handler
-
+# 로컬 모듈 import
+try:
+    from logger import get_logger, info, error, warning
+    from api_wrapper import QuantAPIWrapper
+    from scheduler import InstitutionalTradingScheduler
+    
+    logger = get_logger(__name__)
+    info("📦 모든 모듈 import 성공!")
+    
+except ImportError as e:
+    print(f"❌ 모듈 import 실패: {e}")
+    print("다음 명령어로 필요한 패키지를 설치하세요:")
+    print("pip install ccxt pandas numpy ta aiohttp redis sqlalchemy psutil")
+    sys.exit(1)
 
 class QuantTradingSystem:
     """퀀트 트레이딩 시스템 메인 클래스"""
     
-    def __init__(self):
-        self.cfg = get_config()
-        self.is_running = False
-        self.start_time = None
+    def __init__(self, config: Dict = None):
+        self.config = config or self._get_default_config()
+        self.api_wrapper = None
+        self.scheduler = None
+        self.running = False
         
-    async def startup_checks(self) -> bool:
-        """시작 전 시스템 체크"""
-        logger.info("시스템 시작 전 체크 중...")
+        info("🏗️ 퀀트 트레이딩 시스템 초기화 중...")
         
-        checks = {
-            "설정 파일": self._check_config(),
-            "API 키": self._check_api_keys(),
-            "데이터베이스": self._check_database(),
-            "텔레그램": await self._check_telegram(),
-            "거래소 연결": await self._check_exchange()
+    def _get_default_config(self) -> Dict:
+        """기본 설정 반환"""
+        return {
+            'symbols': ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'ADA/USDT', 'DOT/USDT'],
+            'timeframes': ['1h', '4h', '1d'],
+            'sandbox': True,  # 프로덕션에서는 False로 변경
+            'database_url': 'sqlite:///quant_data.db',
+            'redis_host': 'localhost',
+            'redis_port': 6379,
+            'monitoring_interval': 60,  # 1분
+            'signal_confidence_threshold': 0.7,
+            'max_position_size': 0.1,  # 포트폴리오의 10%
+            'stop_loss_percentage': 0.05,  # 5% 손실 제한
+            'take_profit_percentage': 0.15,  # 15% 수익 실현
+            'portfolio': {
+                'initial_balance': 10000,  # $10,000
+                'positions': {}
+            }
         }
-        
-        # 체크 결과 알림
-        status_msg = "🚀 <b>시스템 시작 체크</b>\n"
-        all_passed = True
-        
-        for name, passed in checks.items():
-            emoji = "✅" if passed else "❌"
-            status_msg += f"{emoji} {name}\n"
-            if not passed:
-                all_passed = False
-        
-        await notifier.send_message(status_msg)
-        return all_passed
-    
-    def _check_config(self) -> bool:
-        """설정 파일 체크"""
-        try:
-            required_keys = ['api', 'telegram', 'trading', 'schedule']
-            for key in required_keys:
-                if key not in self.cfg:
-                    logger.error(f"필수 설정 누락: {key}")
-                    return False
-            return True
-        except Exception as e:
-            logger.error(f"설정 체크 실패: {e}")
-            return False
-    
-    def _check_api_keys(self) -> bool:
-        """API 키 체크"""
-        try:
-            api_cfg = self.cfg.get('api', {})
-            return bool(api_cfg.get('access_key') and api_cfg.get('secret_key'))
-        except:
-            return False
-    
-    def _check_database(self) -> bool:
-        """데이터베이스 연결 체크"""
-        try:
-            # 테스트 쿼리
-            summary = db_manager.get_daily_summary()
-            return True
-        except Exception as e:
-            logger.error(f"DB 체크 실패: {e}")
-            return False
-    
-    async def _check_telegram(self) -> bool:
-        """텔레그램 연결 체크"""
-        try:
-            await notifier.send_message("🔧 텔레그램 연결 테스트")
-            return True
-        except:
-            return False
-    
-    async def _check_exchange(self) -> bool:
-        """거래소 연결 체크"""
-        try:
-            import pyupbit
-            upbit = pyupbit.Upbit(
-                self.cfg['api']['access_key'],
-                self.cfg['api']['secret_key']
-            )
-            balance = upbit.get_balance("KRW")
-            return balance is not None
-        except:
-            return False
     
     async def initialize(self):
-        """시스템 초기화"""
-        logger.info("퀀트 트레이딩 시스템 초기화 중...")
-        
-        # 시작 체크
-        if not await self.startup_checks():
-            raise Exception("시스템 체크 실패")
-        
-        # 성능 모니터링 시작
-        asyncio.create_task(self.monitor_performance())
-        
-        # 에러 모니터링 시작
-        asyncio.create_task(self.monitor_errors())
-        
-        self.start_time = datetime.now()
-        self.is_running = True
-        
-        # 시작 알림
-        await notifier.send_message(
-            "🎯 <b>퀀트 트레이딩 시스템 시작</b>\n"
-            f"버전: {self.cfg.get('version', '1.0.0')}\n"
-            f"환경: {self.cfg.get('environment', 'production')}\n"
-            f"시작 시간: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-    
-    async def monitor_performance(self):
-        """성능 모니터링 (1시간마다)"""
-        while self.is_running:
-            await asyncio.sleep(3600)  # 1시간
-            
-            try:
-                # 포트폴리오 지표
-                metrics = db_manager.calculate_portfolio_metrics()
-                
-                # 일일 요약
-                summary = db_manager.get_daily_summary()
-                
-                # 시스템 상태
-                uptime = datetime.now() - self.start_time
-                
-                status_msg = f"""
-📊 <b>시스템 상태 리포트</b>
-━━━━━━━━━━━━━━━
-⏱️ 가동시간: {uptime.days}일 {uptime.seconds//3600}시간
-💰 총 수익률: {metrics.get('total_return', 0):.2f}%
-📈 승률: {metrics.get('win_rate', 0):.1f}%
-📉 최대낙폭: {metrics.get('max_drawdown', 0):.2f}%
-🎯 샤프비율: {metrics.get('sharpe_ratio', 0):.2f}
-
-📅 오늘 거래: {summary.get('trades', 0)}건
-━━━━━━━━━━━━━━━"""
-                
-                await notifier.send_message(status_msg)
-                
-            except Exception as e:
-                logger.error(f"성능 모니터링 에러: {e}")
-    
-    async def monitor_errors(self):
-        """에러 모니터링 (5분마다)"""
-        while self.is_running:
-            await asyncio.sleep(300)  # 5분
-            
-            try:
-                await error_handler.check_critical_errors()
-            except Exception as e:
-                logger.error(f"에러 모니터링 실패: {e}")
-    
-    def setup_signal_handlers(self):
-        """종료 시그널 핸들러 설정"""
-        def signal_handler(sig, frame):
-            logger.info(f"종료 시그널 받음: {sig}")
-            asyncio.create_task(self.shutdown())
-        
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-    
-    async def shutdown(self):
-        """우아한 종료"""
-        logger.info("시스템 종료 중...")
-        self.is_running = False
-        
-        # 스케줄러 정지
-        scheduler.stop()
-        
-        # 종료 통계
-        if self.start_time:
-            uptime = datetime.now() - self.start_time
-            error_stats = error_handler.get_error_stats()
-            
-            await notifier.send_message(
-                f"🛑 <b>시스템 종료</b>\n"
-                f"가동 시간: {uptime.days}일 {uptime.seconds//3600}시간\n"
-                f"총 에러: {error_stats['total_errors']}건"
-            )
-        
-        # DB 정리
-        db_manager.cleanup_old_records(days=180)
-        
-        logger.info("시스템 종료 완료")
-        sys.exit(0)
-    
-    async def run(self):
-        """메인 실행"""
+        """시스템 구성요소 초기화"""
         try:
-            # 초기화
-            await self.initialize()
+            info("🔧 시스템 구성요소 초기화 시작")
             
-            # 시그널 핸들러 설정
-            self.setup_signal_handlers()
+            # 1. API 래퍼 초기화
+            self.api_wrapper = QuantAPIWrapper(self.config)
+            info("✅ API 래퍼 초기화 완료")
             
-            # 스케줄러 시작
-            logger.info("스케줄러 시작...")
-            scheduler.start()
+            # 2. 시스템 상태 확인
+            status = self.api_wrapper.get_status()
+            info(f"📊 시스템 상태: {status}")
             
-            # 메인 루프
-            while self.is_running:
-                await asyncio.sleep(1)
-                
-        except KeyboardInterrupt:
-            logger.info("키보드 인터럽트")
-            await self.shutdown()
+            # 3. 스케줄러 초기화
+            self.scheduler = InstitutionalTradingScheduler(self.api_wrapper, self.config)
+            info("✅ 스케줄러 초기화 완료")
+            
+            # 4. 초기 데이터 수집 테스트
+            await self._test_data_collection()
+            
+            info("🎉 시스템 초기화 완료!")
+            return True
+            
         except Exception as e:
-            logger.error(f"치명적 에러: {e}")
-            await notifier.send_error_alert(e, "시스템 크래시")
-            await self.shutdown()
-
-
-def parse_arguments():
-    """명령줄 인자 파싱"""
-    parser = argparse.ArgumentParser(
-        description='퀀트 트레이딩 시스템'
-    )
+            error(f"❌ 시스템 초기화 실패: {e}")
+            return False
     
-    parser.add_argument(
-        '--env',
-        choices=['production', 'development', 'test'],
-        default='production',
-        help='실행 환경'
-    )
+    async def _test_data_collection(self):
+        """초기 데이터 수집 테스트"""
+        try:
+            info("🧪 데이터 수집 테스트 시작")
+            
+            test_symbol = self.config['symbols'][0]
+            market_data = await self.api_wrapper.fetch_comprehensive_market_data(test_symbol)
+            
+            info(f"📈 {test_symbol} 테스트 데이터:")
+            info(f"   가격: ${market_data.price:,.2f}")
+            info(f"   RSI: {market_data.rsi:.2f}")
+            info(f"   공포탐욕지수: {market_data.fear_greed_index}")
+            
+            # 시그널 생성 테스트
+            signals = self.api_wrapper.generate_trading_signals(market_data)
+            info(f"🎯 생성된 시그널 수: {len(signals)}")
+            
+            for signal in signals:
+                if signal.confidence > 0.7:
+                    info(f"   🔥 고신뢰도: {signal.signal_type} (신뢰도: {signal.confidence:.2f})")
+            
+        except Exception as e:
+            warning(f"⚠️ 데이터 수집 테스트 중 에러: {e}")
     
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='디버그 모드'
-    )
+    async def start_monitoring(self):
+        """실시간 모니터링 시작"""
+        if self.running:
+            warning("⚠️ 모니터링이 이미 실행 중입니다")
+            return
+        
+        self.running = True
+        info("🚀 실시간 모니터링 시작")
+        
+        # 시그널 콜백 함수
+        async def signal_callback(symbol, market_data, signals):
+            await self._process_signals(symbol, market_data, signals)
+        
+        try:
+            # 병렬로 모니터링과 스케줄러 실행
+            await asyncio.gather(
+                self.api_wrapper.run_live_monitoring(
+                    self.config['symbols'], 
+                    callback=signal_callback
+                ),
+                self.scheduler.start(),
+                return_exceptions=True
+            )
+        except KeyboardInterrupt:
+            info("⌨️ 사용자에 의한 중지")
+        except Exception as e:
+            error(f"❌ 모니터링 중 에러: {e}")
+        finally:
+            await self.stop()
     
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='모의 실행 (실제 거래 없음)'
-    )
+    async def _process_signals(self, symbol: str, market_data, signals: List):
+        """시그널 처리 및 거래 결정"""
+        try:
+            high_confidence_signals = [
+                s for s in signals 
+                if s.confidence >= self.config['signal_confidence_threshold']
+            ]
+            
+            if not high_confidence_signals:
+                return
+            
+            info(f"🔥 {symbol} 고신뢰도 시그널 {len(high_confidence_signals)}개 발견")
+            
+            for signal in high_confidence_signals:
+                info(f"   📊 {signal.strategy_name}: {signal.signal_type}")
+                info(f"      신뢰도: {signal.confidence:.2f}")
+                info(f"      현재가: ${market_data.price:,.2f}")
+                
+                # 여기에 실제 거래 로직 추가
+                await self._execute_trade_decision(symbol, signal, market_data)
+                
+        except Exception as e:
+            error(f"❌ 시그널 처리 중 에러: {e}")
     
-    return parser.parse_args()
-
+    async def _execute_trade_decision(self, symbol: str, signal, market_data):
+        """거래 결정 실행 (시뮬레이션)"""
+        try:
+            # 현재는 시뮬레이션만 (실제 거래는 추가 구현 필요)
+            position_size = self._calculate_position_size(symbol, signal.confidence)
+            
+            if signal.signal_type == 'BUY':
+                info(f"💰 BUY 시그널 처리: {symbol}")
+                info(f"   포지션 크기: {position_size:.4f}")
+                info(f"   목표가: ${market_data.price * 1.15:,.2f}")
+                info(f"   손절가: ${market_data.price * 0.95:,.2f}")
+                
+            elif signal.signal_type == 'SELL':
+                info(f"💸 SELL 시그널 처리: {symbol}")
+                info(f"   포지션 크기: {position_size:.4f}")
+                
+            # 포트폴리오 업데이트 (시뮬레이션)
+            self._update_portfolio_simulation(symbol, signal, position_size)
+            
+        except Exception as e:
+            error(f"❌ 거래 결정 실행 중 에러: {e}")
+    
+    def _calculate_position_size(self, symbol: str, confidence: float) -> float:
+        """포지션 크기 계산"""
+        base_size = self.config['max_position_size']
+        
+        # 신뢰도에 따른 포지션 크기 조정
+        adjusted_size = base_size * confidence
+        
+        return min(adjusted_size, base_size)
+    
+    def _update_portfolio_simulation(self, symbol: str, signal, position_size: float):
+        """포트폴리오 시뮬레이션 업데이트"""
+        try:
+            current_positions = self.config['portfolio']['positions']
+            
+            if signal.signal_type == 'BUY':
+                current_positions[symbol] = current_positions.get(symbol, 0) + position_size
+            elif signal.signal_type == 'SELL':
+                current_positions[symbol] = max(0, current_positions.get(symbol, 0) - position_size)
+            
+            info(f"📊 포트폴리오 업데이트: {symbol} = {current_positions.get(symbol, 0):.4f}")
+            
+        except Exception as e:
+            error(f"❌ 포트폴리오 업데이트 중 에러: {e}")
+    
+    async def stop(self):
+        """시스템 중지"""
+        self.running = False
+        if self.scheduler:
+            await self.scheduler.stop()
+        info("🛑 시스템 중지 완료")
+    
+    def get_portfolio_status(self) -> Dict:
+        """포트폴리오 상태 반환"""
+        return {
+            'positions': self.config['portfolio']['positions'],
+            'initial_balance': self.config['portfolio']['initial_balance'],
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    async def run_backtest(self, start_date: str, end_date: str):
+        """백테스팅 실행"""
+        info(f"📈 백테스팅 시작: {start_date} ~ {end_date}")
+        # 여기에 백테스팅 로직 추가
+        warning("⚠️ 백테스팅 기능은 아직 구현되지 않았습니다")
 
 async def main():
-    """메인 진입점"""
-    # 명령줄 인자 파싱
-    args = parse_arguments()
+    """메인 실행 함수"""
+    try:
+        info("=" * 60)
+        info("🚀 퀀트 트레이딩 시스템 시작")
+        info("=" * 60)
+        
+        # 환경변수 확인
+        required_env_vars = ['BINANCE_API_KEY', 'BINANCE_SECRET']
+        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+        
+        if missing_vars:
+            warning(f"⚠️ 누락된 환경변수: {missing_vars}")
+            warning("일부 기능이 제한될 수 있습니다.")
+        
+        # 시스템 초기화
+        system = QuantTradingSystem()
+        
+        if not await system.initialize():
+            error("❌ 시스템 초기화 실패")
+            return
+        
+        # 메뉴 표시
+        while True:
+            print("\n" + "=" * 50)
+            print("📊 퀀트 트레이딩 시스템 메뉴")
+            print("=" * 50)
+            print("1. 실시간 모니터링 시작")
+            print("2. 포트폴리오 상태 확인")
+            print("3. 시스템 상태 확인")
+            print("4. 백테스팅 실행")
+            print("5. 단일 시그널 테스트")
+            print("0. 종료")
+            print("=" * 50)
+            
+            try:
+                choice = input("선택하세요 (0-5): ").strip()
+                
+                if choice == '1':
+                    info("실시간 모니터링을 시작합니다...")
+                    info("중지하려면 Ctrl+C를 누르세요")
+                    await system.start_monitoring()
+                    
+                elif choice == '2':
+                    portfolio = system.get_portfolio_status()
+                    info("📊 현재 포트폴리오:")
+                    for symbol, amount in portfolio['positions'].items():
+                        info(f"   {symbol}: {amount:.4f}")
+                    
+                elif choice == '3':
+                    if system.api_wrapper:
+                        status = system.api_wrapper.get_status()
+                        info("🔍 시스템 상태:")
+                        info(f"   거래소 연결: {status['exchanges']}")
+                        info(f"   데이터베이스: {status['database']}")
+                        info(f"   캐시: {status['cache']}")
+                    
+                elif choice == '4':
+                    start_date = input("시작 날짜 (YYYY-MM-DD): ")
+                    end_date = input("종료 날짜 (YYYY-MM-DD): ")
+                    await system.run_backtest(start_date, end_date)
+                    
+                elif choice == '5':
+                    symbol = input("테스트할 심볼 (예: BTC/USDT): ") or 'BTC/USDT'
+                    info(f"🧪 {symbol} 시그널 테스트 중...")
+                    
+                    market_data = await system.api_wrapper.fetch_comprehensive_market_data(symbol)
+                    signals = system.api_wrapper.generate_trading_signals(market_data)
+                    
+                    info(f"📈 {symbol} 현재 상태:")
+                    info(f"   가격: ${market_data.price:,.2f}")
+                    info(f"   RSI: {market_data.rsi:.2f}")
+                    info(f"   시그널 수: {len(signals)}")
+                    
+                    for signal in signals:
+                        info(f"   📊 {signal.strategy_name}: {signal.signal_type} (신뢰도: {signal.confidence:.2f})")
+                    
+                elif choice == '0':
+                    info("시스템을 종료합니다...")
+                    await system.stop()
+                    break
+                    
+                else:
+                    warning("올바른 번호를 선택하세요 (0-5)")
+                    
+            except KeyboardInterrupt:
+                info("⌨️ 메뉴로 돌아갑니다...")
+                continue
+            except Exception as e:
+                error(f"❌ 실행 중 에러: {e}")
+                continue
     
-    # 환경 설정
-    os.environ['TRADING_ENV'] = args.env
-    if args.debug:
-        logger.setLevel('DEBUG')
-    if args.dry_run:
-        os.environ['DRY_RUN'] = 'true'
-    
-    # 시스템 시작
-    system = QuantTradingSystem()
-    await system.run()
-
+    except Exception as e:
+        error(f"❌ 메인 실행 중 심각한 에러: {e}")
+    finally:
+        info("👋 프로그램을 종료합니다")
 
 if __name__ == "__main__":
-    # 이벤트 루프 실행
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("프로그램 종료")
+        print("\n👋 사용자에 의한 종료")
     except Exception as e:
-        logger.error(f"프로그램 실행 실패: {e}")
+        print(f"❌ 프로그램 실행 중 에러: {e}")
         sys.exit(1)
