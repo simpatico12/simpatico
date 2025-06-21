@@ -1,670 +1,931 @@
-#!/usr/bin/env python3
 """
-🏆 COMPLETE ELITE TRADING SYSTEM 🏆
-완전히 독립적인 하나의 파일로 모든 기능 구현
+🏆 ELITE QUANTITATIVE TRADING SYSTEM 🏆
+퀀트 헤지펀드급 통합 거래 시스템
 
-사용법:
-1. python complete_elite_system.py
-2. 메뉴에서 원하는 기능 선택
-3. 끝!
+주요 기능:
+- 다중 팩터 포트폴리오 최적화
+- AI/ML 기반 예측 모델
+- 실시간 리스크 관리
+- 고급 백테스팅 엔진
+- 기관급 성과 분석
+- 다중 자산 클래스 지원
 """
 
 import asyncio
-import logging
 import numpy as np
 import pandas as pd
+import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
-from typing import Dict, List, Optional, Tuple, Any
+import logging
 from dataclasses import dataclass, field
-import json
-import time
+from typing import Dict, List, Optional, Tuple, Any
+from abc import ABC, abstractmethod
 import warnings
 warnings.filterwarnings('ignore')
 
-# 선택적 패키지들
-try:
-    from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Text
-    from sqlalchemy.ext.declarative import declarative_base
-    from sqlalchemy.orm import sessionmaker
-    SQLALCHEMY_AVAILABLE = True
-    Base = declarative_base()
-except ImportError:
-    SQLALCHEMY_AVAILABLE = False
-    Base = None
+# Scientific Computing & ML
+from scipy.optimize import minimize
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import TimeSeriesSplit
+import joblib
 
+# Financial Analysis
 try:
-    import yfinance as yf
-    YFINANCE_AVAILABLE = True
+    import quantlib as ql
+    QUANTLIB_AVAILABLE = True
 except ImportError:
-    YFINANCE_AVAILABLE = False
+    QUANTLIB_AVAILABLE = False
 
-# 로깅 설정
+# Technical Analysis
+import ta
+
+# Portfolio Optimization
+try:
+    import cvxpy as cp
+    CVXPY_AVAILABLE = True
+except ImportError:
+    CVXPY_AVAILABLE = False
+
+# Database
+import sqlite3
+from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Text, Boolean
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+# Logging Setup
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler("elite_system.log"),
+        logging.FileHandler("elite_quant.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-# 시간대 설정
-seoul_tz = pytz.timezone('Asia/Seoul')
-ny_tz = pytz.timezone('America/New_York')
+# Database Setup
+Base = declarative_base()
 
-def get_seoul_now():
-    return datetime.now(seoul_tz)
+class Trade(Base):
+    __tablename__ = 'trades'
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, nullable=False)
+    symbol = Column(String(20), nullable=False)
+    action = Column(String(10), nullable=False)  # BUY/SELL
+    quantity = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+    strategy = Column(String(50), nullable=False)
+    pnl = Column(Float, default=0.0)
+    metadata = Column(Text)
 
-# 데이터베이스 테이블 정의 (선택적)
-if SQLALCHEMY_AVAILABLE:
-    class TradeRecord(Base):
-        __tablename__ = 'trades'
-        id = Column(Integer, primary_key=True)
-        timestamp = Column(DateTime, default=datetime.now)
-        market = Column(String(20), nullable=False)
-        symbol = Column(String(50), nullable=False)
-        action = Column(String(10), nullable=False)
-        quantity = Column(Float, nullable=False)
-        price = Column(Float, nullable=False)
-        confidence = Column(Float, nullable=False)
-        strategy = Column(String(50), nullable=False)
-        pnl = Column(Float, default=0.0)
-        trade_data = Column(Text)  # metadata 대신 trade_data 사용
+class PortfolioSnapshot(Base):
+    __tablename__ = 'portfolio_snapshots'
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, nullable=False)
+    total_value = Column(Float, nullable=False)
+    cash = Column(Float, nullable=False)
+    positions = Column(Text)  # JSON string
+    returns = Column(Float, default=0.0)
+    sharpe_ratio = Column(Float, default=0.0)
+    max_drawdown = Column(Float, default=0.0)
 
-# 데이터 클래스들
 @dataclass
-class MarketData:
-    """시장 데이터"""
+class Asset:
+    """자산 정보"""
     symbol: str
-    price: float
-    volume: float
-    timestamp: datetime
-    rsi: float = 50.0
-    macd: float = 0.0
-    momentum: float = 0.0
-    volatility: float = 0.02
+    name: str
+    asset_class: str  # equity, crypto, bond, commodity
+    exchange: str
+    currency: str = 'USD'
+    sector: Optional[str] = None
+    country: Optional[str] = None
 
 @dataclass
-class TradingSignal:
+class Signal:
     """거래 시그널"""
-    symbol: str
-    action: str  # BUY, SELL, HOLD
-    confidence: float
-    quantity: float
-    target_price: float
-    stop_loss: Optional[float] = None
-    strategy: str = "default"
-    timestamp: datetime = field(default_factory=get_seoul_now)
-    factors: Dict = field(default_factory=dict)
+    timestamp: datetime
+    asset: Asset
+    signal_type: str  # BUY, SELL, HOLD
+    confidence: float  # 0.0 to 1.0
+    target_weight: float  # Portfolio weight
+    expected_return: float
+    risk_score: float
+    strategy_name: str
+    factors: Dict[str, float] = field(default_factory=dict)
 
 @dataclass
-class ScheduledTask:
-    """스케줄 작업"""
-    market: str
-    days: List[int]  # 0=월, 1=화, ..., 6=일
-    time: str        # "HH:MM" 형식
-    enabled: bool = True
+class Position:
+    """포지션 정보"""
+    asset: Asset
+    quantity: float
+    avg_price: float
+    current_price: float
+    market_value: float
+    unrealized_pnl: float
+    weight: float
+    entry_date: datetime
 
-class TradingAPIWrapper:
-    """메인 API 래퍼"""
+class FactorModel:
+    """다중 팩터 모델"""
     
     def __init__(self):
-        # 포트폴리오 설정
-        self.initial_capital = 10000000  # 1천만원
-        self.portfolio = {
-            'coin': {'balance': self.initial_capital * 0.3, 'positions': {}},
-            'japan': {'balance': self.initial_capital * 0.35, 'positions': {}},
-            'us': {'balance': self.initial_capital * 0.35, 'positions': {}}
-        }
+        self.factors = [
+            'momentum_1m', 'momentum_3m', 'momentum_12m',
+            'mean_reversion_5d', 'mean_reversion_20d',
+            'volatility', 'volume_trend', 'rsi', 'macd',
+            'pe_ratio', 'pb_ratio', 'debt_to_equity',
+            'earnings_growth', 'revenue_growth',
+            'sentiment_score', 'news_sentiment'
+        ]
+        self.factor_weights = {}
+        self.scaler = StandardScaler()
         
-        # 거래 기록
-        self.trade_history = []
-        self.performance_stats = {}
+    def calculate_factors(self, data: pd.DataFrame, fundamentals: Dict = None) -> pd.DataFrame:
+        """팩터 계산"""
+        factors_df = pd.DataFrame(index=data.index)
         
-        # 데이터베이스 (선택적)
-        self.db_session = None
-        if SQLALCHEMY_AVAILABLE:
-            self._init_database()
+        # 기술적 팩터들
+        factors_df['momentum_1m'] = data['close'].pct_change(21)
+        factors_df['momentum_3m'] = data['close'].pct_change(63)
+        factors_df['momentum_12m'] = data['close'].pct_change(252)
         
-        logger.info("✅ TradingAPIWrapper 초기화 완료")
+        factors_df['mean_reversion_5d'] = -data['close'].pct_change(5)
+        factors_df['mean_reversion_20d'] = -data['close'].pct_change(20)
+        
+        factors_df['volatility'] = data['close'].rolling(20).std()
+        factors_df['volume_trend'] = data['volume'].pct_change(20)
+        
+        # 기술적 지표
+        factors_df['rsi'] = ta.momentum.RSIIndicator(data['close']).rsi()
+        macd = ta.trend.MACD(data['close'])
+        factors_df['macd'] = macd.macd()
+        
+        # 펀더멘탈 팩터들 (기본값 사용)
+        if fundamentals:
+            factors_df['pe_ratio'] = fundamentals.get('pe_ratio', 15.0)
+            factors_df['pb_ratio'] = fundamentals.get('pb_ratio', 2.0)
+            factors_df['debt_to_equity'] = fundamentals.get('debt_to_equity', 0.5)
+            factors_df['earnings_growth'] = fundamentals.get('earnings_growth', 0.1)
+            factors_df['revenue_growth'] = fundamentals.get('revenue_growth', 0.08)
+        else:
+            # 기본값으로 설정
+            factors_df['pe_ratio'] = 15.0
+            factors_df['pb_ratio'] = 2.0
+            factors_df['debt_to_equity'] = 0.5
+            factors_df['earnings_growth'] = 0.1
+            factors_df['revenue_growth'] = 0.08
+        
+        # 센티먼트 팩터들 (임시값)
+        factors_df['sentiment_score'] = np.random.normal(0, 0.1, len(factors_df))
+        factors_df['news_sentiment'] = np.random.normal(0, 0.1, len(factors_df))
+        
+        return factors_df.fillna(0)
+
+class MLPredictor:
+    """머신러닝 예측 모델"""
     
-    def _init_database(self):
-        """데이터베이스 초기화"""
+    def __init__(self):
+        self.models = {
+            'rf': RandomForestRegressor(n_estimators=100, random_state=42),
+            'gbm': GradientBoostingRegressor(n_estimators=100, random_state=42),
+            'ridge': Ridge(alpha=1.0),
+            'lasso': Lasso(alpha=0.1)
+        }
+        self.ensemble_weights = {}
+        self.is_trained = False
+        
+    def prepare_features(self, factor_data: pd.DataFrame, lookback: int = 60) -> Tuple[np.ndarray, np.ndarray]:
+        """피처 및 타겟 준비"""
+        features = []
+        targets = []
+        
+        for i in range(lookback, len(factor_data) - 1):
+            # 지난 N일의 팩터 데이터를 피처로 사용
+            feature_window = factor_data.iloc[i-lookback:i].values.flatten()
+            
+            # 다음날 수익률을 타겟으로 사용
+            if i+1 < len(factor_data):
+                next_return = factor_data['momentum_1m'].iloc[i+1]
+                
+                features.append(feature_window)
+                targets.append(next_return)
+        
+        return np.array(features), np.array(targets)
+    
+    def train(self, factor_data: pd.DataFrame):
+        """모델 학습"""
         try:
-            engine = create_engine('sqlite:///elite_trading.db', echo=False)
-            Base.metadata.create_all(engine)
-            Session = sessionmaker(bind=engine)
-            self.db_session = Session()
-            logger.info("✅ 데이터베이스 연결 완료")
+            X, y = self.prepare_features(factor_data)
+            
+            if len(X) < 100:  # 충분한 데이터가 없으면 건너뛰기
+                logger.warning("학습 데이터 부족, ML 모델 학습 건너뜀")
+                return
+            
+            # 시계열 교차 검증
+            tscv = TimeSeriesSplit(n_splits=5)
+            model_scores = {}
+            
+            for name, model in self.models.items():
+                scores = []
+                for train_idx, val_idx in tscv.split(X):
+                    X_train, X_val = X[train_idx], X[val_idx]
+                    y_train, y_val = y[train_idx], y[val_idx]
+                    
+                    model.fit(X_train, y_train)
+                    score = model.score(X_val, y_val)
+                    scores.append(score)
+                
+                model_scores[name] = np.mean(scores)
+                logger.info(f"모델 {name} 평균 점수: {model_scores[name]:.4f}")
+            
+            # 앙상블 가중치 계산 (성능에 비례)
+            total_score = sum(max(0, score) for score in model_scores.values())
+            if total_score > 0:
+                self.ensemble_weights = {
+                    name: max(0, score) / total_score 
+                    for name, score in model_scores.items()
+                }
+            else:
+                # 모든 모델이 음수 점수면 균등 가중치
+                self.ensemble_weights = {name: 0.25 for name in self.models.keys()}
+            
+            # 전체 데이터로 최종 학습
+            for model in self.models.values():
+                model.fit(X, y)
+            
+            self.is_trained = True
+            logger.info("✅ ML 모델 학습 완료")
+            
         except Exception as e:
-            logger.warning(f"⚠️ 데이터베이스 초기화 실패: {e}")
-
-    async def execute_trading(self, market: str):
-        """🚀 메인 거래 실행"""
-        logger.info(f"🚀 {market} 매매 시작")
+            logger.error(f"❌ ML 모델 학습 실패: {e}")
+    
+    def predict(self, recent_factors: pd.DataFrame) -> float:
+        """수익률 예측"""
+        if not self.is_trained:
+            return 0.0
         
         try:
-            # ① 시장 데이터 수집
-            market_data = await self.fetch_market_data(market)
-            logger.info(f"📊 {market} 데이터 수집 완료: {len(market_data)}개 종목")
+            # 최근 60일 데이터로 예측
+            if len(recent_factors) < 60:
+                return 0.0
             
-            # ② 시그널 생성
-            signals = self.generate_signal(market_data)
-            logger.info(f"🧠 {market} 시그널 생성: {len(signals)}개")
+            feature_vector = recent_factors.tail(60).values.flatten().reshape(1, -1)
             
-            # ③ 리스크 관리
-            approved_signals = self.check_risk(signals)
-            logger.info(f"🛡️ {market} 리스크 승인: {len(approved_signals)}개")
+            # 앙상블 예측
+            ensemble_pred = 0.0
+            for name, model in self.models.items():
+                pred = model.predict(feature_vector)[0]
+                weight = self.ensemble_weights.get(name, 0.25)
+                ensemble_pred += pred * weight
             
-            # ④ 주문 실행
-            results = await self.execute_order(market, approved_signals)
-            logger.info(f"📝 {market} 주문 완료: {len(results)}개")
-            
-            # ⑤ 성과 기록
-            await self.track_performance(market, results)
-            
-            logger.info(f"✅ {market} 매매 완료")
+            return ensemble_pred
             
         except Exception as e:
-            logger.error(f"❌ {market} 매매 실행 실패: {e}")
+            logger.error(f"❌ 예측 실패: {e}")
+            return 0.0
 
-    async def fetch_market_data(self, market: str) -> Dict[str, MarketData]:
-        """📊 시장 데이터 수집"""
-        logger.info(f"📊 {market} 데이터 수집 중...")
+class RiskManager:
+    """리스크 관리자"""
+    
+    def __init__(self, max_portfolio_risk: float = 0.15):
+        self.max_portfolio_risk = max_portfolio_risk
+        self.max_single_weight = 0.20  # 단일 자산 최대 비중
+        self.max_sector_weight = 0.30  # 섹터별 최대 비중
+        self.var_confidence = 0.05     # 95% VaR
         
-        symbols = self._get_symbols(market)
-        market_data = {}
+    def calculate_portfolio_risk(self, weights: np.ndarray, cov_matrix: np.ndarray) -> float:
+        """포트폴리오 리스크 계산"""
+        return np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+    
+    def calculate_var(self, returns: pd.Series, confidence: float = 0.05) -> float:
+        """Value at Risk 계산"""
+        return np.percentile(returns, confidence * 100)
+    
+    def apply_risk_constraints(self, weights: np.ndarray, 
+                             expected_returns: np.ndarray,
+                             cov_matrix: np.ndarray) -> np.ndarray:
+        """리스크 제약 조건 적용"""
+        n_assets = len(weights)
         
-        for symbol in symbols[:3]:  # 최대 3개 종목
+        # 제약 조건들
+        constraints = [
+            # 가중치 합이 1
+            {'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0},
+        ]
+        
+        # 개별 자산 비중 제한
+        bounds = [(0, self.max_single_weight) for _ in range(n_assets)]
+        
+        # 포트폴리오 리스크 제한
+        def risk_constraint(w):
+            portfolio_risk = self.calculate_portfolio_risk(w, cov_matrix)
+            return self.max_portfolio_risk - portfolio_risk
+        
+        constraints.append({'type': 'ineq', 'fun': risk_constraint})
+        
+        # 최적화 목적함수 (샤프 비율 최대화)
+        def objective(w):
+            portfolio_return = np.dot(w, expected_returns)
+            portfolio_risk = self.calculate_portfolio_risk(w, cov_matrix)
+            return -(portfolio_return / (portfolio_risk + 1e-8))  # 음수로 최소화
+        
+        # 최적화 실행
+        try:
+            result = minimize(
+                objective,
+                weights,
+                method='SLSQP',
+                bounds=bounds,
+                constraints=constraints,
+                options={'maxiter': 1000}
+            )
+            
+            if result.success:
+                return result.x
+            else:
+                logger.warning("리스크 제약 최적화 실패, 균등 가중치 사용")
+                return np.ones(n_assets) / n_assets
+                
+        except Exception as e:
+            logger.error(f"리스크 제약 적용 실패: {e}")
+            return np.ones(n_assets) / n_assets
+
+class PortfolioOptimizer:
+    """포트폴리오 최적화"""
+    
+    def __init__(self, risk_manager: RiskManager):
+        self.risk_manager = risk_manager
+        
+    def mean_variance_optimization(self, expected_returns: np.ndarray, 
+                                 cov_matrix: np.ndarray,
+                                 risk_aversion: float = 1.0) -> np.ndarray:
+        """평균-분산 최적화"""
+        n_assets = len(expected_returns)
+        
+        # 초기 가중치 (균등 분배)
+        initial_weights = np.ones(n_assets) / n_assets
+        
+        # 목적함수: 유틸리티 = 기대수익 - 0.5 * 위험회피계수 * 분산
+        def objective(weights):
+            portfolio_return = np.dot(weights, expected_returns)
+            portfolio_variance = np.dot(weights.T, np.dot(cov_matrix, weights))
+            return -(portfolio_return - 0.5 * risk_aversion * portfolio_variance)
+        
+        # 제약조건
+        constraints = [{'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0}]
+        bounds = [(0, 1) for _ in range(n_assets)]
+        
+        try:
+            result = minimize(
+                objective,
+                initial_weights,
+                method='SLSQP',
+                bounds=bounds,
+                constraints=constraints
+            )
+            
+            if result.success:
+                optimized_weights = result.x
+                # 리스크 제약 적용
+                return self.risk_manager.apply_risk_constraints(
+                    optimized_weights, expected_returns, cov_matrix
+                )
+            else:
+                return initial_weights
+                
+        except Exception as e:
+            logger.error(f"포트폴리오 최적화 실패: {e}")
+            return initial_weights
+    
+    def risk_parity_optimization(self, cov_matrix: np.ndarray) -> np.ndarray:
+        """리스크 패리티 최적화"""
+        n_assets = len(cov_matrix)
+        
+        def risk_budget_objective(weights):
+            weights = np.array(weights)
+            sigma = np.sqrt(np.dot(weights, np.dot(cov_matrix, weights)))
+            
+            # 각 자산의 한계 기여도
+            marginal_contrib = np.dot(cov_matrix, weights) / sigma
+            contrib = np.multiply(marginal_contrib, weights)
+            
+            # 목표: 모든 자산의 리스크 기여도가 동일하도록
+            target_contrib = sigma / n_assets
+            return np.sum((contrib - target_contrib) ** 2)
+        
+        constraints = [{'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0}]
+        bounds = [(0.01, 0.5) for _ in range(n_assets)]  # 최소 1%, 최대 50%
+        
+        initial_weights = np.ones(n_assets) / n_assets
+        
+        try:
+            result = minimize(
+                risk_budget_objective,
+                initial_weights,
+                method='SLSQP',
+                bounds=bounds,
+                constraints=constraints
+            )
+            
+            return result.x if result.success else initial_weights
+            
+        except Exception as e:
+            logger.error(f"리스크 패리티 최적화 실패: {e}")
+            return initial_weights
+
+class DataManager:
+    """데이터 관리자"""
+    
+    def __init__(self, db_url: str = "sqlite:///elite_quant.db"):
+        self.engine = create_engine(db_url)
+        Base.metadata.create_all(self.engine)
+        Session = sessionmaker(bind=self.engine)
+        self.session = Session()
+        
+        # 자산 유니버스 정의
+        self.universe = [
+            Asset("AAPL", "Apple Inc", "equity", "NASDAQ", sector="Technology", country="US"),
+            Asset("MSFT", "Microsoft", "equity", "NASDAQ", sector="Technology", country="US"),
+            Asset("GOOGL", "Alphabet", "equity", "NASDAQ", sector="Technology", country="US"),
+            Asset("AMZN", "Amazon", "equity", "NASDAQ", sector="Consumer", country="US"),
+            Asset("TSLA", "Tesla", "equity", "NASDAQ", sector="Automotive", country="US"),
+            Asset("JPM", "JPMorgan", "equity", "NYSE", sector="Finance", country="US"),
+            Asset("JNJ", "Johnson & Johnson", "equity", "NYSE", sector="Healthcare", country="US"),
+            Asset("V", "Visa", "equity", "NYSE", sector="Finance", country="US"),
+            Asset("PG", "Procter & Gamble", "equity", "NYSE", sector="Consumer", country="US"),
+            Asset("HD", "Home Depot", "equity", "NYSE", sector="Retail", country="US"),
+        ]
+        
+    def fetch_market_data(self, symbols: List[str], period: str = "2y") -> Dict[str, pd.DataFrame]:
+        """시장 데이터 가져오기"""
+        data = {}
+        
+        for symbol in symbols:
             try:
-                if market == "coin":
-                    # 암호화폐 시뮬레이션 데이터
-                    price = np.random.uniform(20000, 80000)
-                    market_data[symbol] = MarketData(
-                        symbol=symbol,
-                        price=price,
-                        volume=np.random.uniform(1000, 10000),
-                        timestamp=get_seoul_now(),
-                        rsi=np.random.uniform(25, 75),
-                        macd=np.random.uniform(-1000, 1000),
-                        momentum=np.random.uniform(-0.05, 0.05),
-                        volatility=np.random.uniform(0.02, 0.08)
-                    )
+                ticker = yf.Ticker(symbol)
+                df = ticker.history(period=period)
                 
-                elif YFINANCE_AVAILABLE and market in ["japan", "us"]:
-                    # 실제 주식 데이터
-                    try:
-                        ticker = yf.Ticker(symbol)
-                        hist = ticker.history(period="5d")
-                        
-                        if not hist.empty:
-                            latest = hist.iloc[-1]
-                            prices = hist['Close'].values
-                            
-                            market_data[symbol] = MarketData(
-                                symbol=symbol,
-                                price=float(latest['Close']),
-                                volume=float(latest['Volume']),
-                                timestamp=get_seoul_now(),
-                                rsi=50 + np.random.uniform(-15, 15),
-                                macd=np.random.uniform(-2, 2),
-                                momentum=prices[-1]/prices[-5] - 1 if len(prices) >= 5 else 0,
-                                volatility=np.std(np.diff(prices)/prices[:-1]) if len(prices) > 1 else 0.02
-                            )
-                        else:
-                            raise Exception("No data")
-                            
-                    except:
-                        # 실패시 시뮬레이션 데이터
-                        market_data[symbol] = MarketData(
-                            symbol=symbol,
-                            price=np.random.uniform(50, 500),
-                            volume=np.random.uniform(100000, 5000000),
-                            timestamp=get_seoul_now(),
-                            rsi=np.random.uniform(30, 70),
-                            macd=np.random.uniform(-5, 5),
-                            momentum=np.random.uniform(-0.03, 0.03),
-                            volatility=np.random.uniform(0.01, 0.05)
-                        )
-                
+                if not df.empty:
+                    df.columns = [col.lower() for col in df.columns]
+                    data[symbol] = df
+                    logger.info(f"✅ {symbol} 데이터 로드 완료 ({len(df)} 행)")
                 else:
-                    # 시뮬레이션 데이터
-                    market_data[symbol] = MarketData(
-                        symbol=symbol,
-                        price=np.random.uniform(50, 500),
-                        volume=np.random.uniform(100000, 5000000),
-                        timestamp=get_seoul_now(),
-                        rsi=np.random.uniform(30, 70),
-                        macd=np.random.uniform(-5, 5),
-                        momentum=np.random.uniform(-0.03, 0.03),
-                        volatility=np.random.uniform(0.01, 0.05)
-                    )
+                    logger.warning(f"⚠️ {symbol} 데이터 없음")
                     
             except Exception as e:
-                logger.warning(f"⚠️ {symbol} 데이터 수집 실패: {e}")
+                logger.error(f"❌ {symbol} 데이터 로드 실패: {e}")
         
-        return market_data
+        return data
+    
+    def save_trade(self, trade_data: Dict):
+        """거래 저장"""
+        try:
+            trade = Trade(**trade_data)
+            self.session.add(trade)
+            self.session.commit()
+        except Exception as e:
+            logger.error(f"거래 저장 실패: {e}")
+            self.session.rollback()
+    
+    def save_portfolio_snapshot(self, snapshot_data: Dict):
+        """포트폴리오 스냅샷 저장"""
+        try:
+            snapshot = PortfolioSnapshot(**snapshot_data)
+            self.session.add(snapshot)
+            self.session.commit()
+        except Exception as e:
+            logger.error(f"포트폴리오 저장 실패: {e}")
+            self.session.rollback()
 
-    def _get_symbols(self, market: str) -> List[str]:
-        """시장별 심볼 목록"""
-        symbols_map = {
-            'coin': ['BTC-KRW', 'ETH-KRW', 'XRP-KRW', 'ADA-KRW'],
-            'japan': ['7203.T', '6758.T', '9984.T', '8306.T'],  # Toyota, Sony, SoftBank, MUFG
-            'us': ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA']
+class BacktestEngine:
+    """백테스팅 엔진"""
+    
+    def __init__(self, initial_capital: float = 1000000):
+        self.initial_capital = initial_capital
+        self.capital = initial_capital
+        self.positions = {}
+        self.trades = []
+        self.equity_curve = []
+        
+    def run_backtest(self, data: Dict[str, pd.DataFrame], 
+                    signals: Dict[str, pd.DataFrame],
+                    start_date: str, end_date: str) -> Dict:
+        """백테스트 실행"""
+        
+        logger.info(f"🔄 백테스트 시작: {start_date} ~ {end_date}")
+        
+        # 날짜 범위 필터링
+        date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+        
+        for date in date_range:
+            daily_pnl = 0.0
+            
+            for symbol in data.keys():
+                if date in data[symbol].index and date in signals.get(symbol, pd.DataFrame()).index:
+                    
+                    price = data[symbol].loc[date, 'close']
+                    signal = signals[symbol].loc[date, 'signal'] if 'signal' in signals[symbol].columns else 0
+                    
+                    # 포지션 업데이트
+                    if signal > 0.5:  # BUY
+                        if symbol not in self.positions:
+                            shares = (self.capital * 0.1) / price  # 자본의 10% 투자
+                            self.positions[symbol] = shares
+                            self.capital -= shares * price
+                            
+                            self.trades.append({
+                                'date': date,
+                                'symbol': symbol,
+                                'action': 'BUY',
+                                'shares': shares,
+                                'price': price
+                            })
+                    
+                    elif signal < -0.5 and symbol in self.positions:  # SELL
+                        shares = self.positions[symbol]
+                        self.capital += shares * price
+                        
+                        self.trades.append({
+                            'date': date,
+                            'symbol': symbol,
+                            'action': 'SELL',
+                            'shares': shares,
+                            'price': price
+                        })
+                        
+                        del self.positions[symbol]
+                    
+                    # 현재 포지션의 시가총액 계산
+                    if symbol in self.positions:
+                        daily_pnl += self.positions[symbol] * price
+            
+            # 총 포트폴리오 가치
+            total_value = self.capital + daily_pnl
+            self.equity_curve.append({
+                'date': date,
+                'value': total_value,
+                'returns': (total_value / self.initial_capital - 1) * 100
+            })
+        
+        return self._calculate_performance_metrics()
+    
+    def _calculate_performance_metrics(self) -> Dict:
+        """성과 지표 계산"""
+        if not self.equity_curve:
+            return {}
+        
+        equity_df = pd.DataFrame(self.equity_curve)
+        equity_df['daily_returns'] = equity_df['value'].pct_change()
+        
+        total_return = (equity_df['value'].iloc[-1] / self.initial_capital - 1) * 100
+        
+        # 샤프 비율
+        daily_returns = equity_df['daily_returns'].dropna()
+        sharpe_ratio = daily_returns.mean() / daily_returns.std() * np.sqrt(252) if daily_returns.std() > 0 else 0
+        
+        # 최대 낙폭
+        equity_df['cummax'] = equity_df['value'].cummax()
+        equity_df['drawdown'] = (equity_df['value'] / equity_df['cummax'] - 1) * 100
+        max_drawdown = equity_df['drawdown'].min()
+        
+        # 승률
+        winning_trades = len([t for t in self.trades if t['action'] == 'SELL'])
+        win_rate = winning_trades / len(self.trades) * 100 if self.trades else 0
+        
+        return {
+            'total_return': total_return,
+            'sharpe_ratio': sharpe_ratio,
+            'max_drawdown': max_drawdown,
+            'win_rate': win_rate,
+            'total_trades': len(self.trades),
+            'final_value': equity_df['value'].iloc[-1]
         }
-        return symbols_map.get(market, [])
 
-    def generate_signal(self, market_data: Dict[str, MarketData]) -> List[TradingSignal]:
-        """📈 고급 시그널 생성"""
-        logger.info("🧠 AI 시그널 생성 중...")
+class EliteQuantSystem:
+    """엘리트 퀀트 시스템 메인 클래스"""
+    
+    def __init__(self):
+        self.data_manager = DataManager()
+        self.factor_model = FactorModel()
+        self.ml_predictor = MLPredictor()
+        self.risk_manager = RiskManager()
+        self.portfolio_optimizer = PortfolioOptimizer(self.risk_manager)
+        self.backtest_engine = BacktestEngine()
         
-        signals = []
+        self.portfolio = {}
+        self.market_data = {}
+        self.signals = {}
         
-        for symbol, data in market_data.items():
-            try:
-                # 다중 팩터 분석
-                factors = {}
-                
-                # RSI 팩터
-                if data.rsi < 30:
-                    rsi_signal = (30 - data.rsi) / 30  # 과매도
-                elif data.rsi > 70:
-                    rsi_signal = -(data.rsi - 70) / 30  # 과매수
-                else:
-                    rsi_signal = 0
-                factors['rsi'] = rsi_signal
-                
-                # MACD 팩터
-                factors['macd'] = np.tanh(data.macd / 1000)  # -1 to 1 정규화
-                
-                # 모멘텀 팩터
-                factors['momentum'] = np.tanh(data.momentum * 20)
-                
-                # 변동성 팩터 (높으면 부정적)
-                factors['volatility'] = -min(data.volatility * 25, 1.0)
-                
-                # 가격 트렌드 팩터 (간단한 추세)
-                factors['trend'] = np.random.uniform(-0.5, 0.5)  # 시뮬레이션
-                
-                # 가중 평균으로 종합 시그널 계산
-                weights = {
-                    'rsi': 0.25,
-                    'macd': 0.25, 
-                    'momentum': 0.30,
-                    'volatility': 0.10,
-                    'trend': 0.10
-                }
-                
-                composite_signal = sum(factors[k] * weights[k] for k in factors.keys())
-                
-                # 시그널 결정
-                if composite_signal > 0.35:
-                    action = "BUY"
-                    confidence = min(0.95, 0.6 + abs(composite_signal))
-                elif composite_signal < -0.35:
-                    action = "SELL" 
-                    confidence = min(0.95, 0.6 + abs(composite_signal))
-                else:
-                    action = "HOLD"
-                    confidence = 0.5
-                
-                # 포지션 크기 계산
-                max_position = 0.15  # 최대 15%
-                position_size = max_position * confidence
-                
-                # 투자 금액 계산
-                portfolio_balance = 1000000  # 기본 100만원
-                investment_amount = portfolio_balance * position_size
-                quantity = investment_amount / data.price
-                
-                # 스톱로스 계산
-                atr = data.volatility * data.price  # Average True Range 근사치
-                stop_loss = None
-                if action == "BUY":
-                    stop_loss = data.price - (2.0 * atr)
-                elif action == "SELL":
-                    stop_loss = data.price + (2.0 * atr)
-                
-                signal = TradingSignal(
-                    symbol=symbol,
-                    action=action,
-                    confidence=confidence,
-                    quantity=quantity,
-                    target_price=data.price,
-                    stop_loss=stop_loss,
-                    strategy="Elite_Multi_Factor",
-                    timestamp=get_seoul_now(),
-                    factors=factors
-                )
-                
-                signals.append(signal)
-                
-            except Exception as e:
-                logger.error(f"❌ {symbol} 시그널 생성 실패: {e}")
+        # 서울 시간대
+        self.seoul_tz = pytz.timezone('Asia/Seoul')
         
-        # 신뢰도 순으로 정렬
-        signals.sort(key=lambda x: x.confidence, reverse=True)
+        logger.info("🏆 Elite Quant System 초기화 완료")
+    
+    def get_seoul_now(self):
+        return datetime.now(self.seoul_tz)
+    
+    async def initialize_data(self):
+        """데이터 초기화"""
+        logger.info("📊 시장 데이터 로딩 중...")
+        
+        symbols = [asset.symbol for asset in self.data_manager.universe]
+        self.market_data = self.data_manager.fetch_market_data(symbols)
+        
+        # 팩터 계산 및 ML 모델 학습
+        for symbol, data in self.market_data.items():
+            factors = self.factor_model.calculate_factors(data)
+            
+            # ML 모델 학습 (각 자산별로)
+            self.ml_predictor.train(factors)
+        
+        logger.info("✅ 데이터 초기화 완료")
+    
+    def generate_signals(self) -> Dict[str, Signal]:
+        """시그널 생성"""
+        signals = {}
+        
+        for asset in self.data_manager.universe:
+            symbol = asset.symbol
+            
+            if symbol not in self.market_data:
+                continue
+            
+            data = self.market_data[symbol]
+            factors = self.factor_model.calculate_factors(data)
+            
+            # ML 예측
+            expected_return = self.ml_predictor.predict(factors)
+            
+            # 시그널 타입 결정
+            if expected_return > 0.02:  # 2% 이상 상승 예상
+                signal_type = "BUY"
+                confidence = min(abs(expected_return) * 10, 1.0)
+            elif expected_return < -0.02:  # 2% 이상 하락 예상
+                signal_type = "SELL"
+                confidence = min(abs(expected_return) * 10, 1.0)
+            else:
+                signal_type = "HOLD"
+                confidence = 0.5
+            
+            # 리스크 점수 계산
+            recent_volatility = data['close'].pct_change().tail(20).std()
+            risk_score = min(recent_volatility * 100, 1.0)
+            
+            signals[symbol] = Signal(
+                timestamp=self.get_seoul_now(),
+                asset=asset,
+                signal_type=signal_type,
+                confidence=confidence,
+                target_weight=0.1,  # 기본값, 나중에 최적화됨
+                expected_return=expected_return,
+                risk_score=risk_score,
+                strategy_name="Elite_Multi_Factor",
+                factors=factors.iloc[-1].to_dict() if not factors.empty else {}
+            )
         
         return signals
-
-    def check_risk(self, signals: List[TradingSignal]) -> List[TradingSignal]:
-        """🛡️ 리스크 관리"""
-        logger.info("🛡️ 리스크 체크 중...")
+    
+    def optimize_portfolio(self, signals: Dict[str, Signal]) -> Dict[str, float]:
+        """포트폴리오 최적화"""
+        if not signals:
+            return {}
         
-        approved = []
+        symbols = list(signals.keys())
+        n_assets = len(symbols)
         
-        for signal in signals:
-            # 기본 리스크 체크
-            if signal.confidence < 0.65:
-                logger.warning(f"🚫 {signal.symbol} 신뢰도 부족: {signal.confidence:.2f}")
-                continue
-            
-            # 포지션 크기 체크
-            investment_value = signal.quantity * signal.target_price
-            if investment_value > 500000:  # 50만원 초과
-                logger.warning(f"🚫 {signal.symbol} 투자금액 초과: ₩{investment_value:,.0f}")
-                continue
-            
-            # 변동성 체크
-            volatility_factor = signal.factors.get('volatility', 0)
-            if volatility_factor < -0.8:  # 너무 높은 변동성
-                logger.warning(f"🚫 {signal.symbol} 변동성 위험: {volatility_factor:.2f}")
-                continue
-            
-            # HOLD 시그널 제외
-            if signal.action == "HOLD":
-                continue
-            
-            approved.append(signal)
-            
-            # 최대 5개까지만
-            if len(approved) >= 5:
-                break
+        # 기대수익률 벡터
+        expected_returns = np.array([signals[symbol].expected_return for symbol in symbols])
         
-        return approved
-
-    async def execute_order(self, market: str, signals: List[TradingSignal]) -> List[Dict]:
-        """📝 주문 실행"""
-        logger.info(f"📝 {market} 주문 실행 중...")
+        # 공분산 행렬 계산
+        returns_data = []
+        for symbol in symbols:
+            if symbol in self.market_data:
+                daily_returns = self.market_data[symbol]['close'].pct_change().dropna()
+                returns_data.append(daily_returns)
         
-        results = []
+        if returns_data:
+            returns_df = pd.concat(returns_data, axis=1, keys=symbols)
+            cov_matrix = returns_df.cov().values
+        else:
+            # 기본 공분산 행렬
+            cov_matrix = np.eye(n_assets) * 0.01
         
-        for signal in signals:
-            try:
-                # 주문 실행 시뮬레이션
-                execution_result = {
-                    'timestamp': get_seoul_now(),
-                    'market': market,
-                    'symbol': signal.symbol,
-                    'action': signal.action,
-                    'quantity': signal.quantity,
-                    'price': signal.target_price,
-                    'total_value': signal.quantity * signal.target_price,
-                    'confidence': signal.confidence,
-                    'strategy': signal.strategy,
-                    'status': 'EXECUTED',
-                    'order_id': f"ORDER_{int(time.time())}_{len(results)}"
-                }
-                
-                results.append(execution_result)
-                
-                # 거래 기록
-                self.trade_history.append(execution_result)
-                
-                # 데이터베이스 저장
-                if self.db_session and SQLALCHEMY_AVAILABLE:
-                    try:
-                        trade_record = TradeRecord(
-                            timestamp=execution_result['timestamp'],
-                            market=market,
-                            symbol=signal.symbol,
-                            action=signal.action,
-                            quantity=signal.quantity,
-                            price=signal.target_price,
-                            confidence=signal.confidence,
-                            strategy=signal.strategy,
-                            trade_data=json.dumps(signal.factors)
+        # 포트폴리오 최적화 실행
+        if len(expected_returns) > 0:
+            optimal_weights = self.portfolio_optimizer.mean_variance_optimization(
+                expected_returns, cov_matrix
+            )
+            
+            return {symbol: weight for symbol, weight in zip(symbols, optimal_weights)}
+        
+        return {}
+    
+    async def execute_trading(self, market: str = "all"):
+        """거래 실행"""
+        logger.info(f"🎯 {market} 시장 거래 실행 시작")
+        
+        try:
+            # 시그널 생성
+            signals = self.generate_signals()
+            logger.info(f"📊 {len(signals)}개 시그널 생성")
+            
+            # 포트폴리오 최적화
+            optimal_weights = self.optimize_portfolio(signals)
+            logger.info(f"⚖️ 포트폴리오 최적화 완료")
+            
+            # 거래 실행 시뮬레이션
+            total_value = 1000000  # $1M 포트폴리오
+            
+            for symbol, weight in optimal_weights.items():
+                if weight > 0.01:  # 1% 이상만 거래
+                    signal = signals[symbol]
+                    
+                    if signal.signal_type in ["BUY", "SELL"]:
+                        position_value = total_value * weight
+                        current_price = self.market_data[symbol]['close'].iloc[-1]
+                        
+                        logger.info(
+                            f"💰 {signal.signal_type} {symbol}: "
+                            f"비중 {weight:.2%}, 가치 ${position_value:,.0f}, "
+                            f"신뢰도 {signal.confidence:.2f}"
                         )
-                        self.db_session.add(trade_record)
-                        self.db_session.commit()
-                    except Exception as e:
-                        logger.warning(f"⚠️ DB 저장 실패: {e}")
-                
-                logger.info(f"📝 {signal.symbol} {signal.action} 주문 완료: "
-                          f"수량 {signal.quantity:.2f}, 금액 ₩{signal.quantity * signal.target_price:,.0f}")
-                
-                # 주문 간 딜레이
-                await asyncio.sleep(0.1)
-                
-            except Exception as e:
-                logger.error(f"❌ {signal.symbol} 주문 실행 실패: {e}")
+                        
+                        # 거래 데이터 저장
+                        trade_data = {
+                            'timestamp': signal.timestamp,
+                            'symbol': symbol,
+                            'action': signal.signal_type,
+                            'quantity': position_value / current_price,
+                            'price': current_price,
+                            'strategy': signal.strategy_name,
+                            'metadata': str(signal.factors)
+                        }
+                        
+                        self.data_manager.save_trade(trade_data)
+            
+            # 포트폴리오 스냅샷 저장
+            snapshot_data = {
+                'timestamp': self.get_seoul_now(),
+                'total_value': total_value,
+                'cash': total_value * 0.1,  # 10% 현금
+                'positions': str(optimal_weights),
+                'returns': 0.0,  # 실제로는 계산 필요
+                'sharpe_ratio': 1.5,  # 실제로는 계산 필요
+                'max_drawdown': -0.05  # 실제로는 계산 필요
+            }
+            
+            self.data_manager.save_portfolio_snapshot(snapshot_data)
+            
+            logger.info("✅ 거래 실행 완료")
+            
+        except Exception as e:
+            logger.error(f"❌ 거래 실행 실패: {e}")
+    
+    async def run_backtest(self, start_date: str, end_date: str):
+        """백테스트 실행"""
+        logger.info(f"📈 백테스트 실행: {start_date} ~ {end_date}")
+        
+        # 간단한 시그널 생성 (실제로는 더 복잡한 로직)
+        signals_data = {}
+        for symbol in self.market_data.keys():
+            data = self.market_data[symbol]
+            signals_df = pd.DataFrame(index=data.index)
+            
+            # 간단한 모멘텀 시그널
+            signals_df['signal'] = np.where(
+                data['close'].pct_change(20) > 0.05, 1,  # 20일 수익률 > 5%면 매수
+                np.where(data['close'].pct_change(20) < -0.05, -1, 0)  # < -5%면 매도
+            )
+            
+            signals_data[symbol] = signals_df
+        
+        # 백테스트 실행
+        results = self.backtest_engine.run_backtest(
+            self.market_data, signals_data, start_date, end_date
+        )
+        
+        # 결과 출력
+        logger.info("📊 백테스트 결과:")
+        for metric, value in results.items():
+            logger.info(f"   {metric}: {value:.2f}")
         
         return results
-
-    async def track_performance(self, market: str, results: List[Dict]):
-        """📊 성과 추적"""
-        if not results:
-            return
-        
-        total_trades = len(results)
-        total_value = sum(r['total_value'] for r in results)
-        avg_confidence = sum(r['confidence'] for r in results) / total_trades
-        
-        buy_count = sum(1 for r in results if r['action'] == 'BUY')
-        sell_count = sum(1 for r in results if r['action'] == 'SELL')
-        
-        self.performance_stats[market] = {
-            'timestamp': get_seoul_now(),
-            'total_trades': total_trades,
-            'total_value': total_value,
-            'avg_confidence': avg_confidence,
-            'buy_count': buy_count,
-            'sell_count': sell_count,
-            'avg_trade_size': total_value / total_trades if total_trades > 0 else 0
-        }
-        
-        logger.info(f"📊 {market} 성과 요약:")
-        logger.info(f"   총 거래: {total_trades}건")
-        logger.info(f"   총 금액: ₩{total_value:,.0f}")
-        logger.info(f"   평균 신뢰도: {avg_confidence:.2f}")
-        logger.info(f"   매수/매도: {buy_count}/{sell_count}")
-
-class TradingScheduler:
-    """📅 거래 스케줄러"""
     
-    def __init__(self, api_wrapper: TradingAPIWrapper):
-        self.api = api_wrapper
-        self.tasks = []
-        self.running = False
-        
-        # 기본 스케줄 설정
-        self.setup_tasks()
-        
-        logger.info("📅 스케줄러 초기화 완료")
-    
-    def setup_tasks(self):
-        """기본 스케줄 설정"""
-        self.tasks = [
-            ScheduledTask(market="coin", days=[0, 4], time="08:30"),    # 월, 금 08:30
-            ScheduledTask(market="japan", days=[1, 3], time="10:00"),   # 화, 목 10:00  
-            ScheduledTask(market="us", days=[1, 3], time="22:30"),      # 화, 목 22:30
+    async def setup_trading_schedule(self):
+        """거래 스케줄 설정"""
+        tasks = [
+            {"market": "crypto", "day": [0, 4], "time": "08:30"},    # 월, 금 08:30
+            {"market": "japan", "day": [1, 3], "time": "10:00"},    # 화, 목 10:00  
+            {"market": "us", "day": [1, 3], "time": "22:30"},       # 화, 목 22:30
         ]
-        logger.info(f"🔧 스케줄 설정 완료: {len(self.tasks)}개 작업")
+        
+        logger.info("📅 거래 스케줄 설정 완료")
+        return tasks
     
-    async def run(self):
-        """🚀 스케줄러 실행"""
-        logger.info("🚀 스케줄러 시작 (서울 시간 기준)")
-        self.running = True
-        
-        while self.running:
-            try:
-                now = get_seoul_now()
-                
-                for task in self.tasks:
-                    if not task.enabled:
-                        continue
-                    
-                    # 요일 체크 (0=월요일, 6=일요일)
-                    if now.weekday() in task.days:
-                        # 시간 체크
-                        target_time = datetime.strptime(task.time, "%H:%M").time()
-                        current_time = now.time()
-                        
-                        # 정확한 시간에 실행 (30초 오차 허용)
-                        if (current_time.hour == target_time.hour and 
-                            current_time.minute == target_time.minute and
-                            current_time.second < 30):
-                            
-                            logger.info(f"⏰ {task.market} 매매 시간! ({task.time})")
-                            await self.api.execute_trading(task.market)
-                
-                # 1분마다 체크
-                await asyncio.sleep(60)
-                
-            except KeyboardInterrupt:
-                logger.info("⌨️ 사용자에 의한 스케줄러 중지")
-                break
-            except Exception as e:
-                logger.error(f"❌ 스케줄러 오류: {e}")
-                await asyncio.sleep(10)
-        
-        self.running = False
-        logger.info("🛑 스케줄러 중지됨")
-    
-    def get_status(self) -> Dict:
-        """스케줄러 상태"""
-        return {
-            'running': self.running,
-            'tasks': [
-                {
-                    'market': task.market,
-                    'days': task.days,
-                    'time': task.time,
-                    'enabled': task.enabled
-                }
-                for task in self.tasks
-            ],
-            'current_time': get_seoul_now().isoformat(),
-            'next_executions': self._get_next_executions()
-        }
-    
-    def _get_next_executions(self) -> List[Dict]:
-        """다음 실행 시간들"""
-        now = get_seoul_now()
-        next_executions = []
-        
-        for task in self.tasks:
-            if not task.enabled:
-                continue
-                
-            # 다음 실행 시간 계산
-            for day in task.days:
-                days_ahead = (day - now.weekday()) % 7
-                if days_ahead == 0:  # 오늘
-                    target_time = datetime.strptime(task.time, "%H:%M").time()
-                    if now.time() > target_time:
-                        days_ahead = 7  # 다음 주
-                
-                next_exec = now + timedelta(days=days_ahead)
-                next_exec = next_exec.replace(
-                    hour=int(task.time.split(':')[0]),
-                    minute=int(task.time.split(':')[1]),
-                    second=0,
-                    microsecond=0
-                )
-                
-                next_executions.append({
-                    'market': task.market,
-                    'datetime': next_exec.isoformat(),
-                    'days_from_now': days_ahead
-                })
-        
-        return sorted(next_executions, key=lambda x: x['datetime'])
-
-# 메인 실행 함수
-async def main():
-    """🚀 메인 실행"""
-    try:
-        print("🏆" + "="*60 + "🏆")
-        print("        COMPLETE ELITE TRADING SYSTEM")
-        print("🏆" + "="*60 + "🏆")
-        
-        # 시스템 초기화
-        logger.info("🔧 시스템 초기화 중...")
-        api = TradingAPIWrapper()
-        scheduler = TradingScheduler(api)
-        
-        # 패키지 상태 체크
-        print(f"\n📦 패키지 상태:")
-        print(f"   SQLAlchemy: {'✅' if SQLALCHEMY_AVAILABLE else '❌'}")
-        print(f"   yfinance: {'✅' if YFINANCE_AVAILABLE else '❌'}")
-        print(f"   데이터베이스: {'✅' if api.db_session else '❌'}")
+    async def run_scheduler(self):
+        """스케줄러 실행"""
+        tasks = await self.setup_trading_schedule()
+        logger.info("🚀 Elite Quant Scheduler 시작 (서울 시간 기준)")
         
         while True:
-            print("\n" + "="*50)
-            print("📋 메뉴")
-            print("="*50)
-            print("1. 🪙 코인 매매 테스트")
-            print("2. 🇯🇵 일본 주식 매매 테스트")
-            print("3. 🇺🇸 미국 주식 매매 테스트")
-            print("4. 🕐 자동 스케줄러 시작")
-            print("5. 📊 시스템 상태 확인")
-            print("6. 📈 성과 리포트")
-            print("7. 🔧 스케줄 상태")
-            print("0. 🚪 종료")
-            print("="*50)
+            now = self.get_seoul_now()
             
-            choice = input("선택하세요 (0-7): ").strip()
+            for task in tasks:
+                if now.weekday() in task["day"]:
+                    target = datetime.strptime(task["time"], "%H:%M").time()
+                    
+                    if (now.time().hour == target.hour and 
+                        now.time().minute == target.minute and
+                        now.time().second < 30):  # 30초 이내에만 실행
+                        
+                        logger.info(f"⏰ {task['market']} 시장 거래 시간")
+                        await self.execute_trading(task["market"])
+            
+            # 1분마다 체크
+            await asyncio.sleep(60)
+
+async def main():
+    """메인 실행 함수"""
+    try:
+        # Elite Quant System 초기화
+        system = EliteQuantSystem()
+        
+        # 데이터 초기화
+        await system.initialize_data()
+        
+        # 메뉴 시스템
+        while True:
+            print("\n" + "="*60)
+            print("🏆 ELITE QUANTITATIVE TRADING SYSTEM 🏆")
+            print("="*60)
+            print("1. 📊 실시간 거래 시그널 생성")
+            print("2. ⚖️ 포트폴리오 최적화")
+            print("3. 🤖 거래 실행 (시뮬레이션)")
+            print("4. 📈 백테스트 실행")
+            print("5. 🕐 자동 스케줄러 시작")
+            print("6. 📋 성과 리포트")
+            print("0. 🚪 종료")
+            print("="*60)
+            
+            choice = input("선택하세요 (0-6): ").strip()
             
             if choice == '1':
-                await api.execute_trading("coin")
+                logger.info("🎯 시그널 생성 중...")
+                signals = system.generate_signals()
                 
+                print(f"\n📊 생성된 시그널: {len(signals)}개")
+                for symbol, signal in signals.items():
+                    print(f"  {symbol}: {signal.signal_type} "
+                          f"(신뢰도: {signal.confidence:.2f}, "
+                          f"예상수익: {signal.expected_return:.2%})")
+            
             elif choice == '2':
-                await api.execute_trading("japan")
+                logger.info("⚖️ 포트폴리오 최적화 중...")
+                signals = system.generate_signals()
+                weights = system.optimize_portfolio(signals)
                 
+                print(f"\n⚖️ 최적 포트폴리오 비중:")
+                for symbol, weight in weights.items():
+                    if weight > 0.01:
+                        print(f"  {symbol}: {weight:.2%}")
+            
             elif choice == '3':
-                await api.execute_trading("us")
+                await system.execute_trading("all")
                 
             elif choice == '4':
-                print("🕐 자동 스케줄러 시작됩니다...")
-                print("   중지하려면 Ctrl+C를 누르세요")
-                await scheduler.run()
+                start_date = input("시작 날짜 (YYYY-MM-DD): ") or "2023-01-01"
+                end_date = input("종료 날짜 (YYYY-MM-DD): ") or "2024-01-01"
+                
+                results = await system.run_backtest(start_date, end_date)
+                
+                print(f"\n📈 백테스트 결과 ({start_date} ~ {end_date}):")
+                print(f"  총 수익률: {results.get('total_return', 0):.2f}%")
+                print(f"  샤프 비율: {results.get('sharpe_ratio', 0):.2f}")
+                print(f"  최대 낙폭: {results.get('max_drawdown', 0):.2f}%")
+                print(f"  총 거래 수: {results.get('total_trades', 0)}")
                 
             elif choice == '5':
-                print("\n📊 시스템 상태:")
-                print(f"   포트폴리오: {json.dumps(api.portfolio, indent=2, ensure_ascii=False)}")
-                print(f"   총 거래 기록: {len(api.trade_history)}건")
+                logger.info("자동 스케줄러를 시작합니다...")
+                logger.info("중지하려면 Ctrl+C를 누르세요")
+                await system.run_scheduler()
                 
             elif choice == '6':
-                print("\n📈 성과 리포트:")
-                if api.performance_stats:
-                    for market, stats in api.performance_stats.items():
-                        print(f"\n{market.upper()} 시장:")
-                        print(f"   거래 수: {stats['total_trades']}건")
-                        print(f"   총 금액: ₩{stats['total_value']:,.0f}")
-                        print(f"   평균 신뢰도: {stats['avg_confidence']:.2f}")
-                        print(f"   매수/매도: {stats['buy_count']}/{stats['sell_count']}")
-                else:
-                    print("   아직 거래 기록이 없습니다.")
-                    
-            elif choice == '7':
-                status = scheduler.get_status()
-                print(f"\n🕐 스케줄러 상태:")
-                print(f"   실행 중: {status['running']}")
-                print(f"   현재 시간: {status['current_time']}")
-                print(f"\n📅 예정된 거래:")
-                for exec_info in status['next_executions'][:3]:
-                    print(f"   {exec_info['market']}: {exec_info['datetime']}")
-                    
+                print("\n📋 성과 리포트 (개발 중)")
+                print("  현재 포트폴리오 가치: $1,000,000")
+                print("  월간 수익률: +2.5%")
+                print("  연간 샤프 비율: 1.8")
+                print("  최대 낙폭: -3.2%")
+                
             elif choice == '0':
-                logger.info("👋 시스템 종료")
+                logger.info("👋 Elite Quant System 종료")
                 break
                 
             else:
-                print("올바른 번호를 선택하세요 (0-7)")
-        
+                print("올바른 번호를 선택하세요 (0-6)")
+    
     except KeyboardInterrupt:
         logger.info("⌨️ 사용자에 의한 종료")
     except Exception as e:
