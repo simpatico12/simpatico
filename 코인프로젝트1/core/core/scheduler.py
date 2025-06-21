@@ -1,99 +1,130 @@
-import asyncio
+import os
 import time
-from datetime import datetime, timedelta
-from typing import Dict, Callable, Optional
+import asyncio
+import ccxt
+from ib_insync import IB, Stock, MarketOrder
+import pandas as pd
+import numpy as np
+from datetime import datetime
 from dataclasses import dataclass
-from enum import Enum
-from logger import get_logger
-from api_wrapper import QuantAPIWrapper
+import logging
 
-logger = get_logger(__name__)
+# 로거 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("QuantTrading")
 
-class ScheduleType(Enum):
-    MARKET_DATA = "market_data"
-    SIGNAL_GENERATION = "signal_generation"
-    RISK_MONITORING = "risk_monitoring"
-    EXECUTION = "execution"
-
+# === 데이터 클래스 === #
 @dataclass
-class ScheduledTask:
-    name: str
-    schedule_type: ScheduleType
-    function: Callable
-    interval: int  # seconds
-    enabled: bool = True
-    last_run: Optional[datetime] = None
-    next_run: Optional[datetime] = None
+class MarketData:
+    symbol: str
+    price: float
+    rsi: float
+    macd: float
+    bb_upper: float
+    bb_lower: float
 
-class TradingScheduler:
-    def __init__(self, api: QuantAPIWrapper, config: Dict = None):
-        self.api = api
-        self.config = config or {}
-        self.tasks: Dict[str, ScheduledTask] = {}
-        self.running = False
-        logger.info("✅ 스케줄러 초기화")
-
-    def add_task(self, task: ScheduledTask):
-        self.tasks[task.name] = task
-        task.next_run = datetime.now() + timedelta(seconds=task.interval)
-        logger.info(f"✅ 작업 등록: {task.name} (주기: {task.interval}s)")
-
-    async def run_task(self, task: ScheduledTask):
-        if not task.enabled:
-            return
+# === Quant API Wrapper === #
+class QuantAPIWrapper:
+    def __init__(self, upbit_key, upbit_secret):
+        self.upbit = ccxt.upbit({
+            'apiKey': upbit_key,
+            'secret': upbit_secret
+        })
+        
+        self.ib = IB()
+        logger.info("✅ API 초기화 완료")
+        
+    def connect_ibkr(self, host='127.0.0.1', port=7497, clientId=1):
+        self.ib.connect(host, port, clientId)
+        logger.info("✅ IBKR 연결 완료")
+    
+    async def fetch_upbit_data(self, symbol='BTC/KRW') -> MarketData:
+        ohlcv = await asyncio.to_thread(self.upbit.fetch_ohlcv, symbol, '1h', limit=100)
+        df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+        
+        # 기술 지표 계산
+        df['rsi'] = ta_rsi(df['close'])
+        df['macd'], _ = ta_macd(df['close'])
+        df['bb_upper'], df['bb_lower'] = ta_bollinger(df['close'])
+        
+        latest = df.iloc[-1]
+        
+        return MarketData(
+            symbol=symbol,
+            price=latest['close'],
+            rsi=latest['rsi'],
+            macd=latest['macd'],
+            bb_upper=latest['bb_upper'],
+            bb_lower=latest['bb_lower']
+        )
+    
+    def place_upbit_order(self, symbol, side, amount):
         try:
-            logger.debug(f"🔄 작업 실행: {task.name}")
-            await task.function()
-            task.last_run = datetime.now()
-            task.next_run = task.last_run + timedelta(seconds=task.interval)
+            order = self.upbit.create_order(symbol, 'market', side, amount)
+            logger.info(f"🚀 업비트 {side} 주문: {symbol} {amount}")
+            return order
         except Exception as e:
-            logger.error(f"❌ {task.name} 실패: {e}")
+            logger.error(f"❌ 업비트 주문 실패: {e}")
+            return None
+    
+    def place_ibkr_order(self, symbol, side, quantity):
+        contract = Stock(symbol, 'SMART', 'USD')
+        order = MarketOrder(side, quantity)
+        trade = self.ib.placeOrder(contract, order)
+        logger.info(f"🚀 IBKR {side} 주문: {symbol} {quantity}")
+        return trade
 
-    async def start(self):
-        logger.info("🚀 스케줄러 시작")
-        self.running = True
-        while self.running:
-            now = datetime.now()
-            tasks_to_run = [task for task in self.tasks.values() if task.enabled and now >= task.next_run]
-            if tasks_to_run:
-                await asyncio.gather(*(self.run_task(task) for task in tasks_to_run))
-            await asyncio.sleep(1)
+# === 기술 지표 === #
+def ta_rsi(close, period=14):
+    delta = close.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(50)
 
-    def stop(self):
-        self.running = False
-        logger.info("🛑 스케줄러 중지")
+def ta_macd(close):
+    ema12 = close.ewm(span=12).mean()
+    ema26 = close.ewm(span=26).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9).mean()
+    return macd, signal
 
-async def create_scheduler(config: Dict) -> TradingScheduler:
-    api = QuantAPIWrapper(config)
-    scheduler = TradingScheduler(api, config)
+def ta_bollinger(close, window=20):
+    sma = close.rolling(window=window).mean()
+    std = close.rolling(window=window).std()
+    upper = sma + 2 * std
+    lower = sma - 2 * std
+    return upper, lower
 
-    scheduler.add_task(ScheduledTask(
-        name="market_data",
-        schedule_type=ScheduleType.MARKET_DATA,
-        function=api.collect_market_data,
-        interval=60
-    ))
+# === 스케줄러 === #
+async def scheduler(api: QuantAPIWrapper):
+    symbols_upbit = ['BTC/KRW', 'ETH/KRW']
+    symbols_ibkr = ['AAPL', 'TSLA']
+    
+    while True:
+        for sym in symbols_upbit:
+            data = await api.fetch_upbit_data(sym)
+            if data.rsi < 30 or data.price < data.bb_lower:
+                api.place_upbit_order(sym, 'buy', 0.001)
+            elif data.rsi > 70 or data.price > data.bb_upper:
+                api.place_upbit_order(sym, 'sell', 0.001)
+        
+        for sym in symbols_ibkr:
+            # 간단화: 실제 데이터 fetch 생략, 샘플 매매 로직
+            api.place_ibkr_order(sym, 'BUY', 1)
+        
+        logger.info("💡 주기적 매매 완료, 60초 대기")
+        await asyncio.sleep(60)
 
-    scheduler.add_task(ScheduledTask(
-        name="signal_generation",
-        schedule_type=ScheduleType.SIGNAL_GENERATION,
-        function=api.generate_signals,
-        interval=300
-    ))
+# === 메인 === #
+async def main():
+    upbit_key = os.getenv('UPBIT_KEY')
+    upbit_secret = os.getenv('UPBIT_SECRET')
+    api = QuantAPIWrapper(upbit_key, upbit_secret)
+    api.connect_ibkr()
+    
+    await scheduler(api)
 
-    scheduler.add_task(ScheduledTask(
-        name="risk_monitoring",
-        schedule_type=ScheduleType.RISK_MONITORING,
-        function=api.risk_monitoring,
-        interval=600
-    ))
-
-    scheduler.add_task(ScheduledTask(
-        name="execution",
-        schedule_type=ScheduleType.EXECUTION,
-        function=api.execute_trades,
-        interval=120
-    ))
-
-    asyncio.create_task(scheduler.start())
-    return scheduler
+if __name__ == "__main__":
+    asyncio.run(main())
