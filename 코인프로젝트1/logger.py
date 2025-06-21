@@ -167,6 +167,13 @@ def setup_logger(
     
     return logger
 
+# get_logger 함수 추가 (기존 코드 호환성을 위해)
+def get_logger(name: str = 'quant') -> logging.Logger:
+    """
+    간단한 로거 생성 함수 (기존 코드 호환성)
+    """
+    return setup_logger(name)
+
 # 기본 로거 생성
 logger = setup_logger()
 
