@@ -25,6 +25,13 @@ from dataclasses import dataclass
 import yfinance as yf
 import talib
 
+# 뉴스 분석 모듈 import (있을 때만)
+try:
+    from news_analyzer import get_news_sentiment
+    NEWS_ANALYZER_AVAILABLE = True
+except ImportError:
+    NEWS_ANALYZER_AVAILABLE = False
+
 # 로거 설정
 logger = logging.getLogger(__name__)
 
@@ -35,7 +42,7 @@ class JPStockSignal:
     action: str  # 'buy', 'sell', 'hold'
     confidence: float  # 0.0 ~ 1.0
     price: float
-    strategy_source: str  # 'ichimoku', 'momentum_breakout'
+    strategy_source: str  # 'ichimoku', 'momentum_breakout', 'integrated_analysis'
     ichimoku_signal: str  # 'bullish', 'bearish', 'neutral'
     momentum_score: float
     volume_ratio: float
@@ -44,6 +51,7 @@ class JPStockSignal:
     reasoning: str
     target_price: float
     timestamp: datetime
+    additional_data: Optional[Dict] = None
 
 class JPStrategy:
     """🇯🇵 고급 일본 주식 전략 클래스"""
@@ -58,25 +66,27 @@ class JPStrategy:
         self.use_ichimoku = self.jp_config.get('ichimoku', True)
         self.use_momentum_breakout = self.jp_config.get('momentum_breakout', True)
         
-        # 일목균형표 파라미터
-        self.tenkan_period = 9    # 전환선
-        self.kijun_period = 26    # 기준선
-        self.senkou_period = 52   # 선행스팬B
+        # 일목균형표 파라미터 (settings.yaml 적용)
+        self.tenkan_period = self.jp_config.get('tenkan_period', 9)
+        self.kijun_period = self.jp_config.get('kijun_period', 26)
+        self.senkou_period = self.jp_config.get('senkou_period', 52)
         
-        # 모멘텀 돌파 파라미터
-        self.breakout_period = 20  # 돌파 기준 기간
-        self.volume_threshold = 1.5  # 거래량 증가 임계값
-        self.rsi_period = 14
+        # 모멘텀 돌파 파라미터 (settings.yaml 적용)
+        self.breakout_period = self.jp_config.get('breakout_period', 20)
+        self.volume_threshold = self.jp_config.get('volume_threshold', 1.5)
+        self.rsi_period = self.jp_config.get('rsi_period', 14)
         
-        # 일본 주요 주식 (도쿄증권거래소)
-        self.symbols = {
-            'TECH': ['7203.T', '6758.T', '9984.T', '6861.T', '4689.T'],  # 토요타, 소니, 소프트뱅크, 키엔스, Z홀딩스
-            'FINANCE': ['8306.T', '8316.T', '8411.T', '8355.T'],        # 미츠비시UFJ, 스미토모미츠이, 미즈호, 시즈오카은행
-            'CONSUMER': ['9983.T', '2914.T', '4568.T', '7974.T'],       # 패스트리테일링, JT, 다이이치산쿄, 임디온
-            'INDUSTRIAL': ['6954.T', '6902.T', '7733.T', '6098.T'],     # 화낙, 덴소, 올림푸스, 리크루트
-            'RETAIL': ['8267.T', '3099.T', '9843.T', '3382.T'],         # 이온, 미츠코시이세탄, 니토리, 세븐일레븐
-            'PHARMA': ['4503.T', '4519.T', '4506.T', '4507.T']          # 아스텔라스, 시온야쿠, 다이니혼, 시오노기
-        }
+        # 뉴스 분석 통합 설정
+        self.news_weight = self.jp_config.get('news_weight', 0.4)  # 뉴스 40%
+        self.technical_weight = self.jp_config.get('technical_weight', 0.6)  # 기술분석 60%
+        
+        # 추적할 일본 주식 (settings.yaml에서 로드)
+        self.symbols = self.jp_config.get('symbols', {
+            'TECH': ['7203.T', '6758.T', '9984.T', '6861.T', '4689.T'],
+            'FINANCE': ['8306.T', '8316.T', '8411.T', '8355.T'],
+            'CONSUMER': ['9983.T', '2914.T', '4568.T', '7974.T'],
+            'INDUSTRIAL': ['6954.T', '6902.T', '7733.T', '6098.T']
+        })
         
         # 모든 심볼을 플랫 리스트로 (.T는 도쿄증권거래소 접미사)
         self.all_symbols = [symbol for sector_symbols in self.symbols.values() 
@@ -85,6 +95,7 @@ class JPStrategy:
         if self.enabled:
             logger.info(f"🇯🇵 일본 주식 전략 초기화 완료 - 추적 종목: {len(self.all_symbols)}개")
             logger.info(f"📊 일목균형표: {self.use_ichimoku}, 모멘텀돌파: {self.use_momentum_breakout}")
+            logger.info(f"🔗 뉴스 통합: {self.news_weight*100:.0f}% + 기술분석: {self.technical_weight*100:.0f}%")
         else:
             logger.info("🇯🇵 일본 주식 전략이 비활성화되어 있습니다")
 
@@ -365,6 +376,52 @@ class JPStrategy:
             logger.error(f"모멘텀 돌파 분석 실패: {e}")
             return 'neutral', 0.0, f"모멘텀 분석 실패: {str(e)}"
 
+    async def _get_news_sentiment(self, symbol: str) -> Tuple[float, str]:
+        """뉴스 센티먼트 분석"""
+        if not NEWS_ANALYZER_AVAILABLE:
+            return 0.5, "뉴스 분석 모듈 없음"
+            
+        try:
+            # news_analyzer.py의 get_news_sentiment 함수 호출
+            news_result = await get_news_sentiment(symbol)
+            
+            if news_result and 'sentiment_score' in news_result:
+                score = news_result['sentiment_score']  # 0.0 ~ 1.0
+                summary = news_result.get('summary', 'No news summary')
+                
+                # 점수를 -1 ~ 1 범위로 변환 (0.5 = 중립)
+                normalized_score = (score - 0.5) * 2
+                
+                return normalized_score, f"뉴스: {summary[:50]}"
+            else:
+                return 0.0, "뉴스 데이터 없음"
+                
+        except Exception as e:
+            logger.error(f"뉴스 센티먼트 분석 실패 {symbol}: {e}")
+            return 0.0, f"뉴스 분석 오류: {str(e)}"
+
+    def _calculate_position_size(self, price: float, confidence: float, account_balance: float = 10000000) -> int:
+        """포지션 크기 계산 (일본 주식용 - 엔화 기준)"""
+        try:
+            # 신뢰도에 따른 포지션 사이징
+            base_position_pct = 0.02  # 기본 2%
+            confidence_multiplier = confidence  # 신뢰도가 높을수록 큰 포지션
+            
+            position_pct = base_position_pct * confidence_multiplier
+            position_pct = min(position_pct, 0.08)  # 일본 주식은 최대 8%로 제한
+            
+            position_value = account_balance * position_pct
+            shares = int(position_value / price) if price > 0 else 0
+            
+            # 일본 주식은 100주 단위로 거래 (단원주)
+            shares = (shares // 100) * 100
+            
+            return shares
+            
+        except Exception as e:
+            logger.error(f"포지션 크기 계산 실패: {e}")
+            return 0
+
     def _calculate_target_price(self, current_price: float, confidence: float, signal: str) -> float:
         """목표주가 계산"""
         if current_price == 0:
@@ -381,7 +438,7 @@ class JPStrategy:
             return current_price
 
     async def analyze_symbol(self, symbol: str) -> JPStockSignal:
-        """개별 일본 주식 분석"""
+        """개별 일본 주식 분석 (뉴스 분석 통합)"""
         if not self.enabled:
             logger.warning("일본 주식 전략이 비활성화되어 있습니다")
             return JPStockSignal(
@@ -400,7 +457,7 @@ class JPStrategy:
 
             current_price = data['Close'].iloc[-1]
             
-            # 일목균형표 분석
+            # 1. 기술적 분석
             ichimoku_signal = 'neutral'
             ichimoku_confidence = 0.0
             ichimoku_reasoning = ""
@@ -421,55 +478,59 @@ class JPStrategy:
                 momentum_signal, momentum_confidence, momentum_reasoning = self._analyze_momentum_breakout(momentum_data)
                 volume_ratio = momentum_data.get('volume_ratio', 1.0)
                 rsi = momentum_data.get('rsi', 50.0)
-                
-            # 종합 판단
-            total_score = 0.0
+            
+            # 기술적 분석 종합 점수
+            technical_score = 0.0
             strategy_source = 'neutral'
             
-            # 일목균형표 가중치 60%, 모멘텀 40%
             if self.use_ichimoku and self.use_momentum_breakout:
                 if ichimoku_signal == 'bullish':
-                    total_score += ichimoku_confidence * 0.6
+                    technical_score += ichimoku_confidence * 0.6
                 elif ichimoku_signal == 'bearish':
-                    total_score -= ichimoku_confidence * 0.6
+                    technical_score -= ichimoku_confidence * 0.6
                     
                 if momentum_signal == 'bullish':
-                    total_score += momentum_confidence * 0.4
+                    technical_score += momentum_confidence * 0.4
                 elif momentum_signal == 'bearish':
-                    total_score -= momentum_confidence * 0.4
+                    technical_score -= momentum_confidence * 0.4
                     
-                strategy_source = 'ichimoku_momentum'
-                
+                strategy_source = 'integrated_analysis'
             elif self.use_ichimoku:
                 if ichimoku_signal == 'bullish':
-                    total_score = ichimoku_confidence
+                    technical_score = ichimoku_confidence
                 elif ichimoku_signal == 'bearish':
-                    total_score = -ichimoku_confidence
+                    technical_score = -ichimoku_confidence
                 strategy_source = 'ichimoku'
-                
             elif self.use_momentum_breakout:
                 if momentum_signal == 'bullish':
-                    total_score = momentum_confidence
+                    technical_score = momentum_confidence
                 elif momentum_signal == 'bearish':
-                    total_score = -momentum_confidence
+                    technical_score = -momentum_confidence
                 strategy_source = 'momentum_breakout'
-                
-            # 최종 액션 결정
-            if total_score >= 0.6:
+            
+            # 2. 뉴스 센티먼트 분석
+            news_score, news_reasoning = await self._get_news_sentiment(symbol)
+            
+            # 3. 최종 통합 점수 (기술분석 60% + 뉴스 40%)
+            final_score = (technical_score * self.technical_weight) + (news_score * self.news_weight)
+            
+            # 4. 최종 액션 결정
+            if final_score >= 0.6:
                 final_action = 'buy'
-                confidence = min(total_score, 0.95)
-            elif total_score <= -0.5:
+                confidence = min(final_score, 0.95)
+            elif final_score <= -0.5:
                 final_action = 'sell'
-                confidence = min(abs(total_score), 0.95)
+                confidence = min(abs(final_score), 0.95)
             else:
                 final_action = 'hold'
                 confidence = 0.5
                 
-            # 목표주가 계산
+            # 5. 목표주가 및 포지션 크기 계산
             target_price = self._calculate_target_price(current_price, confidence, final_action)
+            position_size = self._calculate_position_size(current_price, confidence)
             
-            # 종합 reasoning
-            combined_reasoning = f"{ichimoku_reasoning} | {momentum_reasoning}"
+            # 6. 종합 reasoning
+            combined_reasoning = f"{ichimoku_reasoning} | {momentum_reasoning} | {news_reasoning}"
             
             return JPStockSignal(
                 symbol=symbol,
@@ -478,13 +539,21 @@ class JPStrategy:
                 price=current_price,
                 strategy_source=strategy_source,
                 ichimoku_signal=ichimoku_signal,
-                momentum_score=total_score,
+                momentum_score=final_score,
                 volume_ratio=volume_ratio,
                 rsi=rsi,
                 sector=self._get_sector_for_symbol(symbol),
                 reasoning=combined_reasoning,
                 target_price=target_price,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
+                additional_data={
+                    'technical_score': technical_score,
+                    'news_score': news_score,
+                    'final_score': final_score,
+                    'position_size': position_size,
+                    'ichimoku_confidence': ichimoku_confidence,
+                    'momentum_confidence': momentum_confidence
+                }
             )
 
         except Exception as e:
@@ -578,7 +647,7 @@ async def analyze_jp(symbol: str) -> Dict:
     strategy = JPStrategy()
     signal = await strategy.analyze_symbol(symbol)
     
-    return {
+    result = {
         'decision': signal.action,
         'confidence_score': signal.confidence * 100,
         'reasoning': signal.reasoning,
@@ -589,6 +658,12 @@ async def analyze_jp(symbol: str) -> Dict:
         'price': signal.price,
         'sector': signal.sector
     }
+    
+    # 추가 데이터가 있으면 포함
+    if signal.additional_data:
+        result['additional_data'] = signal.additional_data
+        
+    return result
 
 async def get_ichimoku_picks() -> List[Dict]:
     """일목균형표 기반 추천 종목"""
@@ -650,9 +725,19 @@ if __name__ == "__main__":
         print("🇯🇵 최고퀸트프로젝트 - 일본 주식 전략 테스트 시작...")
         
         # 단일 주식 테스트 (토요타)
-        print("\n📊 토요타(7203.T) 개별 분석:")
+        print("\n📊 토요타(7203.T) 개별 분석 (뉴스 통합):")
         toyota_result = await analyze_jp('7203.T')
         print(f"토요타: {toyota_result}")
+        
+        # 상세 분석 결과 출력
+        if 'additional_data' in toyota_result:
+            additional = toyota_result['additional_data']
+            print(f"  기술분석: {additional.get('technical_score', 0):.2f}")
+            print(f"  뉴스점수: {additional.get('news_score', 0):.2f}")
+            print(f"  최종점수: {additional.get('final_score', 0):.2f}")
+            print(f"  포지션크기: {additional.get('position_size', 0)}주 (100주 단위)")
+            print(f"  일목신뢰도: {additional.get('ichimoku_confidence', 0):.2f}")
+            print(f"  모멘텀신뢰도: {additional.get('momentum_confidence', 0):.2f}")
         
         # 일목균형표 추천
         print("\n📈 일목균형표 기반 추천:")
