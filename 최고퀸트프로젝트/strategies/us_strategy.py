@@ -25,6 +25,13 @@ from dataclasses import dataclass
 import yfinance as yf
 import requests
 
+# 뉴스 분석 모듈 import (있을 때만)
+try:
+    from news_analyzer import get_news_sentiment
+    NEWS_ANALYZER_AVAILABLE = True
+except ImportError:
+    NEWS_ANALYZER_AVAILABLE = False
+
 # 로거 설정
 logger = logging.getLogger(__name__)
 
@@ -35,7 +42,7 @@ class USStockSignal:
     action: str  # 'buy', 'sell', 'hold'
     confidence: float  # 0.0 ~ 1.0
     price: float
-    strategy_source: str  # 'buffett', 'lynch', 'sector_rotation'
+    strategy_source: str  # 'buffett', 'lynch', 'integrated_analysis'
     pbr: float
     peg: float
     pe_ratio: float
@@ -44,6 +51,7 @@ class USStockSignal:
     reasoning: str
     target_price: float
     timestamp: datetime
+    additional_data: Optional[Dict] = None
 
 class USStrategy:
     """🇺🇸 고급 미국 주식 전략 클래스"""
@@ -58,20 +66,24 @@ class USStrategy:
         self.buffett_pbr_limit = self.us_config.get('buffett_pbr', 1.5)
         self.lynch_peg_limit = self.us_config.get('lynch_peg', 1.0)
         
-        # 추가 파라미터 (기본값)
-        self.buffett_roe_min = 15.0  # ROE 최소 기준
-        self.buffett_debt_ratio_max = 0.4  # 부채비율 최대
-        self.lynch_growth_min = 10.0  # 성장률 최소 기준
+        # 버핏 전략 파라미터 (settings.yaml 적용)
+        self.buffett_roe_min = self.us_config.get('buffett_roe_min', 15.0)
+        self.buffett_debt_ratio_max = self.us_config.get('buffett_debt_ratio_max', 0.4)
         
-        # 추적할 주요 미국 주식 (다양한 섹터)
-        self.symbols = {
+        # 린치 전략 파라미터 (settings.yaml 적용)
+        self.lynch_growth_min = self.us_config.get('lynch_growth_min', 10.0)
+        
+        # 뉴스 분석 통합 설정
+        self.news_weight = self.us_config.get('news_weight', 0.3)  # 뉴스 30%
+        self.technical_weight = self.us_config.get('technical_weight', 0.7)  # 기술분석 70%
+        
+        # 추적할 주요 미국 주식 (settings.yaml에서 로드)
+        self.symbols = self.us_config.get('symbols', {
             'TECH': ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'META', 'AMZN', 'TSLA'],
             'FINANCE': ['JPM', 'BAC', 'WFC', 'GS', 'MS', 'C'],
-            'HEALTHCARE': ['JNJ', 'PFE', 'UNH', 'ABBV', 'MRK', 'TMO'],
-            'CONSUMER': ['HD', 'MCD', 'WMT', 'PG', 'KO', 'NKE'],
-            'ENERGY': ['XOM', 'CVX', 'COP', 'EOG', 'SLB'],
-            'INDUSTRIAL': ['BA', 'CAT', 'GE', 'MMM', 'HON', 'UPS']
-        }
+            'HEALTHCARE': ['JNJ', 'PFE', 'UNH', 'ABBV', 'MRK'],
+            'CONSUMER': ['HD', 'MCD', 'WMT', 'PG', 'KO']
+        })
         
         # 모든 심볼을 플랫 리스트로
         self.all_symbols = [symbol for sector_symbols in self.symbols.values() 
@@ -80,6 +92,7 @@ class USStrategy:
         if self.enabled:
             logger.info(f"🇺🇸 미국 주식 전략 초기화 완료 - 추적 종목: {len(self.all_symbols)}개")
             logger.info(f"📊 버핏 PBR 기준: {self.buffett_pbr_limit}, 린치 PEG 기준: {self.lynch_peg_limit}")
+            logger.info(f"🔗 뉴스 통합: {self.news_weight*100:.0f}% + 기술분석: {self.technical_weight*100:.0f}%")
         else:
             logger.info("🇺🇸 미국 주식 전략이 비활성화되어 있습니다")
 
@@ -232,6 +245,49 @@ class USStrategy:
             action = 'hold'
             
         return action, score, "린치: " + " | ".join(reasoning)
+
+    async def _get_news_sentiment(self, symbol: str) -> Tuple[float, str]:
+        """뉴스 센티먼트 분석"""
+        if not NEWS_ANALYZER_AVAILABLE:
+            return 0.5, "뉴스 분석 모듈 없음"
+            
+        try:
+            # news_analyzer.py의 get_news_sentiment 함수 호출
+            news_result = await get_news_sentiment(symbol)
+            
+            if news_result and 'sentiment_score' in news_result:
+                score = news_result['sentiment_score']  # 0.0 ~ 1.0
+                summary = news_result.get('summary', 'No news summary')
+                
+                # 점수를 -1 ~ 1 범위로 변환 (0.5 = 중립)
+                normalized_score = (score - 0.5) * 2
+                
+                return normalized_score, f"뉴스: {summary[:50]}"
+            else:
+                return 0.0, "뉴스 데이터 없음"
+                
+        except Exception as e:
+            logger.error(f"뉴스 센티먼트 분석 실패 {symbol}: {e}")
+            return 0.0, f"뉴스 분석 오류: {str(e)}"
+
+    def _calculate_position_size(self, price: float, confidence: float, account_balance: float = 100000) -> float:
+        """포지션 크기 계산"""
+        try:
+            # 신뢰도에 따른 포지션 사이징
+            base_position_pct = 0.02  # 기본 2%
+            confidence_multiplier = confidence  # 신뢰도가 높을수록 큰 포지션
+            
+            position_pct = base_position_pct * confidence_multiplier
+            position_pct = min(position_pct, 0.10)  # 최대 10%로 제한
+            
+            position_value = account_balance * position_pct
+            shares = int(position_value / price) if price > 0 else 0
+            
+            return shares
+            
+        except Exception as e:
+            logger.error(f"포지션 크기 계산 실패: {e}")
+            return 0
 
     def _calculate_target_price(self, data: Dict, confidence: float) -> float:
         """목표주가 계산"""
@@ -400,7 +456,7 @@ async def analyze_us(symbol: str) -> Dict:
     strategy = USStrategy()
     signal = await strategy.analyze_symbol(symbol)
     
-    return {
+    result = {
         'decision': signal.action,
         'confidence_score': signal.confidence * 100,
         'reasoning': signal.reasoning,
@@ -410,6 +466,12 @@ async def analyze_us(symbol: str) -> Dict:
         'price': signal.price,
         'sector': signal.sector
     }
+    
+    # 추가 데이터가 있으면 포함
+    if signal.additional_data:
+        result['additional_data'] = signal.additional_data
+        
+    return result
 
 async def get_buffett_picks() -> List[Dict]:
     """버핏 스타일 추천 종목"""
@@ -471,9 +533,17 @@ if __name__ == "__main__":
         print("🇺🇸 최고퀸트프로젝트 - 미국 주식 전략 테스트 시작...")
         
         # 단일 주식 테스트
-        print("\n📊 AAPL 개별 분석:")
+        print("\n📊 AAPL 개별 분석 (뉴스 통합):")
         aapl_result = await analyze_us('AAPL')
         print(f"AAPL: {aapl_result}")
+        
+        # 상세 분석 결과 출력
+        if 'additional_data' in aapl_result:
+            additional = aapl_result['additional_data']
+            print(f"  기술분석: {additional.get('technical_score', 0):.2f}")
+            print(f"  뉴스점수: {additional.get('news_score', 0):.2f}")
+            print(f"  최종점수: {additional.get('final_score', 0):.2f}")
+            print(f"  포지션크기: {additional.get('position_size', 0)}주")
         
         # 버핏 스타일 추천
         print("\n💰 워렌 버핏 스타일 추천:")
