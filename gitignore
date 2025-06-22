@@ -1,0 +1,552 @@
+# =====================================
+# 🏆 최고퀸트프로젝트 - Git 무시 파일
+# =====================================
+# 
+# 퀀트 트레이딩 시스템용 완전체 .gitignore
+# 보안, 개인정보, 임시파일 등을 Git에서 제외
+#
+# Author: 최고퀸트팀
+# Version: 1.0.0
+# Project: 최고퀸트프로젝트
+# =====================================
+
+# =====================================
+# 🔐 보안 및 API 키 (절대 커밋 금지!)
+# =====================================
+.env
+.env.local
+.env.production
+.env.staging
+.env.development
+
+# API 키가 포함된 실제 설정 파일
+configs/settings.yaml
+configs/production.yaml
+configs/local.yaml
+
+# 브로커 인증 파일
+**/api_keys.json
+**/credentials.json
+**/tokens.json
+ibkr_credentials.txt
+upbit_keys.txt
+
+# 개인 설정 파일
+personal_config.yaml
+user_settings.yaml
+my_*.yaml
+
+# =====================================
+# 💰 거래 데이터 및 개인정보
+# =====================================
+# 거래 기록 (개인정보 포함)
+data/trades/
+data/portfolio/
+data/positions/
+data/orders/
+
+# 개인 성과 리포트
+reports/personal/
+reports/performance/
+reports/private/
+
+# 백테스트 결과 (개인 전략 포함)
+backtest_results/
+strategy_performance/
+personal_backtest/
+
+# 개인 거래 히스토리
+trading_history.json
+my_trades.csv
+personal_trades.db
+
+# =====================================
+# 📊 데이터베이스 파일
+# =====================================
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# SQLite 임시 파일
+*.db-shm
+*.db-wal
+
+# 데이터베이스 백업
+database_backup/
+db_backup_*/
+*.sql.backup
+
+# =====================================
+# 📝 로그 파일
+# =====================================
+# 모든 로그 파일
+logs/
+*.log
+*.log.*
+log_*/
+
+# 특정 로그 패턴
+trading_*.log
+analysis_*.log
+error_*.log
+debug_*.log
+system_*.log
+
+# 로그 백업
+logs_backup/
+old_logs/
+
+# =====================================
+# 🐍 Python 관련
+# =====================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+local_settings.py
+db.sqlite3
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# =====================================
+# 🖥️ IDE 및 에디터 설정
+# =====================================
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Eclipse
+.project
+.pydevproject
+.settings/
+
+# Atom
+.atom/
+
+# =====================================
+# 🖥️ 운영체제 파일
+# =====================================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# =====================================
+# 📁 임시 파일 및 캐시
+# =====================================
+# 임시 파일
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*.save
+
+# 캐시 파일
+cache/
+.cache/
+*.cache
+
+# 압축 파일 (개발용)
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# =====================================
+# 📈 금융 데이터 캐시
+# =====================================
+# yfinance 캐시
+.yfinance_cache/
+
+# 가격 데이터 캐시
+price_data_cache/
+market_data_cache/
+historical_data/
+
+# 뉴스 데이터 캐시
+news_cache/
+sentiment_cache/
+
+# =====================================
+# 🔧 설정 및 빌드 파일
+# =====================================
+# Node.js (웹 인터페이스가 있는 경우)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 빌드 산출물
+build/
+dist/
+out/
+
+# =====================================
+# 📊 데이터 파일 (크기가 큰 것들)
+# =====================================
+# 대용량 CSV 파일
+large_data/
+historical_prices/
+*.csv.gz
+*.csv.zip
+
+# 백업 데이터
+data_backup/
+backup_*/
+
+# 임시 분석 파일
+analysis_temp/
+temp_analysis/
+
+# =====================================
+# 🧪 테스트 관련
+# =====================================
+# 테스트 결과
+test_results/
+test_reports/
+.coverage
+htmlcov/
+
+# 성능 테스트 결과
+benchmark_results/
+performance_tests/
+
+# =====================================
+# 📱 알림 및 모니터링
+# =====================================
+# 알림 히스토리 (개인정보 포함)
+notification_history/
+alert_logs/
+telegram_logs/
+
+# 모니터링 데이터
+monitoring_data/
+system_metrics/
+
+# =====================================
+# 🔄 백업 및 아카이브
+# =====================================
+# 자동 백업
+auto_backup/
+daily_backup/
+weekly_backup/
+
+# 아카이브 파일
+archive/
+archived_*/
+old_versions/
+
+# =====================================
+# 📋 문서 관련 (자동 생성)
+# =====================================
+# 자동 생성된 문서
+docs/auto_generated/
+api_docs/
+generated_reports/
+
+# LaTeX 임시 파일
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.toc
+
+# =====================================
+# 🌐 웹 관련 (향후 확장)
+# =====================================
+# 정적 파일
+static/uploads/
+media/
+
+# 세션 파일
+sessions/
+
+# =====================================
+# 📊 Jupyter 노트북 체크포인트
+# =====================================
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# =====================================
+# 🔍 기타 개발 도구
+# =====================================
+# Profiling 결과
+*.prof
+*.profile
+
+# Memory profiling
+*.mprof
+
+# Linting 결과
+.pylint.d/
+
+# =====================================
+# 🚀 배포 관련
+# =====================================
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Kubernetes
+*.k8s.yaml
+k8s-secrets.yaml
+
+# 배포 스크립트 (개인정보 포함 가능)
+deploy_personal.sh
+production_deploy.sh
+
+# =====================================
+# 📝 개인 메모 및 문서
+# =====================================
+# 개인 메모
+NOTES.md
+TODO.md
+personal_notes/
+my_strategy_ideas/
+
+# 개인 연구 자료
+research/
+strategy_research/
+market_analysis/
+
+# =====================================
+# 🔒 보안 스캔 결과
+# =====================================
+# 보안 스캔 리포트
+security_scan/
+vulnerability_report/
+*.security
+
+# =====================================
+# 📈 특수 퀀트 파일들
+# =====================================
+# 전략 백테스트 개인 결과
+my_backtest_*/
+personal_strategy_*/
+private_analysis/
+
+# 개인 투자 기록
+investment_diary/
+trade_journal/
+personal_performance/
+
+# 실험적 전략 (공개 전)
+experimental_strategies/
+beta_strategies/
+research_strategies/
+
+# =====================================
+# 🎯 프로젝트별 임시 파일
+# =====================================
+# 임시 실험 파일
+experiment_*/
+test_*.py.backup
+quick_test_*/
+
+# 개발 중인 피처
+feature_*/
+wip_*/
+draft_*/
+
+# =====================================
+# 📊 성능 모니터링
+# =====================================
+# 성능 로그
+performance_*.log
+memory_usage.log
+cpu_usage.log
+
+# 시스템 상태 로그
+system_status/
+health_check_logs/
+
+# =====================================
+# 🔄 동기화 제외
+# =====================================
+# 클라우드 동기화 임시 파일
+*.tmp.sync
+.sync/
+.syncthing/
+
+# Dropbox
+.dropbox
+.dropbox.attr
+
+# Google Drive
+.google-drive/
+
+# =====================================
+# 🏁 프로젝트 완료 마크
+# =====================================
+# 이 .gitignore는 최고퀸트프로젝트의 
+# 모든 민감한 정보와 임시 파일을 보호합니다.
+# 
+# 💡 TIP: 새로운 민감한 파일이 생기면
+# 이 파일에 추가하는 것을 잊지 마세요!
+# =====================================
