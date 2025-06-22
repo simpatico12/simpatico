@@ -1,0 +1,57 @@
+# 최고퀸트프로젝트 - 전략 설정 파일
+# =====================================
+
+# 🇺🇸 미국 주식 전략 설정
+us_strategy:
+  enabled: true
+  buffett_pbr: 1.5        # 워렌 버핏 PBR 기준
+  lynch_peg: 1.0          # 피터 린치 PEG 기준
+
+# 🇯🇵 일본 주식 전략 설정  
+jp_strategy:
+  enabled: true
+  ichimoku: true          # 일목균형표 사용
+  momentum_breakout: true # 모멘텀 돌파 전략
+
+# 🪙 암호화폐 전략 설정
+coin_strategy:
+  enabled: true
+  volume_spike_threshold: 2.0  # 거래량 급증 임계값 (2배)
+
+# 📊 공통 리스크 관리 설정
+risk_management:
+  max_position_size: 0.1      # 최대 포지션 크기 (10%)
+  stop_loss: -0.05            # 손절매 (-5%)
+  take_profit: 0.15           # 익절 (+15%)
+  max_daily_trades: 10        # 일일 최대 거래 수
+
+# 🔔 알림 설정
+notifications:
+  telegram:
+    enabled: true
+    chat_id: ""             # 텔레그램 채팅 ID
+    bot_token: ""           # 봇 토큰
+  critical_only: false       # 중요 알림만 수신
+
+# 🌐 API 설정
+api:
+  upbit:
+    enabled: true
+    access_key: ""
+    secret_key: ""
+  ibkr:
+    enabled: false          # Interactive Brokers
+    paper_trading: true     # 모의거래 모드
+  
+# 📈 백테스트 설정
+backtest:
+  start_date: "2023-01-01"
+  end_date: "2024-12-31"
+  initial_capital: 100000   # 초기 자본 (달러)
+  
+# 🕐 스케줄 설정
+schedule:
+  market_open_check: "09:00"    # 시장 개장 체크
+  strategy_run: "09:30"         # 전략 실행
+  market_close_check: "15:30"   # 시장 마감 체크
+  daily_report: "18:00"         # 일일 리포트
