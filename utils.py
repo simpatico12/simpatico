@@ -1,15 +1,16 @@
 """
-🔔 최고퀸트프로젝트 - 텔레그램 알림 시스템
-=======================================
+🛠️ 최고퀸트프로젝트 - 공통 유틸리티 모듈
+=========================================
 
-완전한 알림 시스템:
-- 📱 매매 신호/완료 알림
-- 📊 시장 분석 요약
-- 📰 뉴스 분석 결과  
-- 📅 스케줄링 알림
-- 🚨 시스템 상태 알림
-- 📈 일일 성과 리포트
-- 🧪 완전한 테스트 시스템
+전체 프로젝트에서 사용하는 공통 기능들:
+- 📊 데이터 처리 및 변환
+- 💰 금융 계산 함수
+- 📁 파일 I/O 관리
+- 🔄 API 재시도 로직
+- 📈 기술적 지표 계산
+- 📋 포맷팅 및 검증
+- 💾 캐싱 시스템
+- 📊 백테스트 유틸리티
 
 Author: 최고퀸트팀
 Version: 1.0.0
@@ -17,725 +18,1087 @@ Project: 최고퀸트프로젝트
 """
 
 import asyncio
-import aiohttp
 import logging
-import yaml
-from datetime import datetime
-from typing import Dict, List, Optional, Any
 import json
+import csv
+import os
+import pickle
+import hashlib
+import time
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Union, Callable
+import yaml
+import pandas as pd
+import numpy as np
+from functools import wraps
+from pathlib import Path
+import requests
+from dataclasses import dataclass, asdict
+import traceback
+import pytz
 
-# 설정 파일 로드
-def load_config() -> Dict:
-    """설정 파일 로드"""
-    try:
-        with open('configs/settings.yaml', 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
-    except Exception as e:
-        logging.error(f"설정 파일 로드 실패: {e}")
-        return {}
+# 로거 설정
+logger = logging.getLogger(__name__)
 
-# 상수 정의
-MARKET_EMOJIS = {
-    'US': '🇺🇸',
-    'JP': '🇯🇵', 
-    'COIN': '🪙',
-    'CRYPTO': '🪙'
-}
+# ================================
+# 🕐 시간대 관리 유틸리티
+# ================================
 
-MARKET_NAMES = {
-    'US': '미국',
-    'JP': '일본',
-    'COIN': '암호화폐',
-    'CRYPTO': '암호화폐'
-}
-
-ACTION_EMOJIS = {
-    'buy': '💰',
-    'sell': '💸',
-    'hold': '⏸️'
-}
-
-def format_price(price: float, market: str) -> str:
-    """시장별 가격 포맷팅"""
-    try:
-        if market == 'US':
-            return f"${price:,.2f}"
-        elif market == 'JP':
-            return f"¥{price:,.0f}"
-        elif market in ['COIN', 'CRYPTO']:
-            if price >= 1000000:
-                return f"₩{price:,.0f}"
-            else:
-                return f"₩{price:,.2f}"
-        else:
-            return f"{price:,.2f}"
-    except:
-        return str(price)
-
-class TelegramNotifier:
-    """텔레그램 알림 클래스"""
+class TimeZoneManager:
+    """시간대 관리 전용 클래스"""
     
     def __init__(self):
-        self.config = load_config()
-        self.telegram_config = self.config.get('notifications', {}).get('telegram', {})
-        self.bot_token = self.telegram_config.get('bot_token', '')
-        self.chat_id = self.telegram_config.get('chat_id', '')
-        self.enabled = self.telegram_config.get('enabled', False)
+        """시간대 초기화"""
+        self.timezones = {
+            'KOR': pytz.timezone('Asia/Seoul'),      # 한국 시간 (KST)
+            'US': pytz.timezone('US/Eastern'),       # 미국 동부 (EST/EDT 자동)
+            'JP': pytz.timezone('Asia/Tokyo'),       # 일본 시간 (JST)
+            'UTC': pytz.UTC                          # 협정 시간
+        }
         
-        # API 기본 설정
-        self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
-        self.session = None
-        
-    async def _get_session(self):
-        """HTTP 세션 가져오기"""
-        if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=10)
-            )
-        return self.session
-    
-    async def _send_message(self, message: str, parse_mode: str = 'HTML') -> bool:
-        """텔레그램 메시지 전송 (내부 함수)"""
-        if not self.enabled or not self.bot_token or not self.chat_id:
-            return False
-        
-        try:
-            session = await self._get_session()
-            url = f"{self.base_url}/sendMessage"
-            
-            data = {
-                'chat_id': self.chat_id,
-                'text': message,
-                'parse_mode': parse_mode,
-                'disable_web_page_preview': True
+        # 시장 운영 시간 (현지 시간 기준)
+        self.market_hours = {
+            'US': {
+                'premarket_open': '04:00',   # 프리마켓 시작
+                'regular_open': '09:30',     # 정규 시장 시작
+                'regular_close': '16:00',    # 정규 시장 마감
+                'aftermarket_close': '20:00' # 애프터마켓 마감
+            },
+            'JP': {
+                'morning_open': '09:00',     # 오전장 시작
+                'morning_close': '11:30',    # 오전장 마감
+                'afternoon_open': '12:30',   # 오후장 시작
+                'afternoon_close': '15:00'   # 오후장 마감
+            },
+            'COIN': {
+                'open': '00:00',             # 24시간 거래
+                'close': '23:59'
             }
+        }
+
+    def get_current_time(self, timezone: str = 'KOR') -> datetime:
+        """특정 시간대의 현재 시간"""
+        if timezone not in self.timezones:
+            timezone = 'KOR'
+        
+        utc_now = datetime.now(pytz.UTC)
+        local_time = utc_now.astimezone(self.timezones[timezone])
+        return local_time
+
+    def convert_time(self, dt: datetime, from_tz: str, to_tz: str) -> datetime:
+        """시간대 변환"""
+        if from_tz not in self.timezones or to_tz not in self.timezones:
+            return dt
+        
+        # 입력 시간이 naive하면 from_tz를 적용
+        if dt.tzinfo is None:
+            dt = self.timezones[from_tz].localize(dt)
+        
+        # 목표 시간대로 변환
+        converted = dt.astimezone(self.timezones[to_tz])
+        return converted
+
+    def get_all_market_times(self) -> Dict[str, str]:
+        """전체 시장 현재 시간"""
+        current_times = {}
+        
+        for market in ['KOR', 'US', 'JP']:
+            current = self.get_current_time(market)
+            current_times[market] = {
+                'datetime': current.strftime('%Y-%m-%d %H:%M:%S'),
+                'time_only': current.strftime('%H:%M:%S'),
+                'date': current.strftime('%Y-%m-%d'),
+                'weekday': current.strftime('%A'),
+                'timezone_name': str(current.tzinfo)
+            }
+        
+        return current_times
+
+    def is_weekend(self, timezone: str = 'KOR') -> bool:
+        """주말 여부 확인"""
+        current = self.get_current_time(timezone)
+        return current.weekday() >= 5  # 5=토요일, 6=일요일
+
+    def is_market_open_detailed(self, market: str) -> Dict[str, Any]:
+        """상세 시장 개장 정보"""
+        market = market.upper()
+        
+        if market == 'COIN':
+            return {
+                'is_open': True,
+                'session_type': '24시간',
+                'status': 'open',
+                'next_event': None,
+                'current_time': self.get_current_time('UTC').strftime('%H:%M:%S UTC')
+            }
+        
+        # 시간대 매핑
+        tz_map = {'US': 'US', 'JP': 'JP', 'KOR': 'KOR'}
+        tz = tz_map.get(market, 'KOR')
+        
+        current = self.get_current_time(tz)
+        current_time_str = current.strftime('%H:%M')
+        
+        # 주말 체크
+        if self.is_weekend(tz):
+            next_monday = current + timedelta(days=(7 - current.weekday()))
+            return {
+                'is_open': False,
+                'session_type': '주말 휴장',
+                'status': 'weekend',
+                'next_event': f"월요일 개장까지 {self._get_time_diff(current, next_monday)}",
+                'current_time': current.strftime('%H:%M:%S')
+            }
+        
+        # 미국 시장
+        if market == 'US':
+            hours = self.market_hours['US']
             
-            async with session.post(url, data=data) as response:
-                if response.status == 200:
-                    return True
-                else:
-                    error_text = await response.text()
-                    logging.error(f"텔레그램 API 오류 ({response.status}): {error_text}")
-                    return False
-                    
-        except asyncio.TimeoutError:
-            logging.error("텔레그램 메시지 전송 타임아웃")
-            return False
-        except Exception as e:
-            logging.error(f"텔레그램 메시지 전송 실패: {e}")
-            return False
+            if hours['premarket_open'] <= current_time_str < hours['regular_open']:
+                return {
+                    'is_open': True,
+                    'session_type': '프리마켓',
+                    'status': 'premarket',
+                    'next_event': f"정규장 시작까지 {self._get_time_until(current, hours['regular_open'])}",
+                    'current_time': current.strftime('%H:%M:%S EST/EDT')
+                }
+            elif hours['regular_open'] <= current_time_str < hours['regular_close']:
+                return {
+                    'is_open': True,
+                    'session_type': '정규장',
+                    'status': 'regular',
+                    'next_event': f"정규장 마감까지 {self._get_time_until(current, hours['regular_close'])}",
+                    'current_time': current.strftime('%H:%M:%S EST/EDT')
+                }
+            elif hours['regular_close'] <= current_time_str < hours['aftermarket_close']:
+                return {
+                    'is_open': True,
+                    'session_type': '애프터마켓',
+                    'status': 'aftermarket',
+                    'next_event': f"장 마감까지 {self._get_time_until(current, hours['aftermarket_close'])}",
+                    'current_time': current.strftime('%H:%M:%S EST/EDT')
+                }
+            else:
+                return {
+                    'is_open': False,
+                    'session_type': '휴장',
+                    'status': 'closed',
+                    'next_event': f"프리마켓 시작까지 {self._get_time_until_next_day(current, hours['premarket_open'])}",
+                    'current_time': current.strftime('%H:%M:%S EST/EDT')
+                }
+        
+        # 일본 시장
+        elif market == 'JP':
+            hours = self.market_hours['JP']
+            
+            if hours['morning_open'] <= current_time_str < hours['morning_close']:
+                return {
+                    'is_open': True,
+                    'session_type': '오전장',
+                    'status': 'morning',
+                    'next_event': f"오전장 마감까지 {self._get_time_until(current, hours['morning_close'])}",
+                    'current_time': current.strftime('%H:%M:%S JST')
+                }
+            elif hours['morning_close'] <= current_time_str < hours['afternoon_open']:
+                return {
+                    'is_open': False,
+                    'session_type': '점심시간',
+                    'status': 'lunch',
+                    'next_event': f"오후장 시작까지 {self._get_time_until(current, hours['afternoon_open'])}",
+                    'current_time': current.strftime('%H:%M:%S JST')
+                }
+            elif hours['afternoon_open'] <= current_time_str < hours['afternoon_close']:
+                return {
+                    'is_open': True,
+                    'session_type': '오후장',
+                    'status': 'afternoon',
+                    'next_event': f"오후장 마감까지 {self._get_time_until(current, hours['afternoon_close'])}",
+                    'current_time': current.strftime('%H:%M:%S JST')
+                }
+            else:
+                return {
+                    'is_open': False,
+                    'session_type': '휴장',
+                    'status': 'closed',
+                    'next_event': f"오전장 시작까지 {self._get_time_until_next_day(current, hours['morning_open'])}",
+                    'current_time': current.strftime('%H:%M:%S JST')
+                }
+        
+        # 한국 시장 (참고용)
+        else:
+            return {
+                'is_open': False,
+                'session_type': '한국 시장 정보 없음',
+                'status': 'unknown',
+                'next_event': None,
+                'current_time': current.strftime('%H:%M:%S KST')
+            }
+
+    def _get_time_until(self, current: datetime, target_time_str: str) -> str:
+        """현재 시간부터 목표 시간까지 남은 시간"""
+        target_hour, target_min = map(int, target_time_str.split(':'))
+        target = current.replace(hour=target_hour, minute=target_min, second=0, microsecond=0)
+        
+        if target <= current:
+            target += timedelta(days=1)
+        
+        diff = target - current
+        return self._format_timedelta(diff)
+
+    def _get_time_until_next_day(self, current: datetime, target_time_str: str) -> str:
+        """다음날 목표 시간까지 남은 시간"""
+        target_hour, target_min = map(int, target_time_str.split(':'))
+        next_day = current + timedelta(days=1)
+        target = next_day.replace(hour=target_hour, minute=target_min, second=0, microsecond=0)
+        
+        diff = target - current
+        return self._format_timedelta(diff)
+
+    def _get_time_diff(self, from_time: datetime, to_time: datetime) -> str:
+        """두 시간 사이의 차이"""
+        diff = to_time - from_time
+        return self._format_timedelta(diff)
+
+    def _format_timedelta(self, td: timedelta) -> str:
+        """timedelta 포맷팅"""
+        total_seconds = int(td.total_seconds())
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        
+        if hours > 0:
+            return f"{hours}시간 {minutes}분"
+        else:
+            return f"{minutes}분"
+
+    def get_market_schedule_today(self) -> Dict[str, List[Dict]]:
+        """오늘의 시장 스케줄"""
+        schedule = {}
+        
+        for market in ['US', 'JP']:
+            tz = 'US' if market == 'US' else 'JP'
+            current = self.get_current_time(tz)
+            
+            if self.is_weekend(tz):
+                schedule[market] = [{'event': '주말 휴장', 'time': '전일'}]
+                continue
+            
+            events = []
+            hours = self.market_hours[market]
+            
+            if market == 'US':
+                events = [
+                    {'event': '프리마켓 시작', 'time': hours['premarket_open']},
+                    {'event': '정규장 시작', 'time': hours['regular_open']},
+                    {'event': '정규장 마감', 'time': hours['regular_close']},
+                    {'event': '애프터마켓 마감', 'time': hours['aftermarket_close']}
+                ]
+            elif market == 'JP':
+                events = [
+                    {'event': '오전장 시작', 'time': hours['morning_open']},
+                    {'event': '오전장 마감', 'time': hours['morning_close']},
+                    {'event': '오후장 시작', 'time': hours['afternoon_open']},
+                    {'event': '오후장 마감', 'time': hours['afternoon_close']}
+                ]
+            
+            schedule[market] = events
+        
+        return schedule
+
+    def seoul_to_us_time(self, seoul_dt: datetime) -> datetime:
+        """서울 시간 → 미국 시간"""
+        return self.convert_time(seoul_dt, 'KOR', 'US')
+
+    def seoul_to_japan_time(self, seoul_dt: datetime) -> datetime:
+        """서울 시간 → 일본 시간"""
+        return self.convert_time(seoul_dt, 'KOR', 'JP')
+
+    def us_to_seoul_time(self, us_dt: datetime) -> datetime:
+        """미국 시간 → 서울 시간"""
+        return self.convert_time(us_dt, 'US', 'KOR')
+
+    def japan_to_seoul_time(self, jp_dt: datetime) -> datetime:
+        """일본 시간 → 서울 시간"""
+        return self.convert_time(jp_dt, 'JP', 'KOR')
+
+# ================================
+# 📊 데이터 처리 유틸리티
+# ================================
+
+class DataProcessor:
+    """데이터 처리 전용 클래스"""
     
-    async def close(self):
-        """세션 종료"""
-        if self.session and not self.session.closed:
-            await self.session.close()
-
-# 전역 notifier 인스턴스
-_notifier = TelegramNotifier()
-
-async def send_telegram_message(message: str) -> bool:
-    """기본 텔레그램 메시지 발송"""
-    try:
-        return await _notifier._send_message(message)
-    except Exception as e:
-        logging.error(f"메시지 발송 실패: {e}")
-        return False
-
-async def send_trading_alert(market: str, symbol: str, action: str, price: float, 
-                          confidence: float, reasoning: str, target_price: float = None,
-                          execution_status: str = "signal") -> bool:
-    """매매 신호/완료 알림 발송 (완전체 버전)"""
-    try:
-        config = load_config()
-        telegram_config = config.get('notifications', {}).get('telegram', {})
+    @staticmethod
+    def normalize_symbol(symbol: str) -> str:
+        """심볼 정규화"""
+        if not symbol:
+            return ""
         
-        if not telegram_config.get('enabled', False):
-            return False
+        symbol = symbol.upper().strip()
         
-        # 액션에 따른 이모지 매핑
-        action_emoji = ACTION_EMOJIS.get(action.lower(), "📊")
-        market_emoji = MARKET_EMOJIS.get(market, "📈")
+        # 암호화폐 처리
+        if '-' in symbol and not symbol.endswith('.T'):
+            # BTC-KRW, ETH-USDT 등
+            return symbol
         
-        # 신뢰도에 따른 강조 표시
-        if confidence >= 0.8:
-            confidence_emoji = "🔥"
-        elif confidence >= 0.6:
-            confidence_emoji = "⭐"
+        # 일본 주식 처리
+        if symbol.endswith('.T'):
+            return symbol
+            
+        # 미국 주식 처리 (기본)
+        return symbol
+
+    @staticmethod
+    def detect_market(symbol: str) -> str:
+        """심볼로 시장 판별"""
+        symbol = DataProcessor.normalize_symbol(symbol)
+        
+        if symbol.endswith('.T'):
+            return 'JP'
+        elif '-' in symbol or symbol.endswith('USDT') or symbol.endswith('KRW'):
+            return 'COIN'
         else:
-            confidence_emoji = ""
-        
-        # 실행 상태에 따른 메시지 차별화
-        if execution_status == "completed":
-            # 매매 완료 알림
-            message = f"✅ {action.upper()} 완료\n\n"
-            message += f"{market_emoji} {market} | {symbol}\n"
-            message += f"💰 실행가: {format_price(price, market)}\n"
-            message += f"🎯 신뢰도: {confidence*100:.0f}% {confidence_emoji}\n"
-            
-            if target_price:
-                expected_return = ((target_price - price) / price) * 100
-                message += f"🎪 목표가: {format_price(target_price, market)}\n"
-                message += f"📈 기대수익: {expected_return:+.1f}%\n"
-            
-            message += f"\n💡 {reasoning}\n"
-            message += f"⏰ 실행시간: {datetime.now().strftime('%H:%M:%S')}"
-            
-        elif execution_status == "failed":
-            # 매매 실패 알림
-            message = f"❌ {action.upper()} 실패\n\n"
-            message += f"{market_emoji} {market} | {symbol}\n"
-            message += f"💵 목표가: {format_price(price, market)}\n"
-            message += f"🎯 신뢰도: {confidence*100:.0f}% {confidence_emoji}\n"
-            message += f"\n💡 사유: {reasoning}\n"
-            message += f"⏰ {datetime.now().strftime('%H:%M:%S')}"
-            
-        else:
-            # 기본 신호 알림
-            message = f"{action_emoji} {action.upper()} 신호\n\n"
-            message += f"{market_emoji} {market} | {symbol}\n"
-            message += f"💵 현재가: {format_price(price, market)}\n"
-            message += f"🎯 신뢰도: {confidence*100:.0f}% {confidence_emoji}\n"
-            
-            if target_price:
-                expected_return = ((target_price - price) / price) * 100
-                message += f"🎪 목표가: {format_price(target_price, market)}\n"
-                message += f"📈 기대수익: {expected_return:+.1f}%\n"
-            
-            message += f"\n💡 {reasoning}\n"
-            message += f"⏰ {datetime.now().strftime('%H:%M:%S')}"
-        
-        return await send_telegram_message(message)
-        
-    except Exception as e:
-        logging.error(f"매매 알림 실패: {e}")
-        return False
+            return 'US'
 
-async def send_market_summary(market_summaries: Dict) -> bool:
-    """시장 요약 알림 발송 (완전체 버전)"""
-    try:
-        config = load_config()
-        telegram_config = config.get('notifications', {}).get('telegram', {})
-        
-        if not telegram_config.get('enabled', False):
-            return False
-        
-        # 요약 통계 계산
-        total_analyzed = 0
-        total_buy = 0
-        total_sell = 0
-        total_executed = 0
-        
-        for summary in market_summaries.values():
-            if hasattr(summary, 'total_analyzed'):
-                total_analyzed += summary.total_analyzed
-                total_buy += summary.buy_signals
-                total_sell += summary.sell_signals
-                total_executed += len([t for t in summary.executed_trades if t.executed])
-            else:
-                # 딕셔너리 형태인 경우 (호환성)
-                total_analyzed += summary.get('total_analyzed', 0)
-                total_buy += summary.get('buy_signals', 0)
-                total_sell += summary.get('sell_signals', 0)
-        
-        # 메시지 구성
-        message = f"🏆 최고퀸트프로젝트 분석 완료\n"
-        message += f"=" * 30 + "\n\n"
-        message += f"📊 전체 분석 결과\n"
-        message += f"🔍 분석 종목: {total_analyzed}개\n"
-        message += f"💰 매수 신호: {total_buy}개\n"
-        message += f"💸 매도 신호: {total_sell}개\n"
-        if total_executed > 0:
-            message += f"✅ 실행 거래: {total_executed}개\n"
-        message += f"\n"
-        
-        # 시장별 상세 정보
-        for market, summary in market_summaries.items():
-            market_emoji = MARKET_EMOJIS.get(market, "📈")
-            market_name = MARKET_NAMES.get(market, market)
+    @staticmethod
+    def clean_price_data(data: pd.DataFrame) -> pd.DataFrame:
+        """가격 데이터 정리"""
+        if data.empty:
+            return data
             
-            # MarketSummary 객체 또는 딕셔너리 모두 지원
-            if hasattr(summary, 'total_analyzed'):
-                buy_signals = summary.buy_signals
-                sell_signals = summary.sell_signals
-                analysis_time = summary.analysis_time
-                top_picks = summary.top_picks
-                executed_trades = summary.executed_trades
-                is_trading_day = summary.is_trading_day
-            else:
-                buy_signals = summary.get('buy_signals', 0)
-                sell_signals = summary.get('sell_signals', 0)
-                analysis_time = summary.get('analysis_time', 0)
-                top_picks = summary.get('top_picks', [])
-                executed_trades = summary.get('executed_trades', [])
-                is_trading_day = summary.get('is_trading_day', True)
-            
-            message += f"{market_emoji} {market_name}"
-            if not is_trading_day:
-                message += " (오늘 휴무)"
-            message += f"\n"
-            message += f"  📈 매수: {buy_signals}개\n"
-            message += f"  📉 매도: {sell_signals}개\n"
-            message += f"  ⏱️ 소요: {analysis_time:.1f}초\n"
-            
-            # 실행된 거래
-            if executed_trades:
-                executed_count = len([t for t in executed_trades if t.executed])
-                if executed_count > 0:
-                    message += f"  ✅ 실행: {executed_count}개\n"
-            
-            # 상위 추천 종목
-            if top_picks:
-                message += f"  🎯 추천: "
-                top_3 = top_picks[:3]
-                if hasattr(top_picks[0], 'symbol'):
-                    # TradingSignal 객체
-                    symbols = [f"{pick.symbol}({pick.confidence*100:.0f}%)" for pick in top_3]
-                else:
-                    # 딕셔너리
-                    symbols = [f"{pick['symbol']}({pick['confidence']*100:.0f}%)" for pick in top_3]
-                message += ", ".join(symbols)
-            message += "\n\n"
+        # 결측값 처리
+        data = data.dropna()
         
-        message += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        # 이상값 제거 (3 표준편차 이상)
+        numeric_columns = data.select_dtypes(include=[np.number]).columns
+        for col in numeric_columns:
+            mean = data[col].mean()
+            std = data[col].std()
+            data = data[abs(data[col] - mean) <= 3 * std]
         
-        return await send_telegram_message(message)
-        
-    except Exception as e:
-        logging.error(f"시장 요약 알림 실패: {e}")
-        return False
+        # 인덱스 정렬
+        if isinstance(data.index, pd.DatetimeIndex):
+            data = data.sort_index()
+            
+        return data
 
-async def send_schedule_notification(today_strategies: List[str], schedule_type: str = "start") -> bool:
-    """스케줄 기반 알림 발송 (신규)"""
-    try:
-        config = load_config()
-        telegram_config = config.get('notifications', {}).get('telegram', {})
-        
-        if not telegram_config.get('enabled', False):
-            return False
-        
-        today = datetime.now()
-        weekday_kr = ["월", "화", "수", "목", "금", "토", "일"][today.weekday()]
-        
-        if schedule_type == "start":
-            if not today_strategies:
-                message = f"😴 {weekday_kr}요일 휴무\n\n"
-                message += f"📅 {today.strftime('%Y-%m-%d')}\n"
-                message += f"🛌 오늘은 거래 없는 날입니다\n"
-                message += f"⏰ {today.strftime('%H:%M:%S')}"
-            else:
-                strategy_names = []
-                for strategy in today_strategies:
-                    if strategy == 'US':
-                        strategy_names.append("🇺🇸 미국 주식")
-                    elif strategy == 'JP':
-                        strategy_names.append("🇯🇵 일본 주식")
-                    elif strategy == 'COIN':
-                        strategy_names.append("🪙 암호화폐")
-                
-                message = f"🚀 {weekday_kr}요일 거래 시작\n\n"
-                message += f"📅 {today.strftime('%Y-%m-%d')}\n"
-                message += f"📊 활성 전략: {len(today_strategies)}개\n"
-                message += "\n".join([f"  • {name}" for name in strategy_names])
-                message += f"\n\n⏰ {today.strftime('%H:%M:%S')}"
-                
-        elif schedule_type == "end":
-            message = f"🌙 {weekday_kr}요일 거래 종료\n\n"
-            message += f"📅 {today.strftime('%Y-%m-%d')}\n"
-            message += f"✅ 오늘 거래 완료\n"
-            message += f"💤 다음 거래일까지 대기\n"
-            message += f"⏰ {today.strftime('%H:%M:%S')}"
-        
-        return await send_telegram_message(message)
-        
-    except Exception as e:
-        logging.error(f"스케줄 알림 실패: {e}")
-        return False
+    @staticmethod
+    def calculate_returns(prices: pd.Series, periods: int = 1) -> pd.Series:
+        """수익률 계산"""
+        return prices.pct_change(periods=periods).fillna(0)
 
-async def send_news_alert(symbol: str, news_score: float, news_summary: str, market: str = "US") -> bool:
-    """뉴스 분석 결과 알림 (신규)"""
-    try:
-        config = load_config()
-        telegram_config = config.get('notifications', {}).get('telegram', {})
-        
-        if not telegram_config.get('enabled', False):
-            return False
-        
-        # 뉴스 중요도 체크 (높은 스코어만 알림)
-        if abs(news_score - 0.5) < 0.2:  # 중립적인 뉴스는 제외
-            return False
-        
-        market_emoji = MARKET_EMOJIS.get(market, "📈")
-        
-        # 뉴스 센티먼트에 따른 이모지
-        if news_score >= 0.7:
-            sentiment_emoji = "📈"
-            sentiment_text = "긍정적"
-        elif news_score <= 0.3:
-            sentiment_emoji = "📉"
-            sentiment_text = "부정적"
-        else:
-            return False  # 중립적 뉴스는 알림 안함
-        
-        message = f"📰 주요 뉴스 감지\n\n"
-        message += f"{market_emoji} {market} | {symbol}\n"
-        message += f"{sentiment_emoji} 센티먼트: {sentiment_text} ({news_score*100:.0f}%)\n\n"
-        message += f"📝 요약: {news_summary}\n\n"
-        message += f"⏰ {datetime.now().strftime('%H:%M:%S')}"
-        
-        return await send_telegram_message(message)
-        
-    except Exception as e:
-        logging.error(f"뉴스 알림 실패: {e}")
-        return False
+    @staticmethod
+    def calculate_volatility(returns: pd.Series, window: int = 20) -> pd.Series:
+        """변동성 계산 (Rolling Standard Deviation)"""
+        return returns.rolling(window=window).std() * np.sqrt(252)  # 연환산
 
-async def send_system_alert(alert_type: str, message_content: str, priority: str = "normal") -> bool:
-    """시스템 상태 알림 (신규)"""
-    try:
-        config = load_config()
-        telegram_config = config.get('notifications', {}).get('telegram', {})
+    @staticmethod
+    def calculate_sharpe_ratio(returns: pd.Series, risk_free_rate: float = 0.02) -> float:
+        """샤프 비율 계산"""
+        excess_returns = returns.mean() * 252 - risk_free_rate  # 연환산
+        volatility = returns.std() * np.sqrt(252)
         
-        if not telegram_config.get('enabled', False):
-            return False
+        return excess_returns / volatility if volatility != 0 else 0
+
+# ================================
+# 💰 금융 계산 함수
+# ================================
+
+class FinanceUtils:
+    """금융 계산 전용 클래스"""
+    
+    @staticmethod
+    def calculate_rsi(prices: pd.Series, period: int = 14) -> pd.Series:
+        """RSI 계산"""
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
         
-        # 우선순위에 따른 이모지
-        priority_emojis = {
-            "critical": "🚨",
-            "warning": "⚠️", 
-            "info": "ℹ️",
-            "normal": "📢"
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi.fillna(50)
+
+    @staticmethod
+    def calculate_bollinger_bands(prices: pd.Series, period: int = 20, 
+                                 std_dev: float = 2) -> Dict[str, pd.Series]:
+        """볼린저 밴드 계산"""
+        sma = prices.rolling(window=period).mean()
+        std = prices.rolling(window=period).std()
+        
+        return {
+            'upper': sma + (std * std_dev),
+            'middle': sma,
+            'lower': sma - (std * std_dev)
         }
-        
-        # 알림 타입별 이모지
-        type_emojis = {
-            "error": "❌",
-            "success": "✅",
-            "startup": "🚀",
-            "shutdown": "🛑",
-            "maintenance": "🔧"
-        }
-        
-        emoji = type_emojis.get(alert_type, priority_emojis.get(priority, "📢"))
-        
-        message = f"{emoji} 시스템 알림\n\n"
-        message += f"📋 타입: {alert_type.upper()}\n"
-        message += f"📝 내용: {message_content}\n"
-        message += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        
-        return await send_telegram_message(message)
-        
-    except Exception as e:
-        logging.error(f"시스템 알림 실패: {e}")
-        return False
 
-async def send_daily_report(performance_data: Dict) -> bool:
-    """일일 성과 리포트 알림 (신규)"""
-    try:
-        config = load_config()
-        telegram_config = config.get('notifications', {}).get('telegram', {})
+    @staticmethod
+    def calculate_macd(prices: pd.Series, fast: int = 12, slow: int = 26, 
+                      signal: int = 9) -> Dict[str, pd.Series]:
+        """MACD 계산"""
+        ema_fast = prices.ewm(span=fast).mean()
+        ema_slow = prices.ewm(span=slow).mean()
         
-        if not telegram_config.get('enabled', False):
-            return False
+        macd = ema_fast - ema_slow
+        signal_line = macd.ewm(span=signal).mean()
+        histogram = macd - signal_line
         
-        today = datetime.now()
-        
-        message = f"📊 일일 성과 리포트\n"
-        message += f"=" * 20 + "\n\n"
-        message += f"📅 {today.strftime('%Y년 %m월 %d일 (%A)')}\n\n"
-        
-        # 거래 통계
-        total_signals = performance_data.get('total_signals', 0)
-        total_trades = performance_data.get('total_trades', 0)
-        successful_trades = performance_data.get('successful_trades', 0)
-        
-        message += f"📈 거래 통계\n"
-        message += f"  🔍 분석 신호: {total_signals}개\n"
-        message += f"  💰 실행 거래: {total_trades}개\n"
-        if total_trades > 0:
-            success_rate = (successful_trades / total_trades) * 100
-            message += f"  ✅ 성공률: {success_rate:.1f}%\n"
-        message += "\n"
-        
-        # 수익률 (있는 경우)
-        daily_return = performance_data.get('daily_return')
-        if daily_return is not None:
-            return_emoji = "📈" if daily_return >= 0 else "📉"
-            message += f"💵 수익률\n"
-            message += f"  {return_emoji} 일일: {daily_return:+.2f}%\n"
+        return {
+            'macd': macd,
+            'signal': signal_line,
+            'histogram': histogram
+        }
+
+    @staticmethod
+    def calculate_moving_average(prices: pd.Series, period: int) -> pd.Series:
+        """이동평균 계산"""
+        return prices.rolling(window=period).mean()
+
+    @staticmethod
+    def calculate_position_size(capital: float, risk_per_trade: float, 
+                              entry_price: float, stop_loss_price: float) -> float:
+        """포지션 크기 계산 (고정 리스크 방식)"""
+        if entry_price <= 0 or stop_loss_price <= 0:
+            return 0
             
-            total_return = performance_data.get('total_return')
-            if total_return is not None:
-                message += f"  🎯 누적: {total_return:+.2f}%\n"
-            message += "\n"
+        risk_amount = capital * risk_per_trade
+        price_risk = abs(entry_price - stop_loss_price)
         
-        # 상위 성과 종목
-        top_performers = performance_data.get('top_performers', [])
-        if top_performers:
-            message += f"🏆 상위 성과 종목\n"
-            for i, performer in enumerate(top_performers[:3], 1):
-                symbol = performer.get('symbol', '')
-                return_pct = performer.get('return', 0)
-                message += f"  {i}. {symbol}: {return_pct:+.1f}%\n"
-            message += "\n"
-        
-        message += f"⏰ 리포트 시간: {today.strftime('%H:%M:%S')}"
-        
-        return await send_telegram_message(message)
-        
-    except Exception as e:
-        logging.error(f"일일 리포트 알림 실패: {e}")
-        return False
+        if price_risk == 0:
+            return 0
+            
+        return risk_amount / price_risk
 
-async def send_error_notification(error_message: str, error_type: str = "SYSTEM") -> bool:
-    """에러 알림 발송 (업데이트)"""
-    try:
-        config = load_config()
-        telegram_config = config.get('notifications', {}).get('telegram', {})
+    @staticmethod
+    def calculate_kelly_criterion(win_rate: float, avg_win: float, avg_loss: float) -> float:
+        """켈리 공식으로 최적 베팅 비율 계산"""
+        if avg_loss <= 0 or win_rate <= 0:
+            return 0
+            
+        loss_rate = 1 - win_rate
+        win_loss_ratio = avg_win / avg_loss
         
-        if not telegram_config.get('enabled', False):
-            return False
-        
-        # 중요한 에러만 알림 (설정에 따라)
-        critical_only = config.get('notifications', {}).get('critical_only', False)
-        critical_errors = ['TRADING', 'API', 'DATABASE', 'CRITICAL']
-        
-        if critical_only and error_type not in critical_errors:
-            return False
-        
-        # 에러 타입별 이모지
-        error_emojis = {
-            'TRADING': '💰',
-            'API': '🔌',
-            'DATABASE': '💾',
-            'NETWORK': '🌐',
-            'ANALYSIS': '📊',
-            'SYSTEM': '⚙️',
-            'CRITICAL': '🚨'
-        }
-        
-        emoji = error_emojis.get(error_type, "❌")
-        
-        message = f"{emoji} 시스템 오류\n\n"
-        message += f"🏷️ 타입: {error_type}\n"
-        message += f"📝 메시지: {error_message}\n"
-        message += f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        message += f"🔧 시스템 관리자에게 문의하세요"
-        
-        return await send_telegram_message(message)
-        
-    except Exception as e:
-        logging.error(f"에러 알림 실패: {e}")
-        return False
+        kelly_pct = (win_rate * win_loss_ratio - loss_rate) / win_loss_ratio
+        return max(0, min(kelly_pct, 0.25))  # 최대 25%로 제한
 
-async def test_telegram_connection() -> bool:
-    """텔레그램 연결 테스트"""
-    try:
-        config = load_config()
-        telegram_config = config.get('notifications', {}).get('telegram', {})
-        
-        if not telegram_config.get('enabled', False):
-            print("❌ 텔레그램 알림이 비활성화되어 있습니다")
-            return False
-        
-        if not telegram_config.get('bot_token') or not telegram_config.get('chat_id'):
-            print("❌ 텔레그램 설정이 incomplete합니다")
-            print("📋 bot_token과 chat_id를 configs/settings.yaml에 설정하세요")
-            return False
-        
-        # 간단한 연결 테스트
-        result = await send_telegram_message("🧪 텔레그램 연결 테스트")
-        
-        if result:
-            print("✅ 텔레그램 연결 성공")
+# ================================
+# 📁 파일 I/O 관리
+# ================================
+
+class FileManager:
+    """파일 관리 전용 클래스"""
+    
+    def __init__(self, base_path: str = "."):
+        self.base_path = Path(base_path)
+        self._ensure_directories()
+
+    def _ensure_directories(self):
+        """필요한 디렉토리 생성"""
+        directories = ['data', 'logs', 'configs', 'data/cache', 'data/backups']
+        for directory in directories:
+            (self.base_path / directory).mkdir(parents=True, exist_ok=True)
+
+    def save_json(self, data: Any, filename: str, directory: str = "data") -> bool:
+        """JSON 파일 저장"""
+        try:
+            filepath = self.base_path / directory / filename
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            logger.info(f"JSON 파일 저장 완료: {filepath}")
             return True
+        except Exception as e:
+            logger.error(f"JSON 파일 저장 실패: {e}")
+            return False
+
+    def load_json(self, filename: str, directory: str = "data") -> Optional[Any]:
+        """JSON 파일 로드"""
+        try:
+            filepath = self.base_path / directory / filename
+            if not filepath.exists():
+                logger.warning(f"파일이 존재하지 않음: {filepath}")
+                return None
+                
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            logger.info(f"JSON 파일 로드 완료: {filepath}")
+            return data
+        except Exception as e:
+            logger.error(f"JSON 파일 로드 실패: {e}")
+            return None
+
+    def save_csv(self, df: pd.DataFrame, filename: str, directory: str = "data") -> bool:
+        """CSV 파일 저장"""
+        try:
+            filepath = self.base_path / directory / filename
+            df.to_csv(filepath, index=False, encoding='utf-8')
+            logger.info(f"CSV 파일 저장 완료: {filepath}")
+            return True
+        except Exception as e:
+            logger.error(f"CSV 파일 저장 실패: {e}")
+            return False
+
+    def load_csv(self, filename: str, directory: str = "data") -> Optional[pd.DataFrame]:
+        """CSV 파일 로드"""
+        try:
+            filepath = self.base_path / directory / filename
+            if not filepath.exists():
+                logger.warning(f"파일이 존재하지 않음: {filepath}")
+                return None
+                
+            df = pd.read_csv(filepath, encoding='utf-8')
+            logger.info(f"CSV 파일 로드 완료: {filepath}")
+            return df
+        except Exception as e:
+            logger.error(f"CSV 파일 로드 실패: {e}")
+            return None
+
+    def backup_file(self, filename: str, directory: str = "data") -> bool:
+        """파일 백업"""
+        try:
+            filepath = self.base_path / directory / filename
+            if not filepath.exists():
+                return False
+                
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_name = f"{filepath.stem}_{timestamp}{filepath.suffix}"
+            backup_path = self.base_path / "data" / "backups" / backup_name
+            
+            import shutil
+            shutil.copy2(filepath, backup_path)
+            logger.info(f"파일 백업 완료: {backup_path}")
+            return True
+        except Exception as e:
+            logger.error(f"파일 백업 실패: {e}")
+            return False
+
+    def cleanup_old_files(self, directory: str = "logs", days: int = 30):
+        """오래된 파일 정리"""
+        try:
+            target_dir = self.base_path / directory
+            cutoff_date = datetime.now() - timedelta(days=days)
+            
+            deleted_count = 0
+            for filepath in target_dir.glob("*"):
+                if filepath.is_file():
+                    file_time = datetime.fromtimestamp(filepath.stat().st_mtime)
+                    if file_time < cutoff_date:
+                        filepath.unlink()
+                        deleted_count += 1
+            
+            logger.info(f"{directory} 폴더에서 {deleted_count}개 파일 정리 완료")
+        except Exception as e:
+            logger.error(f"파일 정리 실패: {e}")
+
+# ================================
+# 🔄 API 재시도 로직
+# ================================
+
+def retry_on_failure(max_retries: int = 3, delay: float = 1.0, 
+                    backoff: float = 2.0, exceptions: tuple = (Exception,)):
+    """API 호출 재시도 데코레이터"""
+    def decorator(func: Callable):
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            last_exception = None
+            current_delay = delay
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    if attempt == max_retries:
+                        logger.error(f"함수 {func.__name__} 최대 재시도 횟수 초과: {e}")
+                        raise e
+                    
+                    logger.warning(f"함수 {func.__name__} 재시도 {attempt + 1}/{max_retries}: {e}")
+                    await asyncio.sleep(current_delay)
+                    current_delay *= backoff
+            
+            raise last_exception
+            
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            last_exception = None
+            current_delay = delay
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    if attempt == max_retries:
+                        logger.error(f"함수 {func.__name__} 최대 재시도 횟수 초과: {e}")
+                        raise e
+                    
+                    logger.warning(f"함수 {func.__name__} 재시도 {attempt + 1}/{max_retries}: {e}")
+                    time.sleep(current_delay)
+                    current_delay *= backoff
+            
+            raise last_exception
+        
+        return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
+    return decorator
+
+class RateLimiter:
+    """API 호출 속도 제한"""
+    
+    def __init__(self, calls_per_second: float = 1.0):
+        self.calls_per_second = calls_per_second
+        self.min_interval = 1.0 / calls_per_second
+        self.last_call_time = 0
+
+    async def wait(self):
+        """속도 제한 대기"""
+        current_time = time.time()
+        time_since_last_call = current_time - self.last_call_time
+        
+        if time_since_last_call < self.min_interval:
+            wait_time = self.min_interval - time_since_last_call
+            await asyncio.sleep(wait_time)
+        
+        self.last_call_time = time.time()
+
+# ================================
+# 📋 포맷팅 및 검증
+# ================================
+
+class Formatter:
+    """포맷팅 전용 클래스"""
+    
+    @staticmethod
+    def format_price(price: float, decimals: int = 2) -> str:
+        """가격 포맷팅"""
+        if price >= 1000000:
+            return f"${price/1000000:.1f}M"
+        elif price >= 1000:
+            return f"${price:,.{decimals}f}"
+        elif price >= 1:
+            return f"${price:.{decimals}f}"
         else:
-            print("❌ 텔레그램 연결 실패")
+            return f"${price:.4f}"
+
+    @staticmethod
+    def format_percentage(value: float, decimals: int = 1) -> str:
+        """퍼센트 포맷팅"""
+        sign = "+" if value > 0 else ""
+        return f"{sign}{value:.{decimals}f}%"
+
+    @staticmethod
+    def format_large_number(value: float) -> str:
+        """큰 숫자 포맷팅"""
+        if abs(value) >= 1e12:
+            return f"{value/1e12:.1f}T"
+        elif abs(value) >= 1e9:
+            return f"{value/1e9:.1f}B"
+        elif abs(value) >= 1e6:
+            return f"{value/1e6:.1f}M"
+        elif abs(value) >= 1e3:
+            return f"{value/1e3:.1f}K"
+        else:
+            return f"{value:.0f}"
+
+    @staticmethod
+    def format_duration(seconds: float) -> str:
+        """시간 지속 포맷팅"""
+        if seconds < 60:
+            return f"{seconds:.1f}초"
+        elif seconds < 3600:
+            return f"{seconds/60:.1f}분"
+        else:
+            return f"{seconds/3600:.1f}시간"
+
+class Validator:
+    """검증 전용 클래스"""
+    
+    @staticmethod
+    def is_valid_symbol(symbol: str) -> bool:
+        """심볼 유효성 검사"""
+        if not symbol or not isinstance(symbol, str):
+            return False
+        
+        symbol = symbol.strip()
+        if len(symbol) < 1 or len(symbol) > 20:
             return False
             
-    except Exception as e:
-        print(f"❌ 텔레그램 연결 테스트 실패: {e}")
-        return False
+        # 기본적인 패턴 체크
+        import re
+        patterns = [
+            r'^[A-Z]{1,10}$',           # 미국 주식 (AAPL, MSFT 등)
+            r'^[0-9]{4}\.T$',           # 일본 주식 (7203.T 등)
+            r'^[A-Z]{2,10}-[A-Z]{3,10}$' # 암호화폐 (BTC-KRW 등)
+        ]
+        
+        return any(re.match(pattern, symbol) for pattern in patterns)
 
-async def test_all_notifications():
-    """🧪 전체 알림 시스템 테스트 (완전체 버전)"""
-    print("🔔 최고퀸트프로젝트 알림 시스템 테스트")
-    print("=" * 50)
+    @staticmethod
+    def is_valid_price(price: float) -> bool:
+        """가격 유효성 검사"""
+        return isinstance(price, (int, float)) and price > 0 and not np.isnan(price)
+
+    @staticmethod
+    def is_valid_confidence(confidence: float) -> bool:
+        """신뢰도 유효성 검사"""
+        return isinstance(confidence, (int, float)) and 0 <= confidence <= 1
+
+# ================================
+# 💾 캐싱 시스템
+# ================================
+
+class SimpleCache:
+    """간단한 메모리 캐시"""
     
-    # 설정 확인
-    config = load_config()
-    telegram_config = config.get('notifications', {}).get('telegram', {})
+    def __init__(self, ttl_seconds: int = 300):  # 5분 기본 TTL
+        self.cache = {}
+        self.ttl = ttl_seconds
+
+    def _is_expired(self, timestamp: float) -> bool:
+        """만료 확인"""
+        return time.time() - timestamp > self.ttl
+
+    def get(self, key: str) -> Optional[Any]:
+        """캐시에서 값 가져오기"""
+        if key not in self.cache:
+            return None
+            
+        data, timestamp = self.cache[key]
+        if self._is_expired(timestamp):
+            del self.cache[key]
+            return None
+            
+        return data
+
+    def set(self, key: str, value: Any):
+        """캐시에 값 저장"""
+        self.cache[key] = (value, time.time())
+
+    def clear(self):
+        """캐시 전체 삭제"""
+        self.cache.clear()
+
+    def cleanup(self):
+        """만료된 항목 정리"""
+        expired_keys = []
+        current_time = time.time()
+        
+        for key, (data, timestamp) in self.cache.items():
+            if current_time - timestamp > self.ttl:
+                expired_keys.append(key)
+        
+        for key in expired_keys:
+            del self.cache[key]
+
+# ================================
+# 📊 백테스트 유틸리티
+# ================================
+
+class BacktestUtils:
+    """백테스트 관련 유틸리티"""
     
-    if not telegram_config.get('enabled', False):
-        print("❌ 텔레그램 알림이 비활성화되어 있습니다")
-        print("📋 configs/settings.yaml에서 telegram.enabled를 true로 설정하세요")
-        return
+    @staticmethod
+    def calculate_max_drawdown(equity_curve: pd.Series) -> float:
+        """최대 손실폭 계산"""
+        peak = equity_curve.cummax()
+        drawdown = (equity_curve - peak) / peak
+        return drawdown.min()
+
+    @staticmethod
+    def calculate_calmar_ratio(returns: pd.Series) -> float:
+        """칼마 비율 계산 (연수익률 / 최대손실폭)"""
+        annual_return = returns.mean() * 252
+        equity_curve = (1 + returns).cumprod()
+        max_dd = BacktestUtils.calculate_max_drawdown(equity_curve)
+        
+        if max_dd == 0:
+            return 0
+        return annual_return / abs(max_dd)
+
+    @staticmethod
+    def calculate_win_rate(returns: pd.Series) -> float:
+        """승률 계산"""
+        winning_trades = (returns > 0).sum()
+        total_trades = len(returns[returns != 0])
+        
+        return winning_trades / total_trades if total_trades > 0 else 0
+
+    @staticmethod
+    def generate_performance_report(returns: pd.Series) -> Dict[str, float]:
+        """성과 리포트 생성"""
+        equity_curve = (1 + returns).cumprod()
+        
+        return {
+            'total_return': (equity_curve.iloc[-1] - 1) * 100,
+            'annual_return': returns.mean() * 252 * 100,
+            'volatility': returns.std() * np.sqrt(252) * 100,
+            'sharpe_ratio': DataProcessor.calculate_sharpe_ratio(returns),
+            'calmar_ratio': BacktestUtils.calculate_calmar_ratio(returns),
+            'max_drawdown': BacktestUtils.calculate_max_drawdown(equity_curve) * 100,
+            'win_rate': BacktestUtils.calculate_win_rate(returns) * 100,
+            'total_trades': len(returns[returns != 0])
+        }
+
+# ================================
+# 🔧 편의 함수들
+# ================================
+
+# 전역 객체들
+file_manager = FileManager()
+cache = SimpleCache()
+timezone_manager = TimeZoneManager()
+
+def get_config(config_path: str = "configs/settings.yaml") -> Dict:
+    """설정 파일 로드 (캐시 적용)"""
+    cached = cache.get(f"config_{config_path}")
+    if cached:
+        return cached
     
-    if not telegram_config.get('bot_token') or not telegram_config.get('chat_id'):
-        print("❌ 텔레그램 설정이 incomplete합니다")
-        print("📋 bot_token과 chat_id를 설정하세요")
-        return
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        cache.set(f"config_{config_path}", config)
+        return config
+    except Exception as e:
+        logger.error(f"설정 파일 로드 실패: {e}")
+        return {}
+
+def save_trading_log(log_data: Dict, log_type: str = "trading"):
+    """거래 로그 저장"""
+    timestamp = datetime.now().strftime('%Y%m%d')
+    filename = f"{log_type}_log_{timestamp}.json"
     
-    print("✅ 텔레그램 설정 확인 완료")
-    print()
+    # 기존 로그 로드
+    existing_logs = file_manager.load_json(filename, "logs") or []
     
-    # 1. 기본 메시지 테스트
-    print("1️⃣ 기본 메시지 테스트...")
-    result1 = await send_telegram_message("🧪 최고퀸트프로젝트 알림 시스템 테스트 시작!")
-    print(f"   결과: {'✅ 성공' if result1 else '❌ 실패'}")
+    # 새 로그 추가 (모든 시간대 정보 포함)
+    log_data['timestamp'] = datetime.now().isoformat()
+    log_data['market_times'] = timezone_manager.get_all_market_times()
+    existing_logs.append(log_data)
     
-    await asyncio.sleep(2)
+    # 저장
+    file_manager.save_json(existing_logs, filename, "logs")
+
+def get_market_hours(market: str = "US") -> Dict[str, Any]:
+    """시장 운영 시간 반환 (시간대 정보 포함)"""
+    market = market.upper()
     
-    # 2. 매매 신호 알림 테스트
-    print("2️⃣ 매매 신호 알림 테스트...")
-    result2 = await send_trading_alert(
-        market="US", symbol="AAPL", action="buy", price=175.50, 
-        confidence=0.85, reasoning="버핏: 저PBR(1.2) | 린치: 저PEG(0.8) | 뉴스: 긍정적 실적 발표",
-        target_price=195.80
-    )
-    print(f"   결과: {'✅ 성공' if result2 else '❌ 실패'}")
-    
-    await asyncio.sleep(2)
-    
-    # 3. 매매 완료 알림 테스트
-    print("3️⃣ 매매 완료 알림 테스트...")
-    result3 = await send_trading_alert(
-        market="COIN", symbol="BTC-KRW", action="buy", price=95000000,
-        confidence=0.78, reasoning="거래량 급증(2.3배) | RSI 과매도(25.4) | 뉴스: ETF 승인 소식",
-        target_price=105000000, execution_status="completed"
-    )
-    print(f"   결과: {'✅ 성공' if result3 else '❌ 실패'}")
-    
-    await asyncio.sleep(2)
-    
-    # 4. 시장 요약 알림 테스트
-    print("4️⃣ 시장 요약 알림 테스트...")
-    mock_summaries = {
+    base_info = {
         'US': {
-            'total_analyzed': 40,
-            'buy_signals': 5,
-            'sell_signals': 2,
-            'analysis_time': 12.3,
-            'is_trading_day': True,
-            'executed_trades': [{'executed': True}, {'executed': True}],
-            'top_picks': [
-                {'symbol': 'AAPL', 'confidence': 0.85},
-                {'symbol': 'MSFT', 'confidence': 0.78},
-                {'symbol': 'NVDA', 'confidence': 0.72}
-            ]
+            'timezone': 'US/Eastern (EST/EDT)',
+            'premarket': '04:00 - 09:30',
+            'regular': '09:30 - 16:00', 
+            'aftermarket': '16:00 - 20:00',
+            'currency': 'USD'
         },
         'JP': {
-            'total_analyzed': 24,
-            'buy_signals': 3,
-            'sell_signals': 1,
-            'analysis_time': 8.7,
-            'is_trading_day': True,
-            'executed_trades': [{'executed': True}],
-            'top_picks': [
-                {'symbol': '7203.T', 'confidence': 0.81},
-                {'symbol': '6758.T', 'confidence': 0.74}
-            ]
+            'timezone': 'Asia/Tokyo (JST)',
+            'morning': '09:00 - 11:30',
+            'lunch_break': '11:30 - 12:30',
+            'afternoon': '12:30 - 15:00',
+            'currency': 'JPY'
         },
         'COIN': {
-            'total_analyzed': 10,
-            'buy_signals': 2,
-            'sell_signals': 0,
-            'analysis_time': 3.2,
-            'is_trading_day': True,
-            'executed_trades': [{'executed': True}],
-            'top_picks': [
-                {'symbol': 'BTC-KRW', 'confidence': 0.78}
-            ]
+            'timezone': 'UTC (24시간)',
+            'trading': '24시간 연중무휴',
+            'currency': 'Various'
+        },
+        'KOR': {
+            'timezone': 'Asia/Seoul (KST)',
+            'regular': '09:00 - 15:30',
+            'currency': 'KRW'
         }
     }
-    result4 = await send_market_summary(mock_summaries)
-    print(f"   결과: {'✅ 성공' if result4 else '❌ 실패'}")
     
-    await asyncio.sleep(2)
+    market_info = base_info.get(market, base_info['US'])
     
-    # 5. 스케줄 알림 테스트
-    print("5️⃣ 스케줄 알림 테스트...")
-    result5 = await send_schedule_notification(['US', 'JP'], "start")
-    print(f"   결과: {'✅ 성공' if result5 else '❌ 실패'}")
+    # 현재 시간 정보 추가
+    current_time = timezone_manager.get_current_time('KOR' if market == 'KOR' else market)
+    market_info['current_local_time'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
+    market_info['current_status'] = timezone_manager.is_market_open_detailed(market)
     
-    await asyncio.sleep(2)
+    return market_info
+
+def is_market_open(market: str = "US") -> bool:
+    """시장 개장 여부 확인 (정확한 시간대 적용)"""
+    market_status = timezone_manager.is_market_open_detailed(market)
+    return market_status['is_open']
+
+def get_all_market_status() -> Dict[str, Dict]:
+    """전체 시장 상태 조회"""
+    markets = ['US', 'JP', 'COIN']
+    status = {}
     
-    # 6. 뉴스 알림 테스트
-    print("6️⃣ 뉴스 알림 테스트...")
-    result6 = await send_news_alert(
-        symbol="TSLA", news_score=0.8, 
-        news_summary="테슬라 Q3 실적 예상치 크게 상회, 전기차 판매량 급증",
-        market="US"
-    )
-    print(f"   결과: {'✅ 성공' if result6 else '❌ 실패'}")
+    for market in markets:
+        status[market] = timezone_manager.is_market_open_detailed(market)
     
-    await asyncio.sleep(2)
-    
-    # 7. 시스템 알림 테스트
-    print("7️⃣ 시스템 알림 테스트...")
-    result7 = await send_system_alert(
-        "startup", "최고퀸트프로젝트 시스템이 성공적으로 시작되었습니다", "info"
-    )
-    print(f"   결과: {'✅ 성공' if result7 else '❌ 실패'}")
-    
-    await asyncio.sleep(2)
-    
-    # 8. 일일 리포트 테스트
-    print("8️⃣ 일일 리포트 테스트...")
-    mock_performance = {
-        'total_signals': 74,
-        'total_trades': 8,
-        'successful_trades': 6,
-        'daily_return': 2.3,
-        'total_return': 15.7,
-        'top_performers': [
-            {'symbol': 'AAPL', 'return': 4.2},
-            {'symbol': 'BTC-KRW', 'return': 3.1},
-            {'symbol': '7203.T', 'return': 2.8}
-        ]
+    # 서울 시간도 추가
+    seoul_time = timezone_manager.get_current_time('KOR')
+    status['KOR'] = {
+        'current_time': seoul_time.strftime('%Y-%m-%d %H:%M:%S KST'),
+        'weekday': seoul_time.strftime('%A'),
+        'date': seoul_time.strftime('%Y년 %m월 %d일')
     }
-    result8 = await send_daily_report(mock_performance)
-    print(f"   결과: {'✅ 성공' if result8 else '❌ 실패'}")
     
-    await asyncio.sleep(2)
+    return status
+
+def get_time_until_market_event(market: str = "US") -> Dict[str, str]:
+    """다음 시장 이벤트까지 남은 시간"""
+    market_status = timezone_manager.is_market_open_detailed(market)
     
-    # 9. 에러 알림 테스트
-    print("9️⃣ 에러 알림 테스트...")
-    result9 = await send_error_notification("테스트용 오류 메시지입니다", "SYSTEM")
-    print(f"   결과: {'✅ 성공' if result9 else '❌ 실패'}")
-    
-    await asyncio.sleep(2)
-    
-    # 10. 마무리 메시지
-    print("🔟 테스트 완료 메시지...")
-    success_count = sum([result1, result2, result3, result4, result5, result6, result7, result8, result9])
-    result10 = await send_telegram_message(
-        f"🧪 최고퀸트프로젝트 알림 시스템 테스트 완료!\n\n"
-        f"✅ 성공: {success_count}/9개\n"
-        f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    print(f"   결과: {'✅ 성공' if result10 else '❌ 실패'}")
-    
-    print()
-    print(f"🎯 전체 테스트 결과: {success_count + result10}/10개 성공")
-    if success_count + result10 == 10:
-        print("🎉 모든 알림 기능이 정상 작동합니다!")
-    else:
-        print("⚠️ 일부 알림에 문제가 있습니다. 설정을 확인하세요.")
+    return {
+        'market': market,
+        'current_status': market_status['status'],
+        'next_event': market_status['next_event'],
+        'is_open': market_status['is_open'],
+        'session_type': market_status['session_type']
+    }
+
+def convert_market_times(time_str: str, from_market: str, to_market: str) -> str:
+    """시장간 시간 변환 (문자열 입력)"""
+    try:
+        # 시간 문자열 파싱 (HH:MM 형식 가정)
+        hour, minute = map(int, time_str.split(':'))
         
-if __name__ == "__main__":
-    print("🔔 최고퀸트프로젝트 텔레그램 알림 시스템")
+        # 현재 날짜 기준으로 datetime 생성
+        from_tz = 'KOR' if from_market == 'KOR' else from_market
+        base_date = timezone_manager.get_current_time(from_tz).replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
+        
+        # 시간대 변환
+        to_tz = 'KOR' if to_market == 'KOR' else to_market
+        converted = timezone_manager.convert_time(base_date, from_tz, to_tz)
+        
+        return converted.strftime('%H:%M')
+        
+    except Exception as e:
+        logger.error(f"시간 변환 실패: {e}")
+        return time_str
+
+def get_market_times_comparison() -> Dict[str, str]:
+    """현재 시간 기준 모든 시장 시간 비교"""
+    times = timezone_manager.get_all_market_times()
+    
+    comparison = {}
+    for market, time_info in times.items():
+        market_name = {
+            'KOR': '🇰🇷 서울',
+            'US': '🇺🇸 뉴욕', 
+            'JP': '🇯🇵 도쿄'
+        }.get(market, market)
+        
+        comparison[market_name] = f"{time_info['time_only']} ({time_info['weekday']})"
+    
+    return comparison
+
+def calculate_portfolio_value(positions: Dict[str, Dict]) -> float:
+    """포트폴리오 총 가치 계산"""
+    total_value = 0
+    
+    for symbol, position in positions.items():
+        quantity = position.get('quantity', 0)
+        current_price = position.get('current_price', 0)
+        total_value += quantity * current_price
+    
+    return total_value
+
+# ================================
+# 🧪 테스트 함수
+# ================================
+
+def run_utils_test():
+    """유틸리티 기능 테스트"""
+    print("🛠️ 최고퀸트프로젝트 유틸리티 테스트")
     print("=" * 50)
     
-    # 기본 설정 체크
-    config = load_config()
-    if config:
-        print("✅ 설정 파일 로드 성공")
-        
-        # 간단한 연결 테스트
-        asyncio.run(test_telegram_connection())
-        print()
-        
-        # 전체 알림 테스트
-        asyncio.run(test_all_notifications())
-    else:
-        print("❌ 설정 파일을 찾을 수 없습니다")
-        print("📋 configs/settings.yaml 파일을 확인하세요")
+    # 1. 시간대 처리 테스트
+    print("🕐 시간대 처리 테스트:")
+    current_times = timezone_manager.get_all_market_times()
+    for market, time_info in current_times.items():
+        market_name = {'KOR': '🇰🇷 서울', 'US': '🇺🇸 뉴욕', 'JP': '🇯🇵 도쿄'}[market]
+        print(f"  {market_name}: {time_info['datetime']}")
+    
+    print("\n📈 시장 개장 상태:")
+    market_status = get_all_market_status()
+    for market in ['US', 'JP', 'COIN']:
+        status = market_status[market]
+        market_name = {'US': '🇺🇸 미국', 'JP': '🇯🇵 일본', 'COIN': '🪙 코인'}[market]
+        open_status = "🟢 OPEN" if status['is_open'] else "🔴 CLOSED"
+        print(f"  {market_name}: {open_status} - {status['session_type']}")
+        if status['next_event']:
+            print(f"    └─ {status['next_event']}")
+    
+    # 2. 데이터 처리 테스트
+    print("\n📊 데이터 처리 테스트:")
+    symbols = ['AAPL', '7203.T', 'BTC-KRW', 'invalid_symbol']
+    for symbol in symbols:
+        market = DataProcessor.detect_market(symbol)
+        is_valid = Validator.is_valid_symbol(symbol)
+        print(f"  {symbol}: {market} 시장, 유효성: {is_valid}")
+    
+    # 3. 시간 변환 테스트
+    print("\n🔄 시간 변환 테스트:")
+    test_time = "15:30"  # 오후 3시 30분
+    
+    conversions = [
+        ("서울", "뉴욕", convert_market_times(test_time, 'KOR', 'US')),
+        ("서울", "도쿄", convert_market_times(test_time, 'KOR', 'JP')),
+        ("뉴욕", "서울", convert_market_times(test_time, 'US', 'KOR')),
+        ("도쿄", "서울", convert_market_times(test_time, 'JP', 'KOR'))
+    ]
+    
+    for from_city, to_city, converted in conversions:
+        print(f"  {from_city} {test_time} → {to_city} {converted}")
+    
+    # 4. 포맷팅 테스트
+    print("\n📋 포맷팅 테스트:")
+    prices = [0.0001, 1.23, 123.45, 12345, 1234567]
+    for price in prices:
+        formatted = Formatter.format_price(price)
+        print(f"  ${price} → {formatted}")
+    
+    # 5. 파일 관리 테스트
+    print("\n📁 파일 관리 테스트:")
+    test_data = {
+        'test': 'data', 
+        'timestamp': datetime.now().isoformat(),
+        'market_times': timezone_manager.get_all_market_times()
+    }
+    success = file_manager.save_json(test_data, 'test.json')
+    print(f"  JSON 저장: {'성공' if success else '실패'}")
+    
+    loaded_data = file_manager.load_json('test.json')
+    print(f"  JSON 로드: {'성공' if loaded_data else '실패'}")
+    
+    # 6. 캐시 테스트
+    print("\n💾 캐시 테스트:")
+    cache.set('test_key', 'test_value')
+    cached_value = cache.get('test_key')
+    print(f"  캐시 저장/로드: {'성공' if cached_value == 'test_value' else '실패'}")
+    
+    # 7. 금융 계산 테스트
+    print("\n💰 금융 계산 테스트:")
+    sample_prices = pd.Series([100, 102, 98, 105, 103, 108, 106, 110])
+    rsi = FinanceUtils.calculate_rsi(sample_prices)
+    print(f"  RSI 계산: {rsi.iloc[-1]:.2f}")
+    
+    returns = DataProcessor.calculate_returns(sample_prices)
+    sharpe = DataProcessor.calculate_sharpe_ratio(returns)
+    print(f"  샤프 비율: {sharpe:.2f}")
+    
+    # 8. 시장 스케줄 테스트
+    print("\n📅 오늘의 시장 스케줄:")
+    schedule = timezone_manager.get_market_schedule_today()
+    for market, events in schedule.items():
+        market_name = {'US': '🇺🇸 미국', 'JP': '🇯🇵 일본'}[market]
+        print(f"  {market_name}:")
+        for event in events:
+            print(f"    {event['time']} - {event['event']}")
+    
+    print("\n✅ 모든 테스트 완료!")
+    
+    # 9. 시간대 비교 요약
+    print("\n🌍 현재 시간 비교:")
+    time_comparison = get_market_times_comparison()
+    for market, time_str in time_comparison.items():
+        print(f"  {market}: {time_str}")
+
+if __name__ == "__main__":
+    run_utils_test()   
