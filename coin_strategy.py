@@ -1,16 +1,16 @@
 """
-🪙 암호화폐 전략 모듈 - 최고퀸트프로젝트
-==========================================
+🪙 암호화폐 전략 모듈 - 최고퀸트프로젝트 (순수 기술분석)
+===========================================================
 
 고급 암호화폐 트레이딩 전략:
 - 거래량 급증 감지 (Volume Spike Detection)
 - 공포탐욕지수 통합 분석
 - 변동성 기반 포지션 조정
 - 다중 시간프레임 분석
-- 실시간 뉴스 센티먼트 통합
+- 순수 기술적 분석 (뉴스 제거)
 
 Author: 최고퀸트팀
-Version: 1.0.0
+Version: 1.1.0 (뉴스 제거)
 Project: 최고퀸트프로젝트
 """
 
@@ -25,13 +25,6 @@ from dataclasses import dataclass
 import requests
 import pyupbit
 
-# 뉴스 분석 모듈 import (있을 때만)
-try:
-    from news_analyzer import get_news_sentiment
-    NEWS_ANALYZER_AVAILABLE = True
-except ImportError:
-    NEWS_ANALYZER_AVAILABLE = False
-
 # 로거 설정
 logger = logging.getLogger(__name__)
 
@@ -42,7 +35,7 @@ class CoinSignal:
     action: str  # 'buy', 'sell', 'hold'
     confidence: float  # 0.0 ~ 1.0
     price: float
-    strategy_source: str  # 'volume_spike', 'fear_greed', 'integrated_analysis'
+    strategy_source: str  # 'volume_spike', 'fear_greed', 'technical_analysis'
     volume_spike_ratio: float
     price_change_24h: float
     fear_greed_score: int
@@ -55,7 +48,7 @@ class CoinSignal:
     additional_data: Optional[Dict] = None
 
 class CoinStrategy:
-    """🪙 고급 암호화폐 전략 클래스"""
+    """🪙 고급 암호화폐 전략 클래스 (순수 기술분석)"""
     
     def __init__(self, config_path: str = "configs/settings.yaml"):
         """전략 초기화"""
@@ -72,10 +65,6 @@ class CoinStrategy:
         # 가격 움직임 설정
         self.price_change_threshold = self.coin_config.get('price_change_threshold', 0.05)
         self.volatility_window = self.coin_config.get('volatility_window', 20)
-        
-        # 뉴스 분석 통합 설정
-        self.news_weight = self.coin_config.get('news_weight', 0.5)  # 뉴스 50%
-        self.technical_weight = self.coin_config.get('technical_weight', 0.5)  # 기술분석 50%
         
         # 추적할 암호화폐 (settings.yaml에서 로드)
         self.symbols = self.coin_config.get('symbols', {
@@ -96,7 +85,7 @@ class CoinStrategy:
         if self.enabled:
             logger.info(f"🪙 암호화폐 전략 초기화 완료 - 추적 종목: {len(self.all_symbols)}개")
             logger.info(f"📊 거래량 임계값: {self.volume_spike_threshold}배, 변동성 한계: {self.volatility_limit}")
-            logger.info(f"🔗 뉴스 통합: {self.news_weight*100:.0f}% + 기술분석: {self.technical_weight*100:.0f}%")
+            logger.info(f"🔧 순수 기술분석 모드 (뉴스 분석 제거)")
         else:
             logger.info("🪙 암호화폐 전략이 비활성화되어 있습니다")
 
@@ -115,33 +104,6 @@ class CoinStrategy:
             if symbol in symbols:
                 return sector
         return 'UNKNOWN'
-
-    async def _get_news_sentiment(self, symbol: str) -> Tuple[float, str]:
-        """뉴스 센티먼트 분석 (암호화폐 특화)"""
-        if not NEWS_ANALYZER_AVAILABLE:
-            return 0.5, "뉴스 분석 모듈 없음"
-            
-        try:
-            # 심볼에서 코인명만 추출 (BTC-KRW -> BTC)
-            coin_name = symbol.split('-')[0]
-            
-            # news_analyzer.py의 get_news_sentiment 함수 호출
-            news_result = await get_news_sentiment(coin_name)
-            
-            if news_result and 'sentiment_score' in news_result:
-                score = news_result['sentiment_score']  # 0.0 ~ 1.0
-                summary = news_result.get('summary', 'No news summary')
-                
-                # 점수를 -1 ~ 1 범위로 변환 (0.5 = 중립)
-                normalized_score = (score - 0.5) * 2
-                
-                return normalized_score, f"뉴스: {summary[:50]}"
-            else:
-                return 0.0, "뉴스 데이터 없음"
-                
-        except Exception as e:
-            logger.error(f"뉴스 센티먼트 분석 실패 {symbol}: {e}")
-            return 0.0, f"뉴스 분석 오류: {str(e)}"
 
     async def get_fear_greed_index(self) -> int:
         """공포탐욕지수 조회"""
@@ -220,7 +182,7 @@ class CoinStrategy:
             return current_price
 
     async def analyze_symbol(self, symbol: str) -> CoinSignal:
-        """개별 암호화폐 분석 (뉴스 분석 통합)"""
+        """개별 암호화폐 분석 (순수 기술분석)"""
         if not self.enabled:
             logger.warning("암호화폐 전략이 비활성화되어 있습니다")
             return CoinSignal(
@@ -263,22 +225,19 @@ class CoinStrategy:
             # 공포탐욕지수
             fear_greed = await self.get_fear_greed_index()
 
-            # 4. 기술적 분석 점수 계산
+            # 4. 순수 기술적 분석 점수 계산
             technical_score = self._calculate_technical_score(
                 volume_spike, price_change_24h, volatility, rsi, fear_greed
             )
 
-            # 5. 뉴스 센티먼트 분석
-            news_score, news_reasoning = await self._get_news_sentiment(symbol)
+            # 5. 최종 점수 = 기술적 분석 점수 (100%)
+            final_score = technical_score
 
-            # 6. 최종 통합 점수 (기술분석 50% + 뉴스 50%)
-            final_score = (technical_score * self.technical_weight) + (news_score * self.news_weight)
-
-            # 7. 최종 액션 결정
+            # 6. 최종 액션 결정
             if final_score >= 0.6:
                 final_action = 'buy'
                 confidence = min(final_score, 0.95)
-                strategy_source = 'integrated_analysis'
+                strategy_source = 'technical_analysis'
             elif final_score <= -0.5:
                 final_action = 'sell'
                 confidence = min(abs(final_score), 0.95)
@@ -288,13 +247,12 @@ class CoinStrategy:
                 confidence = 0.5
                 strategy_source = 'neutral'
 
-            # 8. 목표가격 및 포지션 크기 계산
+            # 7. 목표가격 및 포지션 크기 계산
             target_price = self._calculate_target_price(current_price, confidence, final_action)
             position_size = self._calculate_position_size(current_price, confidence)
 
-            # 9. 종합 reasoning 생성
+            # 8. 기술적 분석 reasoning 생성
             technical_reasoning = self._generate_technical_reasoning(volume_spike, rsi, fear_greed, volatility)
-            combined_reasoning = f"{technical_reasoning} | {news_reasoning}"
 
             return CoinSignal(
                 symbol=symbol,
@@ -308,12 +266,11 @@ class CoinStrategy:
                 volatility=volatility,
                 rsi=rsi,
                 sector=self._get_sector_for_symbol(symbol),
-                reasoning=combined_reasoning,
+                reasoning=technical_reasoning,
                 target_price=target_price,
                 timestamp=datetime.now(),
                 additional_data={
                     'technical_score': technical_score,
-                    'news_score': news_score,
                     'final_score': final_score,
                     'position_size': position_size,
                     'avg_volume_24h': avg_volume,
@@ -550,7 +507,7 @@ if __name__ == "__main__":
         print("🪙 최고퀸트프로젝트 - 암호화폐 전략 테스트 시작...")
         
         # 단일 코인 테스트
-        print("\n📊 BTC-KRW 개별 분석 (뉴스 통합):")
+        print("\n📊 BTC-KRW 개별 분석 (순수 기술분석):")
         btc_result = await analyze_coin('BTC-KRW')
         print(f"BTC: {btc_result}")
         
@@ -558,7 +515,6 @@ if __name__ == "__main__":
         if 'additional_data' in btc_result:
             additional = btc_result['additional_data']
             print(f"  기술분석: {additional.get('technical_score', 0):.2f}")
-            print(f"  뉴스점수: {additional.get('news_score', 0):.2f}")
             print(f"  최종점수: {additional.get('final_score', 0):.2f}")
             print(f"  포지션크기: {additional.get('position_size', 0):.2f} 코인")
         
