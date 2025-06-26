@@ -1,11 +1,10 @@
 """
-🧪 최고퀸트프로젝트 - 완전체 테스트 시스템
-==========================================
+🧪 최고퀸트프로젝트 - 완전체 테스트 시스템 (순수 기술분석)
+====================================================================
 
 전체 시스템 통합 테스트:
-- 📊 전략 모듈 테스트 (뉴스 통합 확인)
+- 📊 전략 모듈 테스트 (뉴스 제거됨)
 - 📅 스케줄링 시스템 테스트
-- 📰 뉴스 분석 시스템 테스트
 - 💰 매매 시스템 테스트
 - 🔔 알림 시스템 테스트
 - ⚙️ 핵심 엔진 테스트
@@ -14,7 +13,7 @@
 - 📈 성능 벤치마크 테스트
 
 Author: 최고퀸트팀
-Version: 1.0.0
+Version: 1.1.0 (뉴스 제거)
 Project: 최고퀸트프로젝트
 """
 
@@ -63,7 +62,7 @@ def log_test_result(test_name: str, success: bool, message: str = "", duration: 
         print(f"     {Colors.YELLOW}└─ {message}{Colors.END}")
 
 # =====================================
-# 1️⃣ 모듈 Import 테스트
+# 1️⃣ 모듈 Import 테스트 (뉴스 제거)
 # =====================================
 
 def test_module_imports():
@@ -79,8 +78,8 @@ def test_module_imports():
         ('핵심 엔진', 'core'),
         ('알림 시스템', 'notifier'),
         ('스케줄러', 'scheduler'),
-        ('뉴스 분석', 'news_analyzer'),
         ('매매 시스템', 'trading')
+        # 뉴스 분석 모듈 제거됨
     ]
     
     for name, module_name in modules_to_test:
@@ -100,7 +99,7 @@ def test_module_imports():
             log_test_result(f"Import {name}", False, f"예상치 못한 오류: {str(e)}", duration)
 
 # =====================================
-# 2️⃣ 설정 파일 테스트
+# 2️⃣ 설정 파일 테스트 (뉴스 설정 제거)
 # =====================================
 
 def test_config_system():
@@ -118,11 +117,12 @@ def test_config_system():
             duration = time.time() - start_time
             log_test_result("설정 파일 로드", True, "", duration)
             
-            # 필수 섹션 확인
+            # 필수 섹션 확인 (뉴스 분석 제거)
             required_sections = [
                 'us_strategy', 'jp_strategy', 'coin_strategy',
-                'schedule', 'news_analysis', 'trading', 'api',
+                'schedule', 'trading', 'api',
                 'risk_management', 'notifications'
+                # 'news_analysis' 섹션 제거됨
             ]
             
             missing_sections = []
@@ -241,45 +241,12 @@ async def test_scheduler_system():
         log_test_result("스케줄링 시스템", False, str(e))
 
 # =====================================
-# 5️⃣ 뉴스 분석 시스템 테스트
-# =====================================
-
-async def test_news_system():
-    """뉴스 분석 시스템 테스트"""
-    print(f"\n{Colors.BOLD}5️⃣ 뉴스 분석 시스템 테스트{Colors.END}")
-    
-    try:
-        from news_analyzer import get_news_sentiment, get_news_analysis_stats
-        
-        # 뉴스 센티먼트 분석 (빠른 테스트)
-        test_symbols = [('AAPL', 'US'), ('BTC', 'COIN')]
-        
-        for symbol, market in test_symbols:
-            start_time = time.time()
-            try:
-                sentiment, reasoning = await get_news_sentiment(symbol, market)
-                duration = time.time() - start_time
-                log_test_result(f"뉴스 분석 {symbol}", True, f"센티먼트: {sentiment:.2f}", duration)
-            except Exception as e:
-                duration = time.time() - start_time
-                log_test_result(f"뉴스 분석 {symbol}", False, str(e), duration)
-        
-        # 뉴스 분석 통계
-        start_time = time.time()
-        stats = get_news_analysis_stats()
-        duration = time.time() - start_time
-        log_test_result("뉴스 분석 통계", True, f"상태: {stats.get('analyzer_status', 'unknown')}", duration)
-        
-    except Exception as e:
-        log_test_result("뉴스 분석 시스템", False, str(e))
-
-# =====================================
-# 6️⃣ 전략 시스템 테스트
+# 5️⃣ 전략 시스템 테스트 (순수 기술분석)
 # =====================================
 
 async def test_strategy_systems():
     """전략 시스템 테스트"""
-    print(f"\n{Colors.BOLD}6️⃣ 전략 시스템 테스트{Colors.END}")
+    print(f"\n{Colors.BOLD}5️⃣ 전략 시스템 테스트 (순수 기술분석){Colors.END}")
     
     # 미국 주식 전략
     try:
@@ -336,12 +303,12 @@ async def test_strategy_systems():
         log_test_result("암호화폐 전략", False, str(e))
 
 # =====================================
-# 7️⃣ 매매 시스템 테스트
+# 6️⃣ 매매 시스템 테스트
 # =====================================
 
 async def test_trading_system():
     """매매 시스템 테스트"""
-    print(f"\n{Colors.BOLD}7️⃣ 매매 시스템 테스트{Colors.END}")
+    print(f"\n{Colors.BOLD}6️⃣ 매매 시스템 테스트{Colors.END}")
     
     try:
         from trading import TradingExecutor, get_trading_stats, get_portfolio_summary
@@ -399,12 +366,12 @@ async def test_trading_system():
         log_test_result("매매 시스템", False, str(e))
 
 # =====================================
-# 8️⃣ 알림 시스템 테스트
+# 7️⃣ 알림 시스템 테스트
 # =====================================
 
 async def test_notification_system():
     """알림 시스템 테스트"""
-    print(f"\n{Colors.BOLD}8️⃣ 알림 시스템 테스트{Colors.END}")
+    print(f"\n{Colors.BOLD}7️⃣ 알림 시스템 테스트{Colors.END}")
     
     try:
         from notifier import (
@@ -435,12 +402,12 @@ async def test_notification_system():
         log_test_result("알림 시스템", False, str(e))
 
 # =====================================
-# 9️⃣ 핵심 엔진 테스트
+# 8️⃣ 핵심 엔진 테스트
 # =====================================
 
 async def test_core_engine():
     """핵심 엔진 테스트"""
-    print(f"\n{Colors.BOLD}9️⃣ 핵심 엔진 테스트{Colors.END}")
+    print(f"\n{Colors.BOLD}8️⃣ 핵심 엔진 테스트{Colors.END}")
     
     try:
         from core import QuantTradingEngine, get_engine_status
@@ -476,12 +443,12 @@ async def test_core_engine():
         log_test_result("핵심 엔진", False, str(e))
 
 # =====================================
-# 🔟 성능 벤치마크 테스트
+# 9️⃣ 성능 벤치마크 테스트
 # =====================================
 
 async def test_performance_benchmark():
     """성능 벤치마크 테스트"""
-    print(f"\n{Colors.BOLD}🔟 성능 벤치마크 테스트{Colors.END}")
+    print(f"\n{Colors.BOLD}9️⃣ 성능 벤치마크 테스트{Colors.END}")
     
     global performance_results
     
@@ -497,9 +464,9 @@ async def test_performance_benchmark():
             module = __import__(module_name, fromlist=[function_name])
             analyze_func = getattr(module, function_name)
             
-            # 10회 실행하여 평균 시간 측정
+            # 3회 실행하여 평균 시간 측정
             times = []
-            for i in range(3):  # 시간 단축을 위해 3회로 감소
+            for i in range(3):
                 start_time = time.time()
                 try:
                     result = await asyncio.wait_for(analyze_func(test_symbol), timeout=10.0)
@@ -524,12 +491,12 @@ async def test_performance_benchmark():
             log_test_result(f"성능 {strategy_name}", False, str(e))
 
 # =====================================
-# 📊 전체 시스템 통합 테스트
+# 🔟 전체 시스템 통합 테스트
 # =====================================
 
 async def test_full_system_integration():
     """전체 시스템 통합 테스트"""
-    print(f"\n{Colors.BOLD}📊 전체 시스템 통합 테스트{Colors.END}")
+    print(f"\n{Colors.BOLD}🔟 전체 시스템 통합 테스트{Colors.END}")
     
     try:
         from core import QuantTradingEngine
@@ -635,7 +602,7 @@ def print_test_summary():
     # 최종 판정
     print(f"\n{Colors.BOLD}🏆 최종 판정:{Colors.END}")
     if success_rate >= 90:
-        print(f"   {Colors.GREEN}🎉 EXCELLENT - 최고퀸트프로젝트가 완벽하게 작동합니다!{Colors.END}")
+        print(f"   {Colors.GREEN}🎉 EXCELLENT - 순수 기술분석 퀸트시스템이 완벽하게 작동합니다!{Colors.END}")
     elif success_rate >= 80:
         print(f"   {Colors.CYAN}👍 GOOD - 시스템이 양호하게 작동합니다{Colors.END}")
     elif success_rate >= 70:
@@ -649,9 +616,10 @@ def print_test_summary():
 
 async def run_all_tests(quick_mode: bool = False):
     """전체 테스트 실행"""
-    print(f"{Colors.BOLD}{Colors.CYAN}🧪 최고퀸트프로젝트 완전체 테스트 시스템{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.CYAN}🧪 최고퀸트프로젝트 완전체 테스트 시스템 (순수 기술분석){Colors.END}")
     print("=" * 70)
     print(f"🚀 테스트 모드: {'빠른 테스트' if quick_mode else '전체 테스트'}")
+    print(f"📊 분석 방식: 순수 기술분석 (뉴스 제거됨)")
     print(f"⏰ 시작 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
     
@@ -663,10 +631,7 @@ async def run_all_tests(quick_mode: bool = False):
     await test_utils_system()
     await test_scheduler_system()
     
-    if not quick_mode:
-        await test_news_system()
-    
-    # 3. 전략 시스템 테스트
+    # 3. 전략 시스템 테스트 (순수 기술분석)
     await test_strategy_systems()
     
     # 4. 인프라 테스트
@@ -692,7 +657,7 @@ def main():
     """메인 함수"""
     import argparse
     
-    parser = argparse.ArgumentParser(description='최고퀸트프로젝트 테스트 시스템')
+    parser = argparse.ArgumentParser(description='최고퀸트프로젝트 테스트 시스템 (순수 기술분석)')
     parser.add_argument('--quick', action='store_true', help='빠른 테스트 모드')
     parser.add_argument('--verbose', action='store_true', help='상세 출력')
     
