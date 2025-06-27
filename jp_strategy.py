@@ -667,4 +667,6 @@ class JPStrategy:
             )
             
             # 5. 🛡️ 동적 손절/익절 계산
-            stop_loss, take_profit, max_hold_days = self
+            stop_loss, take_profit, max_hold_days = self._calculate_dynamic_stop_take(
+    current_price, confidence, self._get_stock_type(symbol), self._get_yen_signal()
+)
