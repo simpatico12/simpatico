@@ -1,8 +1,9 @@
 """
-🪙 암호화폐 전략 모듈 - 최고퀸트프로젝트 (순수 기술분석)
-===========================================================
+🪙 암호화폐 전략 모듈 - 최고퀸트프로젝트 (순수 기술분석 + 상위 10개 자동)
+=================================================================================
 
 고급 암호화폐 트레이딩 전략:
+- 업비트 시가총액 상위 10개 자동 선택
 - 거래량 급증 감지 (Volume Spike Detection)
 - 공포탐욕지수 통합 분석
 - 변동성 기반 포지션 조정
@@ -10,7 +11,7 @@
 - 순수 기술적 분석 (뉴스 제거)
 
 Author: 최고퀸트팀
-Version: 1.1.0 (뉴스 제거)
+Version: 1.2.0 (상위 10개 자동 + 뉴스 제거)
 Project: 최고퀸트프로젝트
 """
 
@@ -48,9 +49,9 @@ class CoinSignal:
     additional_data: Optional[Dict] = None
 
 class CoinStrategy:
-    """🪙 고급 암호화폐 전략 클래스 (순수 기술분석)"""
+    """🪙 고급 암호화폐 전략 클래스 (순수 기술분석 + 상위 10개 자동)"""
     
-    def __init__(self, config_path: str = "configs/settings.yaml"):
+    def __init__(self, config_path: str = "settings.yaml"):
         """전략 초기화"""
         self.config = self._load_config(config_path)
         self.coin_config = self.config.get('coin_strategy', {})
@@ -66,16 +67,13 @@ class CoinStrategy:
         self.price_change_threshold = self.coin_config.get('price_change_threshold', 0.05)
         self.volatility_window = self.coin_config.get('volatility_window', 20)
         
-        # 추적할 암호화폐 (settings.yaml에서 로드)
-        self.symbols = self.coin_config.get('symbols', {
-            'MAJOR': ['BTC-KRW', 'ETH-KRW', 'XRP-KRW', 'ADA-KRW'],
-            'DEFI': ['UNI-KRW', 'LINK-KRW', 'AAVE-KRW'],
-            'ALTCOIN': ['SOL-KRW', 'MATIC-KRW', 'DOT-KRW']
-        })
+        # 업비트 상위 10개 코인 자동 선택
+        self.top_10_symbols = []
+        self.symbols = {}
         
-        # 모든 심볼을 플랫 리스트로
-        self.all_symbols = [symbol for sector_symbols in self.symbols.values() 
-                           for symbol in sector_symbols]
+        # 초기화 시 상위 10개 코인 로드
+        if self.enabled:
+            self._load_top_10_coins()
         
         # 기술적 분석 파라미터
         self.rsi_period = 14
@@ -83,7 +81,8 @@ class CoinStrategy:
         self.fear_greed_weight = 0.3
         
         if self.enabled:
-            logger.info(f"🪙 암호화폐 전략 초기화 완료 - 추적 종목: {len(self.all_symbols)}개")
+            logger.info(f"🪙 암호화폐 전략 초기화 완료 - 상위 {len(self.top_10_symbols)}개 코인 추적")
+            logger.info(f"📊 추적 종목: {', '.join(self.top_10_symbols)}")
             logger.info(f"📊 거래량 임계값: {self.volume_spike_threshold}배, 변동성 한계: {self.volatility_limit}")
             logger.info(f"🔧 순수 기술분석 모드 (뉴스 분석 제거)")
         else:
@@ -97,6 +96,95 @@ class CoinStrategy:
         except Exception as e:
             logger.error(f"설정 파일 로드 실패: {e}")
             return {}
+
+    def _load_top_10_coins(self):
+        """업비트 시가총액 상위 10개 코인 로드"""
+        try:
+            logger.info("🔍 업비트 상위 10개 코인 검색 중...")
+            
+            # 업비트 KRW 마켓 전체 티커 조회
+            all_tickers = pyupbit.get_tickers(fiat="KRW")
+            
+            if not all_tickers:
+                logger.error("업비트 티커 조회 실패")
+                self._set_default_coins()
+                return
+            
+            # 각 코인의 현재 가격과 24시간 거래량 조회
+            coin_data = []
+            
+            # 배치로 가격 조회 (업비트 API 제한 고려)
+            batch_size = 10
+            for i in range(0, min(len(all_tickers), 50), batch_size):  # 상위 50개만 체크
+                batch_tickers = all_tickers[i:i+batch_size]
+                try:
+                    prices = pyupbit.get_current_price(batch_tickers)
+                    if prices:
+                        for ticker in batch_tickers:
+                            if ticker in prices and prices[ticker]:
+                                # 24시간 거래량 데이터 조회
+                                ohlcv = pyupbit.get_ohlcv(ticker, interval="day", count=1)
+                                if ohlcv is not None and len(ohlcv) > 0:
+                                    volume_krw = ohlcv.iloc[-1]['volume'] * prices[ticker]
+                                    coin_data.append({
+                                        'ticker': ticker,
+                                        'price': prices[ticker],
+                                        'volume_krw': volume_krw
+                                    })
+                    
+                    # API 호출 제한 고려
+                    await asyncio.sleep(0.2)
+                    
+                except Exception as e:
+                    logger.warning(f"배치 {i} 처리 중 오류: {e}")
+                    continue
+            
+            if not coin_data:
+                logger.error("코인 데이터 수집 실패")
+                self._set_default_coins()
+                return
+            
+            # 거래량 기준 상위 10개 선택
+            coin_data.sort(key=lambda x: x['volume_krw'], reverse=True)
+            top_10 = coin_data[:10]
+            
+            self.top_10_symbols = [coin['ticker'] for coin in top_10]
+            
+            # 섹터별 분류 (간단히 분류)
+            self.symbols = {
+                'MAJOR': [],
+                'ALTCOIN': [],
+                'OTHERS': []
+            }
+            
+            for ticker in self.top_10_symbols:
+                if ticker in ['KRW-BTC', 'KRW-ETH']:
+                    self.symbols['MAJOR'].append(ticker)
+                elif len(self.symbols['ALTCOIN']) < 5:
+                    self.symbols['ALTCOIN'].append(ticker)
+                else:
+                    self.symbols['OTHERS'].append(ticker)
+            
+            logger.info(f"✅ 상위 10개 코인 로드 완료:")
+            for i, coin in enumerate(top_10, 1):
+                logger.info(f"  {i}. {coin['ticker']}: {coin['volume_krw']/1e8:.1f}억원 거래량")
+                
+        except Exception as e:
+            logger.error(f"상위 10개 코인 로드 실패: {e}")
+            self._set_default_coins()
+
+    def _set_default_coins(self):
+        """기본 코인 설정 (API 실패 시)"""
+        logger.info("기본 코인 목록으로 설정...")
+        self.top_10_symbols = [
+            'KRW-BTC', 'KRW-ETH', 'KRW-XRP', 'KRW-ADA', 'KRW-AVAX',
+            'KRW-DOGE', 'KRW-MATIC', 'KRW-ATOM', 'KRW-NEAR', 'KRW-HBAR'
+        ]
+        self.symbols = {
+            'MAJOR': ['KRW-BTC', 'KRW-ETH', 'KRW-XRP'],
+            'ALTCOIN': ['KRW-ADA', 'KRW-AVAX', 'KRW-DOGE', 'KRW-MATIC'],
+            'OTHERS': ['KRW-ATOM', 'KRW-NEAR', 'KRW-HBAR']
+        }
 
     def _get_sector_for_symbol(self, symbol: str) -> str:
         """심볼에 해당하는 섹터 찾기"""
@@ -356,53 +444,34 @@ class CoinStrategy:
             
         return "기술분석: " + " | ".join(reasons) if reasons else "기술분석: 보통"
 
-    async def scan_by_sector(self, sector: str) -> List[CoinSignal]:
-        """섹터별 스캔"""
+    async def scan_all_symbols(self) -> List[CoinSignal]:
+        """상위 10개 심볼 스캔"""
         if not self.enabled:
             logger.warning("암호화폐 전략이 비활성화되어 있습니다")
             return []
             
-        if sector not in self.symbols:
-            logger.error(f"알 수 없는 섹터: {sector}")
-            return []
-            
-        logger.info(f"🔍 {sector} 섹터 (암호화폐) 스캔 시작...")
-        symbols = self.symbols[sector]
+        logger.info(f"🔍 상위 {len(self.top_10_symbols)}개 암호화폐 스캔 시작...")
         
-        signals = []
-        for symbol in symbols:
+        all_signals = []
+        for symbol in self.top_10_symbols:
             try:
                 signal = await self.analyze_symbol(symbol)
-                signals.append(signal)
-                logger.info(f"✅ {symbol}: {signal.action} (신뢰도: {signal.confidence:.2f})")
+                all_signals.append(signal)
                 
-                # API 호출 제한 고려 (업비트 API)
+                action_emoji = "🟢" if signal.action == "buy" else "🔴" if signal.action == "sell" else "⚪"
+                logger.info(f"{action_emoji} {symbol}: {signal.action} (신뢰도: {signal.confidence:.2f})")
+                
+                # API 호출 제한 고려
                 await asyncio.sleep(0.1)
                 
             except Exception as e:
                 logger.error(f"❌ {symbol} 분석 실패: {e}")
 
-        return signals
+        buy_count = len([s for s in all_signals if s.action == 'buy'])
+        sell_count = len([s for s in all_signals if s.action == 'sell']) 
+        hold_count = len([s for s in all_signals if s.action == 'hold'])
 
-    async def scan_all_symbols(self) -> List[CoinSignal]:
-        """전체 심볼 스캔"""
-        if not self.enabled:
-            logger.warning("암호화폐 전략이 비활성화되어 있습니다")
-            return []
-            
-        logger.info(f"🔍 {len(self.all_symbols)}개 암호화폐 스캔 시작...")
-        
-        all_signals = []
-        for sector in self.symbols.keys():
-            sector_signals = await self.scan_by_sector(sector)
-            all_signals.extend(sector_signals)
-            
-            # 섹터간 대기
-            await asyncio.sleep(0.5)
-
-        logger.info(f"🎯 스캔 완료 - 매수:{len([s for s in all_signals if s.action=='buy'])}개, "
-                   f"매도:{len([s for s in all_signals if s.action=='sell'])}개, "
-                   f"보유:{len([s for s in all_signals if s.action=='hold'])}개")
+        logger.info(f"🎯 스캔 완료 - 매수:{buy_count}개, 매도:{sell_count}개, 보유:{hold_count}개")
 
         return all_signals
 
@@ -487,7 +556,7 @@ async def get_fear_greed_picks() -> List[Dict]:
     return picks
 
 async def scan_crypto_market() -> Dict:
-    """암호화폐 시장 전체 스캔"""
+    """암호화폐 시장 전체 스캔 (상위 10개)"""
     strategy = CoinStrategy()
     signals = await strategy.scan_all_symbols()
     
@@ -506,28 +575,34 @@ if __name__ == "__main__":
     async def main():
         print("🪙 최고퀸트프로젝트 - 암호화폐 전략 테스트 시작...")
         
-        # 단일 코인 테스트
-        print("\n📊 BTC-KRW 개별 분석 (순수 기술분석):")
-        btc_result = await analyze_coin('BTC-KRW')
-        print(f"BTC: {btc_result}")
+        # 상위 10개 코인 스캔
+        print("\n📊 업비트 상위 10개 코인 분석 (순수 기술분석):")
+        strategy = CoinStrategy()
         
-        # 상세 분석 결과 출력
-        if 'additional_data' in btc_result:
-            additional = btc_result['additional_data']
-            print(f"  기술분석: {additional.get('technical_score', 0):.2f}")
-            print(f"  최종점수: {additional.get('final_score', 0):.2f}")
-            print(f"  포지션크기: {additional.get('position_size', 0):.2f} 코인")
-        
-        # 거래량 급증 추천
-        print("\n📈 거래량 급증 기반 추천:")
-        volume_picks = await get_volume_spike_picks()
-        for pick in volume_picks[:3]:
-            print(f"{pick['symbol']}: 신뢰도 {pick['confidence']:.2f}, 거래량 {pick['volume_spike']:.1f}배")
-        
-        # 공포탐욕지수 추천  
-        print("\n😱 공포탐욕지수 기반 추천:")
-        fear_picks = await get_fear_greed_picks()
-        for pick in fear_picks[:3]:
-            print(f"{pick['symbol']}: 신뢰도 {pick['confidence']:.2f}, 공포탐욕 {pick['fear_greed_score']}")
+        if strategy.top_10_symbols:
+            # 첫 번째 코인 상세 분석
+            first_coin = strategy.top_10_symbols[0]
+            result = await analyze_coin(first_coin)
+            print(f"\n{first_coin} 상세 분석:")
+            print(f"  액션: {result['decision']}")
+            print(f"  신뢰도: {result['confidence_score']:.1f}%")
+            print(f"  현재가: {result['price']:,.0f}원")
+            print(f"  목표가: {result['target_price']:,.0f}원")
+            print(f"  이유: {result['reasoning']}")
+            
+            # 전체 시장 스캔
+            print(f"\n📈 상위 10개 코인 전체 스캔:")
+            market_scan = await scan_crypto_market()
+            print(f"  분석 완료: {market_scan['total_analyzed']}개")
+            print(f"  매수 신호: {market_scan['buy_count']}개")
+            print(f"  매도 신호: {market_scan['sell_count']}개")
+            
+            # 매수 추천 종목
+            if market_scan['top_buys']:
+                print(f"\n🎯 매수 추천 종목:")
+                for i, buy_signal in enumerate(market_scan['top_buys'], 1):
+                    print(f"  {i}. {buy_signal.symbol}: 신뢰도 {buy_signal.confidence:.2f}")
+        else:
+            print("❌ 상위 10개 코인 로드 실패")
     
     asyncio.run(main())
