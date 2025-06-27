@@ -25,7 +25,7 @@ import pandas as pd
 import yaml
 from dataclasses import dataclass
 import yfinance as yf
-import talib
+import ta  # ta 라이브러리 사용 (talib 대신)
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -104,210 +104,6 @@ class JPStrategy:
             with open(config_path, 'r', encoding='utf-8') as f:
                 return yaml.safe_load(f)
         except Exception as e:
-            logger.error(f"일본 주식 분석 실패 {symbol}: {e}")
-            return JPStockSignal(
-                symbol=symbol,
-                action='hold',
-                confidence=0.0,
-                price=0.0,
-                strategy_source='error',
-                ichimoku_signal='neutral',
-                momentum_score=0.0,
-                volume_ratio=0.0,
-                rsi=50.0,
-                sector='UNKNOWN',
-                reasoning=f"분석 실패: {str(e)}",
-                target_price=0.0,
-                timestamp=datetime.now()
-            )
-
-    async def scan_by_sector(self, sector: str) -> List[JPStockSignal]:
-        """섹터별 스캔"""
-        if not self.enabled:
-            logger.warning("일본 주식 전략이 비활성화되어 있습니다")
-            return []
-            
-        if sector not in self.symbols:
-            logger.error(f"알 수 없는 섹터: {sector}")
-            return []
-            
-        logger.info(f"🔍 {sector} 섹터 (일본) 스캔 시작...")
-        symbols = self.symbols[sector]
-        
-        signals = []
-        for symbol in symbols:
-            try:
-                signal = await self.analyze_symbol(symbol)
-                signals.append(signal)
-                logger.info(f"✅ {symbol}: {signal.action} (신뢰도: {signal.confidence:.2f})")
-                
-                # API 호출 제한 고려
-                await asyncio.sleep(1)
-                
-            except Exception as e:
-                logger.error(f"❌ {symbol} 분석 실패: {e}")
-
-        return signals
-
-    async def scan_all_symbols(self) -> List[JPStockSignal]:
-        """전체 심볼 스캔"""
-        if not self.enabled:
-            logger.warning("일본 주식 전략이 비활성화되어 있습니다")
-            return []
-            
-        logger.info(f"🔍 {len(self.all_symbols)}개 일본 주식 스캔 시작... (최적화된 파라미터)")
-        
-        all_signals = []
-        for sector in self.symbols.keys():
-            sector_signals = await self.scan_by_sector(sector)
-            all_signals.extend(sector_signals)
-            
-            # 섹터간 대기
-            await asyncio.sleep(2)
-
-        logger.info(f"🎯 스캔 완료 - 매수:{len([s for s in all_signals if s.action=='buy'])}개, "
-                   f"매도:{len([s for s in all_signals if s.action=='sell'])}개, "
-                   f"보유:{len([s for s in all_signals if s.action=='hold'])}개")
-
-        return all_signals
-
-    async def get_top_picks(self, strategy: str = 'all', limit: int = 5) -> List[JPStockSignal]:
-        """상위 종목 추천"""
-        all_signals = await self.scan_all_symbols()
-        
-        # 전략별 필터링
-        if strategy == 'ichimoku':
-            filtered = [s for s in all_signals if 'ichimoku' in s.strategy_source and s.action == 'buy']
-        elif strategy == 'momentum':
-            filtered = [s for s in all_signals if 'momentum' in s.strategy_source and s.action == 'buy']
-        else:
-            filtered = [s for s in all_signals if s.action == 'buy']
-        
-        # 신뢰도 순 정렬
-        sorted_signals = sorted(filtered, key=lambda x: x.confidence, reverse=True)
-        
-        return sorted_signals[:limit]
-
-# 편의 함수들 (core.py에서 호출용)
-async def analyze_jp(symbol: str) -> Dict:
-    """단일 일본 주식 분석 (기존 인터페이스 호환)"""
-    strategy = JPStrategy()
-    signal = await strategy.analyze_symbol(symbol)
-    
-    result = {
-        'decision': signal.action,
-        'confidence_score': signal.confidence * 100,
-        'reasoning': signal.reasoning,
-        'target_price': signal.target_price,
-        'ichimoku_signal': signal.ichimoku_signal,
-        'rsi': signal.rsi,
-        'volume_ratio': signal.volume_ratio,
-        'price': signal.price,
-        'sector': signal.sector
-    }
-    
-    # 추가 데이터가 있으면 포함
-    if signal.additional_data:
-        result['additional_data'] = signal.additional_data
-        
-    return result
-
-async def get_ichimoku_picks() -> List[Dict]:
-    """일목균형표 기반 추천 종목"""
-    strategy = JPStrategy()
-    signals = await strategy.get_top_picks('ichimoku', limit=10)
-    
-    picks = []
-    for signal in signals:
-        picks.append({
-            'symbol': signal.symbol,
-            'sector': signal.sector,
-            'confidence': signal.confidence,
-            'ichimoku_signal': signal.ichimoku_signal,
-            'reasoning': signal.reasoning,
-            'target_price': signal.target_price,
-            'current_price': signal.price
-        })
-    
-    return picks
-
-async def get_momentum_picks() -> List[Dict]:
-    """모멘텀 돌파 기반 추천 종목"""
-    strategy = JPStrategy()
-    signals = await strategy.get_top_picks('momentum', limit=10)
-    
-    picks = []
-    for signal in signals:
-        picks.append({
-            'symbol': signal.symbol,
-            'sector': signal.sector,
-            'confidence': signal.confidence,
-            'momentum_score': signal.momentum_score,
-            'volume_ratio': signal.volume_ratio,
-            'rsi': signal.rsi,
-            'target_price': signal.target_price,
-            'current_price': signal.price
-        })
-    
-    return picks
-
-async def scan_jp_market() -> Dict:
-    """일본 시장 전체 스캔"""
-    strategy = JPStrategy()
-    signals = await strategy.scan_all_symbols()
-    
-    buy_signals = [s for s in signals if s.action == 'buy']
-    sell_signals = [s for s in signals if s.action == 'sell']
-    
-    return {
-        'total_analyzed': len(signals),
-        'buy_count': len(buy_signals),
-        'sell_count': len(sell_signals),
-        'top_buys': sorted(buy_signals, key=lambda x: x.confidence, reverse=True)[:5],
-        'top_sells': sorted(sell_signals, key=lambda x: x.confidence, reverse=True)[:5]
-    }
-
-if __name__ == "__main__":
-    async def main():
-        print("🇯🇵 최고퀸트프로젝트 - 일본 주식 전략 테스트 시작... (파라미터 최적화)")
-        
-        # 단일 주식 테스트 (토요타)
-        print("\n📊 토요타(7203.T) 개별 분석 (최적화된 파라미터):")
-        toyota_result = await analyze_jp('7203.T')
-        print(f"토요타: {toyota_result}")
-        
-        # 상세 분석 결과 출력
-        if 'additional_data' in toyota_result:
-            additional = toyota_result['additional_data']
-            print(f"  기술분석: {additional.get('technical_score', 0):.2f}")
-            print(f"  최종점수: {additional.get('final_score', 0):.2f}")
-            print(f"  배당수익률: {additional.get('dividend_yield', 0):.1f}%")
-            print(f"  배당보너스: {additional.get('dividend_bonus', 0):.2f}")
-            print(f"  포지션크기: {additional.get('position_size', 0)}주 (100주 단위)")
-            print(f"  일목신뢰도: {additional.get('ichimoku_confidence', 0):.2f}")
-            print(f"  모멘텀신뢰도: {additional.get('momentum_confidence', 0):.2f}")
-        
-        # 일목균형표 추천
-        print("\n📈 일목균형표 기반 추천 (최적화):")
-        ichimoku_picks = await get_ichimoku_picks()
-        for pick in ichimoku_picks[:3]:
-            print(f"{pick['symbol']}: 신뢰도 {pick['confidence']:.2f}, 일목신호 {pick['ichimoku_signal']}")
-        
-        # 모멘텀 돌파 추천  
-        print("\n🚀 모멘텀 돌파 기반 추천 (최적화):")
-        momentum_picks = await get_momentum_picks()
-        for pick in momentum_picks[:3]:
-            print(f"{pick['symbol']}: 신뢰도 {pick['confidence']:.2f}, RSI {pick['rsi']:.1f}")
-        
-        print("\n🎯 파라미터 최적화 완료:")
-        print("  ✅ 신뢰도 임계값: 80% → 60%")
-        print("  ✅ RSI 기간: 14일 → 10일")
-        print("  ✅ 일목균형표: 9/26 → 7/20")
-        print("  ✅ 모멘텀 돌파: 20일 → 15일")
-        print("  ✅ 거래량 임계값: 1.5배 → 1.2배")
-        print("  ✅ 배당 보너스 추가 (4% 이상)")
-    
-    asyncio.run(main()):
             logger.error(f"설정 파일 로드 실패: {e}")
             return {}
 
@@ -476,37 +272,42 @@ if __name__ == "__main__":
             if len(data) < self.breakout_period:
                 return {}
                 
-            close = data['Close'].values
-            high = data['High'].values
-            low = data['Low'].values
-            volume = data['Volume'].values
+            close = data['Close']
+            high = data['High']
+            low = data['Low']
+            volume = data['Volume']
             
             # RSI 계산 (10일로 단축 - 더 민감)
-            rsi = talib.RSI(close, timeperiod=self.rsi_period)
+            rsi = ta.momentum.RSIIndicator(close, window=self.rsi_period).rsi()
             
             # 볼린저 밴드 (15일로 단축)
-            bb_upper, bb_middle, bb_lower = talib.BBANDS(close, timeperiod=15)  # 20 → 15
+            bb = ta.volatility.BollingerBands(close, window=15)
+            bb_upper = bb.bollinger_hband()
+            bb_middle = bb.bollinger_mavg() 
+            bb_lower = bb.bollinger_lband()
             
             # MACD (더 민감한 설정)
-            macd, macd_signal, macd_hist = talib.MACD(close, fastperiod=8, slowperiod=21, signalperiod=5)  # 기본값에서 조정
+            macd = ta.trend.MACD(close, window_fast=8, window_slow=21, window_sign=5)
+            macd_line = macd.macd()
+            macd_signal = macd.macd_signal()
             
             # 거래량 비율 (최근 3일 평균 대비) - 더 짧은 기간
-            recent_volume = np.mean(volume[-3:])  # 5일 → 3일
-            avg_volume = np.mean(volume[-15:-3])  # 20일 → 15일
+            recent_volume = volume.tail(3).mean()
+            avg_volume = volume.tail(15).head(12).mean()  # 15일 중 최근 3일 제외
             volume_ratio = recent_volume / avg_volume if avg_volume > 0 else 1.0
             
             # 가격 돌파 체크 (15일 최고가 돌파) - 더 쉬운 돌파
-            breakout_high = np.max(high[-self.breakout_period:-1])
-            current_price = close[-1]
+            breakout_high = high.tail(self.breakout_period).head(self.breakout_period-1).max()
+            current_price = close.iloc[-1]
             price_breakout = current_price > breakout_high
             
             return {
-                'rsi': rsi[-1] if not np.isnan(rsi[-1]) else 50,
-                'bb_upper': bb_upper[-1],
-                'bb_middle': bb_middle[-1], 
-                'bb_lower': bb_lower[-1],
-                'macd': macd[-1],
-                'macd_signal': macd_signal[-1],
+                'rsi': rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50,
+                'bb_upper': bb_upper.iloc[-1],
+                'bb_middle': bb_middle.iloc[-1], 
+                'bb_lower': bb_lower.iloc[-1],
+                'macd': macd_line.iloc[-1],
+                'macd_signal': macd_signal.iloc[-1],
                 'volume_ratio': volume_ratio,
                 'price_breakout': price_breakout,
                 'breakout_high': breakout_high,
@@ -752,9 +553,4 @@ if __name__ == "__main__":
                     'dividend_yield': dividend_yield,
                     'dividend_bonus': dividend_bonus,
                     'position_size': position_size,
-                    'ichimoku_confidence': ichimoku_confidence,
-                    'momentum_confidence': momentum_confidence
-                }
-            )
-
-        except Exception as e
+                    'ichimoku_confidence': ichimoku_confidence
