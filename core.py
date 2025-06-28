@@ -30,21 +30,21 @@ import traceback
 
 # 프로젝트 모듈 import
 try:
-    from strategies.us_strategy import USStrategy, analyze_us, get_buffett_picks, get_lynch_picks
+    from us_strategy import USStrategy, analyze_us, get_buffett_picks, get_lynch_picks
     US_STRATEGY_AVAILABLE = True
 except ImportError as e:
     print(f"⚠️ 미국 주식 전략 로드 실패: {e}")
     US_STRATEGY_AVAILABLE = False
 
 try:
-    from strategies.jp_strategy import JPStrategy, analyze_jp, get_ichimoku_picks, get_momentum_picks
+    from jp_strategy import JPStrategy, analyze_jp, get_ichimoku_picks, get_momentum_picks
     JP_STRATEGY_AVAILABLE = True
 except ImportError as e:
     print(f"⚠️ 일본 주식 전략 로드 실패: {e}")
     JP_STRATEGY_AVAILABLE = False
 
 try:
-    from strategies.coin_strategy import CoinStrategy, analyze_coin, get_volume_spike_picks
+    from coin_strategy import CoinStrategy, analyze_coin, get_volume_spike_picks
     COIN_STRATEGY_AVAILABLE = True
 except ImportError as e:
     print(f"⚠️ 암호화폐 전략 로드 실패: {e}")
@@ -138,7 +138,7 @@ class MarketSummary:
 class QuantTradingEngine:
     """🏆 최고퀸트프로젝트 메인 엔진 (개선 버전)"""
     
-    def __init__(self, config_path: str = "configs/settings.yaml", force_test: bool = False):
+    def __init__(self, config_path: str = "settings.yaml", force_test: bool = False):
         """엔진 초기화"""
         self.logger = setup_logging()
         self.config_path = config_path
@@ -623,7 +623,6 @@ class QuantTradingEngine:
                                 'confidence': result.get('confidence_score', 50) / 100,
                                 'price': result.get('price', 0),
                                 'strategy_source': 'coin_fallback',
-                                'reasoning': result.get('reasoning', '개별 분석'),
                                 'target_price': result.get('target_price', 0),
                                 'timestamp': datetime.now(),
                                 'sector': 'MAJOR',
