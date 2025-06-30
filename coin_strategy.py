@@ -900,7 +900,7 @@ class UltimateCoinStrategy:
             btc_data = pyupbit.get_ohlcv('KRW-BTC', interval="day", count=30)
             coin_data = pyupbit.get_ohlcv(symbol, interval="day", count=30)
             
-            if btc_data is             project_quality_score=0.0, ecosystem_health_score=0.0, innovation_score=0.0,
+            if btc_data is project_quality_score=0.0, ecosystem_health_score=0.0, innovation_score=0.0,
             adoption_score=0.0, team_score=0.0, market_cap_rank=0, volume_24h_rank=0,
             liquidity_score=0.0, market_cycle='sideways', cycle_confidence=0.5,
             btc_dominance=50.0, total_market_cap_trend='neutral', rsi=50.0, macd_signal='neutral',
@@ -916,7 +916,6 @@ class UltimateCoinStrategy:
             take_profit_3=0.0, max_hold_days=30, fear_greed_score=50, social_sentiment='Neutral',
             twitter_mentions=0, reddit_sentiment=0.0, sector='Unknown', reasoning=reason,
             target_price=0.0, timestamp=datetime.now()
-        )
 
     # ========================================================================================
     # 🔍 전체 시장 스캔 (궁극 업그레이드)
