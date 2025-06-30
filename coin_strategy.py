@@ -352,7 +352,7 @@ class UltimateCoinStrategy:
         self.last_selection_time = None            
         score = 0.0
         details = {}
-            
+              
             # 기존 지표들
             # 1. RSI (15%)
             rsi = ta.momentum.RSIIndicator(closes, window=self.rsi_period).rsi().iloc[-1]
@@ -363,7 +363,7 @@ class UltimateCoinStrategy:
             elif rsi > 70:
                 score += 0.05
             details['rsi'] = rsi
-            
+                        
             # 2. MACD (15%)
             macd_indicator = ta.trend.MACD(closes, window_fast=self.macd_fast, 
                                          window_slow=self.macd_slow, window_sign=self.macd_signal)
