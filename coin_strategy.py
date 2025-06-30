@@ -355,7 +355,7 @@ class UltimateCoinStrategy:
               
             # 기존 지표들
             # 1. RSI (15%)
-            rsi = ta.momentum.RSIIndicator(closes, window=self.rsi_period).rsi().iloc[-1]
+                rsi = ta.momentum.RSIIndicator(closes, window=self.rsi_period).rsi().iloc[-1]
             if 30 <= rsi <= 70:
                 score += 0.15
             elif rsi < 30:
