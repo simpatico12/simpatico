@@ -347,31 +347,36 @@ class UltimateCoinStrategy:
         self.stoch_d = 3
         self.atr_period = 14
         
-        # 🔍 선별된 코인 리스트
-        self.selected_coins = []
-        self.last_selection_time = None            
-        score = 0.0
-        details = {}
-              
-            # 기존 지표들
-            # 1. RSI (15%)
-                rsi = ta.momentum.RSIIndicator(closes, window=self.rsi_period).rsi().iloc[-1]
-            if 30 <= rsi <= 70:
-                score += 0.15
-            elif rsi < 30:
-                score += 0.10
-            elif rsi > 70:
-                score += 0.05
-            details['rsi'] = rsi
-                        
-            # 2. MACD (15%)
-            macd_indicator = ta.trend.MACD(closes, window_fast=self.macd_fast, 
-                                         window_slow=self.macd_slow, window_sign=self.macd_signal)
-            macd_diff = macd_indicator.macd_diff().iloc[-1]
-            macd_signal = 'bullish' if macd_diff > 0 else 'bearish'
-            if macd_signal == 'bullish':
-                score += 0.15
-            details['macd_signal'] = macd_signal
+       # 🔍 선별된 코인 리스트
+self.selected_coins = []
+self.last_selection_time = None
+score = 0.0
+details = {}
+
+# 기존 지표들
+# 1. RSI (15%)
+rsi = ta.momentum.RSIIndicator(closes, window=self.rsi_period).rsi().iloc[-1]
+if 30 <= rsi <= 70:
+    score += 0.15
+elif rsi < 30:
+    score += 0.10
+elif rsi > 70:
+    score += 0.05
+details['rsi'] = rsi
+
+# 2. MACD (15%)
+macd_indicator = ta.trend.MACD(
+    closes,
+    window_fast=self.macd_fast,
+    window_slow=self.macd_slow,
+    window_sign=self.macd_signal
+)
+macd_diff = macd_indicator.macd_diff().iloc[-1]
+
+macd_signal = 'bullish' if macd_diff > 0 else 'bearish'
+if macd_signal == 'bullish':
+    score += 0.15
+details['macd_signal'] = macd_signal
             
             # 3. 볼린저 밴드 (10%)
             bb_indicator = ta.volatility.BollingerBands(closes, window=self.bb_period)
