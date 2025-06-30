@@ -134,8 +134,8 @@ class UltimateCoinSignal:
     reasoning: str
     target_price: float
     timestamp: datetime
-    additional_data: Optional[Dict] =     def optimize_portfolio_selection(self, candidates: List[Dict], 
-                                   target_count: int = 20) -> List[Dict]:
+    additional_data: Optional[Dict] = None    
+    def optimize_portfolio_selection(self, candidates: List[Dict], target_count: int = 20) -> List[Dict]:
         """상관관계 고려한 포트폴리오 최적화"""
         try:
             if len(candidates) <= target_count:
