@@ -351,7 +351,7 @@ class UltimateCoinStrategy:
         self.selected_coins = []
         self.last_selection_time = None            
         score = 0.0
-            details = {}
+        details = {}
             
             # 기존 지표들
             # 1. RSI (15%)
