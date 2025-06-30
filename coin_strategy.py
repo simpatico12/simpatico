@@ -349,7 +349,8 @@ class UltimateCoinStrategy:
         
         # 🔍 선별된 코인 리스트
         self.selected_coins = []
-        self.last_selection_time =             score = 0.0
+        self.last_selection_time = None            
+        score = 0.0
             details = {}
             
             # 기존 지표들
