@@ -1,6 +1,8 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-💰 최고퀸트프로젝트 - 실제 매매 시스템
-=====================================
+💰 최고퀸트프로젝트 - 실제 매매 시스템 (통합 엔진 호환 버전)
+===========================================================
 
 완전한 글로벌 매매 시스템:
 - 🏦 Interactive Brokers (IBKR) - 미국/일본 주식
@@ -10,9 +12,10 @@
 - 💾 실시간 주문 추적
 - 🔄 자동 재시도 및 에러 처리
 - 📈 성과 추적 및 분석
+- 🤝 통합 엔진 완벽 호환
 
 Author: 최고퀸트팀
-Version: 1.0.0
+Version: 1.1.0 (통합 엔진 호환)
 Project: 최고퀸트프로젝트
 """
 
@@ -25,7 +28,7 @@ import hashlib
 import time
 import uuid
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from dataclasses import dataclass, asdict
 import yaml
 import pandas as pd
@@ -35,8 +38,8 @@ import pytz
 # 프로젝트 모듈 import
 try:
     from utils import (
-        BrokerUtils, DataProcessor, get_config, 
-        save_trading_log, DatabaseUtils, Formatter
+        DataProcessor, get_config, 
+        save_trading_log, Formatter, FileManager
     )
     UTILS_AVAILABLE = True
 except ImportError as e:
@@ -63,9 +66,9 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 
 @dataclass
-class TradingSignal:
-    """매매 신호 (core.py와 호환)"""
-    market: str
+class UnifiedTradingSignal:
+    """통합 매매 신호 (메인 엔진과 100% 호환)"""
+    market: str  # 'US', 'JP', 'COIN'
     symbol: str
     action: str  # 'buy', 'sell', 'hold'
     confidence: float
@@ -75,7 +78,19 @@ class TradingSignal:
     target_price: float
     timestamp: datetime
     sector: Optional[str] = None
-    position_size: Optional[float] = None
+    
+    # 통합 점수 정보
+    total_score: float = 0.0
+    selection_score: float = 0.0
+    
+    # 분할매매 정보 (통합)
+    position_size: Optional[float] = None  # 실제 매매용 포지션 크기
+    total_investment: Optional[float] = None  # 총 투자금액
+    split_stages: Optional[int] = None  # 분할 단계 수
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
+    max_hold_days: Optional[int] = None
+    
     additional_data: Optional[Dict] = None
 
 @dataclass
@@ -145,7 +160,626 @@ class IBKRConnector:
             return True
             
         except Exception as e:
-            logger.error(f"❌ IBKR 연결 실패: {e}")
+            logger.error(f"❌ 신호 검증 실패: {e}")
+            return False, f"검증 오류: {str(e)}"
+    
+    def _calculate_position_size(self, signal: UnifiedTradingSignal, portfolio_value: float) -> Tuple[float, float]:
+        """포지션 크기 계산 (통합 엔진 호환)"""
+        try:
+            # 통합 엔진에서 이미 계산된 포지션 정보 우선 사용
+            if signal.position_size and signal.total_investment:
+                if signal.market in ['US', 'JP']:
+                    return signal.position_size, signal.total_investment
+                else:  # COIN
+                    return signal.position_size / signal.price, signal.total_investment
+            
+            # 기본 포지션 크기 계산 (신뢰도 기반)
+            base_position_pct = 0.05  # 5%
+            confidence_multiplier = signal.confidence * 2  # 0.3-1.0 → 0.6-2.0
+            position_pct = base_position_pct * confidence_multiplier
+            
+            # 최대 포지션 크기 제한
+            position_pct = min(position_pct, self.max_position_size)
+            
+            # 시장별 조정
+            if signal.market == 'COIN':
+                position_pct *= 0.8  # 암호화폐는 80%로 축소 (변동성 고려)
+            
+            # 포지션 금액 계산
+            position_value = portfolio_value * position_pct
+            
+            # 최소/최대 금액 제한
+            if signal.market in ['US', 'JP']:
+                min_amount = 1000  # $1,000 또는 ¥100,000
+                max_amount = portfolio_value * 0.2  # 최대 20%
+            else:  # COIN
+                min_amount = 50000  # ₩50,000
+                max_amount = portfolio_value * 0.15  # 최대 15%
+            
+            position_value = max(min_amount, min(position_value, max_amount))
+            
+            # 수량 계산
+            if signal.market in ['US', 'JP']:
+                # 주식: 주수 계산
+                shares = position_value / signal.price
+                
+                if signal.market == 'JP':
+                    # 일본 주식은 100주 단위
+                    shares = int(shares // 100) * 100
+                else:
+                    # 미국 주식은 1주 단위
+                    shares = int(shares)
+                
+                quantity = shares
+                actual_amount = shares * signal.price
+                
+            else:  # COIN
+                # 암호화폐: 금액 기준
+                quantity = position_value / signal.price
+                actual_amount = position_value
+            
+            return quantity, actual_amount
+            
+        except Exception as e:
+            logger.error(f"❌ 포지션 크기 계산 실패: {e}")
+            return 0.0, 0.0
+    
+    async def _get_portfolio_value(self, market: str) -> float:
+        """포트폴리오 가치 조회"""
+        try:
+            if market in ['US', 'JP']:
+                # IBKR 포트폴리오
+                if self.ibkr:
+                    portfolio = await self.ibkr.get_portfolio()
+                    if portfolio:
+                        return portfolio.total_value
+                return 100000.0  # 기본값 $100,000
+                
+            else:  # COIN
+                # 업비트 포트폴리오
+                portfolio = await self.upbit.get_portfolio()
+                if portfolio:
+                    return portfolio.total_value
+                return 50000000.0  # 기본값 ₩50,000,000
+                
+        except Exception as e:
+            logger.error(f"❌ 포트폴리오 가치 조회 실패: {e}")
+            return 100000.0 if market in ['US', 'JP'] else 50000000.0
+    
+    async def _execute_trade(self, signal: UnifiedTradingSignal) -> Dict:
+        """실제 거래 실행"""
+        try:
+            # 포지션 크기 계산
+            portfolio_value = await self._get_portfolio_value(signal.market)
+            quantity, amount = self._calculate_position_size(signal, portfolio_value)
+            
+            if quantity <= 0:
+                return {'success': False, 'error': '포지션 크기 계산 실패'}
+            
+            # 브로커별 주문 실행
+            if signal.market in ['US', 'JP']:
+                # IBKR 주문
+                if not self.ibkr:
+                    return {'success': False, 'error': 'IBKR 연결 없음'}
+                
+                result = await self.ibkr.place_order(
+                    symbol=signal.symbol,
+                    market=signal.market,
+                    action=signal.action,
+                    quantity=quantity
+                )
+                
+            else:  # COIN
+                # 업비트 주문
+                if signal.action == 'buy':
+                    result = await self.upbit.place_order(
+                        symbol=signal.symbol,
+                        action=signal.action,
+                        amount=amount
+                    )
+                else:  # sell
+                    result = await self.upbit.place_order(
+                        symbol=signal.symbol,
+                        action=signal.action,
+                        quantity=quantity
+                    )
+            
+            # 결과 처리
+            if result.get('success', False):
+                self.daily_trades += 1
+                
+                # 거래 기록 저장
+                trade_record = {
+                    'timestamp': datetime.now().isoformat(),
+                    'market': signal.market,
+                    'symbol': signal.symbol,
+                    'action': signal.action,
+                    'quantity': result.get('quantity', quantity),
+                    'price': result.get('price', signal.price),
+                    'total_amount': result.get('quantity', quantity) * result.get('price', signal.price),
+                    'confidence': signal.confidence,
+                    'strategy': signal.strategy,
+                    'reasoning': signal.reasoning,
+                    'broker': 'ibkr' if signal.market in ['US', 'JP'] else 'upbit',
+                    'order_id': result.get('order_id', ''),
+                    'status': 'completed'
+                }
+                
+                # 파일로 거래 기록 저장
+                if UTILS_AVAILABLE:
+                    self.file_manager.save_json(trade_record, f"trade_{int(time.time())}.json", "logs")
+                
+                # 거래 로그 저장
+                if UTILS_AVAILABLE:
+                    save_trading_log({
+                        'type': 'execution',
+                        'market': signal.market,
+                        'symbol': signal.symbol,
+                        'action': signal.action,
+                        'result': result,
+                        'signal': asdict(signal)
+                    })
+                
+                logger.info(f"✅ 거래 완료: {signal.symbol} {signal.action} {result.get('quantity')} @ {result.get('price')}")
+                
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ 거래 실행 실패 {signal.symbol}: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    async def _simulate_trade(self, signal: UnifiedTradingSignal) -> Dict:
+        """모의 거래 실행"""
+        try:
+            # 포지션 크기 계산
+            portfolio_value = await self._get_portfolio_value(signal.market)
+            quantity, amount = self._calculate_position_size(signal, portfolio_value)
+            
+            if quantity <= 0:
+                return {'success': False, 'error': '포지션 크기 계산 실패'}
+            
+            # 현재가 조회 (실제 시세 사용)
+            current_price = signal.price
+            
+            if signal.market in ['US', 'JP'] and self.ibkr:
+                market_price = await self.ibkr.get_current_price(signal.symbol, signal.market)
+                if market_price:
+                    current_price = market_price
+                    
+            elif signal.market == 'COIN':
+                market_price = await self.upbit.get_current_price(signal.symbol)
+                if market_price:
+                    current_price = market_price
+            
+            # 약간의 슬리피지 적용
+            if signal.action == 'buy':
+                execution_price = current_price * 1.001  # 0.1% 슬리피지
+            else:
+                execution_price = current_price * 0.999
+            
+            # 모의 거래 결과
+            self.daily_trades += 1
+            
+            # 모의 거래 기록
+            mock_order_id = f"PAPER_{int(time.time())}"
+            
+            result = {
+                'success': True,
+                'order_id': mock_order_id,
+                'price': execution_price,
+                'quantity': quantity,
+                'status': 'filled',
+                'paper_trade': True
+            }
+            
+            # 거래 로그 저장
+            if UTILS_AVAILABLE:
+                save_trading_log({
+                    'type': 'paper_execution',
+                    'market': signal.market,
+                    'symbol': signal.symbol,
+                    'action': signal.action,
+                    'result': result,
+                    'signal': asdict(signal)
+                })
+            
+            logger.info(f"📄 모의거래 완료: {signal.symbol} {signal.action} {quantity} @ {execution_price:.4f}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ 모의거래 실패 {signal.symbol}: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    async def execute_signal(self, signal: UnifiedTradingSignal) -> Dict:
+        """매매 신호 실행 (메인 함수 - 통합 엔진 호환)"""
+        try:
+            # 신호 검증
+            is_valid, error_message = self._validate_signal(signal)
+            if not is_valid:
+                logger.warning(f"⚠️ 신호 검증 실패 {signal.symbol}: {error_message}")
+                return {'success': False, 'error': error_message}
+            
+            # 매매 실행
+            if self.paper_trading:
+                result = await self._simulate_trade(signal)
+            else:
+                result = await self._execute_trade(signal)
+            
+            # 알림 발송
+            if NOTIFIER_AVAILABLE and result.get('success', False):
+                await send_trading_alert(
+                    market=signal.market,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    price=result.get('price', signal.price),
+                    confidence=signal.confidence,
+                    reasoning=signal.reasoning,
+                    target_price=signal.target_price,
+                    execution_status="completed"
+                )
+            elif NOTIFIER_AVAILABLE and not result.get('success', False):
+                await send_trading_alert(
+                    market=signal.market,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    price=signal.price,
+                    confidence=signal.confidence,
+                    reasoning=result.get('error', '실행 실패'),
+                    execution_status="failed"
+                )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ 매매 신호 실행 실패: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    async def get_portfolio_summary(self) -> Dict:
+        """포트폴리오 요약"""
+        try:
+            summary = {
+                'ibkr_portfolio': None,
+                'upbit_portfolio': None,
+                'total_value_usd': 0.0,
+                'total_value_krw': 0.0,
+                'last_updated': datetime.now().isoformat()
+            }
+            
+            # IBKR 포트폴리오
+            if self.ibkr:
+                ibkr_portfolio = await self.ibkr.get_portfolio()
+                if ibkr_portfolio:
+                    summary['ibkr_portfolio'] = asdict(ibkr_portfolio)
+                    summary['total_value_usd'] += ibkr_portfolio.total_value
+            
+            # 업비트 포트폴리오
+            upbit_portfolio = await self.upbit.get_portfolio()
+            if upbit_portfolio:
+                summary['upbit_portfolio'] = asdict(upbit_portfolio)
+                summary['total_value_krw'] += upbit_portfolio.total_value
+                
+                # 환율 적용 (간단히 1300으로 가정)
+                usd_equivalent = upbit_portfolio.total_value / 1300
+                summary['total_value_usd'] += usd_equivalent
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"❌ 포트폴리오 요약 실패: {e}")
+            return {}
+    
+    def get_trading_stats(self) -> Dict:
+        """거래 통계"""
+        uptime = datetime.now() - self.session_start_time
+        
+        return {
+            'executor_status': 'running',
+            'session_uptime': str(uptime).split('.')[0],
+            'paper_trading': self.paper_trading,
+            'auto_execution': self.auto_execution,
+            'daily_trades': self.daily_trades,
+            'max_daily_trades': self.max_daily_trades,
+            'max_position_size': self.max_position_size,
+            'brokers': {
+                'ibkr_available': IBKR_AVAILABLE and self.ibkr is not None,
+                'upbit_configured': bool(self.upbit.access_key),
+                'ibkr_connected': self.ibkr.connected if self.ibkr else False
+            },
+            'session_start_time': self.session_start_time.isoformat(),
+            'config_path': self.config_path
+        }
+    
+    async def cleanup(self):
+        """리소스 정리"""
+        try:
+            if self.ibkr:
+                await self.ibkr.disconnect()
+            
+            if self.upbit:
+                await self.upbit.close()
+            
+            logger.info("🧹 매매 실행기 리소스 정리 완료")
+            
+        except Exception as e:
+            logger.error(f"❌ 매매 실행기 정리 실패: {e}")
+
+# =====================================
+# 통합 엔진 호환 함수들 (메인 엔진에서 호출)
+# =====================================
+
+_global_executor = None
+
+async def execute_trade_signal(signal: Union[UnifiedTradingSignal, Dict]) -> Dict:
+    """매매 신호 실행 (통합 엔진 호환 함수)"""
+    global _global_executor
+    
+    try:
+        if _global_executor is None:
+            _global_executor = TradingExecutor()
+        
+        # UnifiedTradingSignal 객체로 변환 (통합 엔진과 호환)
+        if isinstance(signal, dict):
+            # 딕셔너리인 경우 UnifiedTradingSignal로 변환
+            trading_signal = UnifiedTradingSignal(**signal)
+        elif hasattr(signal, 'market'):
+            # 이미 적절한 객체인 경우
+            if isinstance(signal, UnifiedTradingSignal):
+                trading_signal = signal
+            else:
+                # 다른 타입의 신호 객체를 UnifiedTradingSignal로 변환
+                trading_signal = UnifiedTradingSignal(
+                    market=signal.market,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    confidence=signal.confidence,
+                    price=signal.price,
+                    strategy=getattr(signal, 'strategy', 'unknown'),
+                    reasoning=getattr(signal, 'reasoning', ''),
+                    target_price=getattr(signal, 'target_price', signal.price),
+                    timestamp=getattr(signal, 'timestamp', datetime.now()),
+                    sector=getattr(signal, 'sector', None),
+                    total_score=getattr(signal, 'total_score', 0.0),
+                    selection_score=getattr(signal, 'selection_score', 0.0),
+                    position_size=getattr(signal, 'position_size', None),
+                    total_investment=getattr(signal, 'total_investment', None),
+                    split_stages=getattr(signal, 'split_stages', None),
+                    stop_loss=getattr(signal, 'stop_loss', None),
+                    take_profit=getattr(signal, 'take_profit', None),
+                    max_hold_days=getattr(signal, 'max_hold_days', None),
+                    additional_data=getattr(signal, 'additional_data', None)
+                )
+        else:
+            raise ValueError("지원하지 않는 신호 형식")
+        
+        return await _global_executor.execute_signal(trading_signal)
+        
+    except Exception as e:
+        logger.error(f"❌ 매매 신호 실행 실패: {e}")
+        return {'success': False, 'error': str(e)}
+
+async def get_portfolio_summary() -> Dict:
+    """포트폴리오 요약 (편의 함수)"""
+    global _global_executor
+    
+    try:
+        if _global_executor is None:
+            _global_executor = TradingExecutor()
+        
+        return await _global_executor.get_portfolio_summary()
+        
+    except Exception as e:
+        logger.error(f"❌ 포트폴리오 요약 실패: {e}")
+        return {}
+
+def get_trading_stats() -> Dict:
+    """거래 통계 (편의 함수)"""
+    global _global_executor
+    
+    try:
+        if _global_executor is None:
+            return {'executor_status': 'not_initialized'}
+        
+        return _global_executor.get_trading_stats()
+        
+    except Exception as e:
+        logger.error(f"❌ 거래 통계 조회 실패: {e}")
+        return {'executor_status': 'error'}
+
+async def cleanup_trading_system():
+    """매매 시스템 정리 (편의 함수)"""
+    global _global_executor
+    
+    try:
+        if _global_executor is not None:
+            await _global_executor.cleanup()
+            _global_executor = None
+            logger.info("🧹 글로벌 매매 시스템 정리 완료")
+    except Exception as e:
+        logger.error(f"❌ 매매 시스템 정리 실패: {e}")
+
+# =====================================
+# 테스트 함수 (통합 엔진 호환)
+# =====================================
+
+async def test_trading_system():
+    """🧪 매매 시스템 테스트 (통합 엔진 호환)"""
+    print("💰 최고퀸트프로젝트 매매 시스템 테스트 (통합 엔진 호환)")
+    print("=" * 60)
+    
+    # 1. 매매 실행기 초기화
+    print("1️⃣ 매매 실행기 초기화...")
+    executor = TradingExecutor()
+    print(f"   ✅ 완료 (모의거래: {executor.paper_trading})")
+    
+    # 2. 브로커 연결 테스트
+    print("2️⃣ 브로커 연결 테스트...")
+    
+    # IBKR 테스트
+    if executor.ibkr and IBKR_AVAILABLE:
+        try:
+            connected = await executor.ibkr.connect()
+            print(f"   🏦 IBKR: {'✅ 연결됨' if connected else '❌ 연결 실패'}")
+        except Exception as e:
+            print(f"   🏦 IBKR: ❌ 오류 ({e})")
+    else:
+        print("   🏦 IBKR: ⏭️ 스킵 (라이브러리 없음)")
+    
+    # 업비트 테스트
+    try:
+        btc_price = await executor.upbit.get_current_price('BTC-KRW')
+        print(f"   🪙 업비트: {'✅ 연결됨' if btc_price else '❌ 연결 실패'}")
+        if btc_price:
+            price_str = f"{btc_price:,.0f}원" if UTILS_AVAILABLE and Formatter else f"{btc_price}"
+            print(f"     📊 BTC 현재가: {price_str}")
+    except Exception as e:
+        print(f"   🪙 업비트: ❌ 오류 ({e})")
+    
+    # 3. 통합 엔진 호환 테스트 신호 생성
+    print("3️⃣ 통합 엔진 호환 테스트 신호...")
+    test_signals = [
+        UnifiedTradingSignal(
+            market='US', symbol='AAPL', action='buy', confidence=0.85, price=175.50,
+            strategy='test_us', reasoning='테스트 미국 주식 매수', target_price=195.80,
+            timestamp=datetime.now(), sector='Technology',
+            total_score=0.85, selection_score=0.90,
+            position_size=100, total_investment=17550,
+            split_stages=3, stop_loss=157.95, take_profit=201.83, max_hold_days=60
+        ),
+        UnifiedTradingSignal(
+            market='JP', symbol='7203.T', action='buy', confidence=0.78, price=2150,
+            strategy='test_jp', reasoning='테스트 일본 주식 매수', target_price=2400,
+            timestamp=datetime.now(), sector='Automotive',
+            total_score=0.78, selection_score=0.82,
+            position_size=100, total_investment=215000,
+            split_stages=3, stop_loss=1935, take_profit=2472, max_hold_days=45
+        ),
+        UnifiedTradingSignal(
+            market='COIN', symbol='BTC-KRW', action='buy', confidence=0.72, price=95000000,
+            strategy='test_coin', reasoning='테스트 암호화폐 매수', target_price=105000000,
+            timestamp=datetime.now(), sector='L1_Blockchain',
+            total_score=0.72, selection_score=0.75,
+            position_size=2000000, total_investment=2000000,
+            split_stages=5, stop_loss=71250000, take_profit=142500000, max_hold_days=30
+        )
+    ]
+    
+    # 4. 통합 엔진 호환 모의 거래 실행
+    print("4️⃣ 통합 엔진 호환 모의 거래 실행...")
+    for i, signal in enumerate(test_signals, 1):
+        try:
+            market_emoji = {'US': '🇺🇸', 'JP': '🇯🇵', 'COIN': '🪙'}[signal.market]
+            print(f"   📤 신호 {i}: {market_emoji} {signal.symbol} {signal.action}")
+            print(f"       전략: {signal.strategy} | 신뢰도: {signal.confidence:.2%}")
+            print(f"       총점: {signal.total_score:.2f} | 선별점수: {signal.selection_score:.2f}")
+            
+            result = await executor.execute_signal(signal)
+            
+            if result.get('success', False):
+                price = result.get('price', 0)
+                quantity = result.get('quantity', 0)
+                paper_info = " (모의)" if result.get('paper_trade', False) else ""
+                print(f"   ✅ 성공{paper_info}: {quantity} @ {price}")
+            else:
+                error = result.get('error', '알 수 없음')
+                print(f"   ❌ 실패: {error}")
+            print()
+            
+        except Exception as e:
+            print(f"   ❌ 신호 {i} 실행 실패: {e}")
+    
+    # 5. 편의 함수 테스트 (통합 엔진에서 호출하는 방식)
+    print("5️⃣ 통합 엔진 호환 편의 함수 테스트...")
+    try:
+        # 매매 신호 실행 함수 테스트
+        test_signal_dict = {
+            'market': 'COIN', 'symbol': 'ETH-KRW', 'action': 'buy', 
+            'confidence': 0.65, 'price': 4200000, 'strategy': 'test_convenience',
+            'reasoning': '편의함수 테스트', 'target_price': 4620000,
+            'timestamp': datetime.now()
+        }
+        
+        convenience_result = await execute_trade_signal(test_signal_dict)
+        print(f"   📋 편의함수 execute_trade_signal: {'✅ 성공' if convenience_result.get('success') else '❌ 실패'}")
+        
+        # 거래 통계
+        stats = get_trading_stats()
+        print(f"   📊 편의함수 get_trading_stats: 상태 {stats['executor_status']}")
+        
+        # 포트폴리오 요약
+        portfolio = await get_portfolio_summary()
+        portfolio_count = sum(1 for k in ['ibkr_portfolio', 'upbit_portfolio'] if portfolio.get(k))
+        print(f"   💼 편의함수 get_portfolio_summary: {portfolio_count}개 브로커 연결")
+        
+    except Exception as e:
+        print(f"   ❌ 편의함수 테스트 실패: {e}")
+    
+    # 6. 포트폴리오 조회
+    print("6️⃣ 포트폴리오 조회...")
+    try:
+        portfolio = await executor.get_portfolio_summary()
+        
+        if portfolio.get('ibkr_portfolio'):
+            ibkr = portfolio['ibkr_portfolio']
+            value_str = f"${ibkr['total_value']:,.0f}" if UTILS_AVAILABLE and Formatter else f"${ibkr['total_value']}"
+            print(f"   🏦 IBKR: {value_str}")
+        
+        if portfolio.get('upbit_portfolio'):
+            upbit = portfolio['upbit_portfolio']
+            value_str = f"₩{upbit['total_value']:,.0f}" if UTILS_AVAILABLE and Formatter else f"₩{upbit['total_value']}"
+            print(f"   🪙 업비트: {value_str}")
+        
+        total_usd = portfolio.get('total_value_usd', 0)
+        if total_usd > 0:
+            print(f"   💰 총 가치 (USD): ${total_usd:,.0f}")
+        
+        if not portfolio.get('ibkr_portfolio') and not portfolio.get('upbit_portfolio'):
+            print("   📊 포트폴리오 데이터 없음")
+            
+    except Exception as e:
+        print(f"   ❌ 포트폴리오 조회 실패: {e}")
+    
+    # 7. 거래 통계
+    print("7️⃣ 거래 통계...")
+    stats = executor.get_trading_stats()
+    print(f"   📊 실행기 상태: {stats['executor_status']}")
+    print(f"   📈 일일 거래: {stats['daily_trades']}/{stats['max_daily_trades']}")
+    print(f"   🔧 모의거래: {stats['paper_trading']}")
+    print(f"   🤖 자동실행: {stats['auto_execution']}")
+    print(f"   🏦 IBKR 사용가능: {stats['brokers']['ibkr_available']}")
+    print(f"   🪙 업비트 설정: {stats['brokers']['upbit_configured']}")
+    print(f"   ⏱️ 세션 시작: {stats['session_start_time']}")
+    
+    # 8. 리소스 정리
+    print("8️⃣ 리소스 정리...")
+    await executor.cleanup()
+    await cleanup_trading_system()
+    print("   ✅ 완료")
+    
+    print()
+    print("🎯 통합 엔진 호환 매매 시스템 테스트 완료!")
+    print("💰 IBKR + 업비트 통합 매매 시스템이 통합 엔진과 호환됩니다")
+    print("🤝 main_engine.py에서 execute_trade_signal() 함수 사용 가능")
+
+if __name__ == "__main__":
+    print("💰 최고퀸트프로젝트 매매 시스템 (통합 엔진 호환)")
+    print("=" * 60)
+    
+    # 테스트 실행
+    asyncio.run(test_trading_system())
+    
+    print("\n🚀 통합 엔진 호환 매매 시스템 준비 완료!")
+    print("💡 통합 엔진(main_engine.py)에서 다음 함수들 사용:")
+    print("   - execute_trade_signal(signal)")
+    print("   - get_portfolio_summary()")  
+    print("   - get_trading_stats()")
+    print("   - cleanup_trading_system()")
+    print("\n⚙️ 설정:")
+    print("   📋 settings.yaml에서 trading, api 섹션 설정")
+    print("   🏦 IBKR: TWS/Gateway 실행 + ib_insync 설치")
+    print("   🪙 업비트: API 키 설정 + PyJWT 설치")
+    print("   🛡️ 모의거래 모드로 안전하게 테스트 가능")
+    print("   🤝 UnifiedTradingSignal 완벽 호환")"❌ IBKR 연결 실패: {e}")
             self.connected = False
             return False
     
@@ -609,9 +1243,9 @@ class UpbitConnector:
             return None
 
 class TradingExecutor:
-    """🏆 최고퀸트프로젝트 매매 실행기"""
+    """🏆 최고퀸트프로젝트 매매 실행기 (통합 엔진 호환)"""
     
-    def __init__(self, config_path: str = "configs/settings.yaml"):
+    def __init__(self, config_path: str = "settings.yaml"):
         """매매 실행기 초기화"""
         self.config_path = config_path
         self.config = self._load_config()
@@ -624,7 +1258,7 @@ class TradingExecutor:
         # 리스크 관리 설정
         self.risk_config = self.config.get('risk_management', {})
         self.max_position_size = self.risk_config.get('max_position_size', 0.1)
-        self.max_daily_trades = self.risk_config.get('max_daily_trades', 10)
+        self.max_daily_trades = self.risk_config.get('max_daily_trades', 30)
         
         # 브로커 연결
         self.ibkr = IBKRConnector(self.config) if IBKR_AVAILABLE else None
@@ -635,9 +1269,9 @@ class TradingExecutor:
         self.session_start_time = datetime.now()
         self.order_history = []
         
-        # 데이터베이스 초기화
+        # 파일 관리자 초기화
         if UTILS_AVAILABLE:
-            DatabaseUtils.init_database()
+            self.file_manager = FileManager()
         
         logger.info("💰 최고퀸트프로젝트 매매 실행기 초기화 완료")
         logger.info(f"⚙️ 모의거래: {self.paper_trading}, 자동실행: {self.auto_execution}")
@@ -645,15 +1279,18 @@ class TradingExecutor:
     def _load_config(self) -> Dict:
         """설정 파일 로드"""
         try:
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
-                logger.info(f"✅ 매매 설정 로드 성공: {self.config_path}")
-                return config
+            if UTILS_AVAILABLE:
+                return get_config(self.config_path)
+            else:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f)
+                    logger.info(f"✅ 매매 설정 로드 성공: {self.config_path}")
+                    return config
         except Exception as e:
             logger.error(f"❌ 매매 설정 로드 실패: {e}")
             return {}
     
-    def _validate_signal(self, signal: TradingSignal) -> Tuple[bool, str]:
+    def _validate_signal(self, signal: UnifiedTradingSignal) -> Tuple[bool, str]:
         """신호 유효성 검증"""
         try:
             # 기본 검증
@@ -663,14 +1300,14 @@ class TradingExecutor:
             if signal.action not in ['buy', 'sell']:
                 return False, f"지원하지 않는 액션: {signal.action}"
             
-            if signal.confidence < 0.5:
+            if signal.confidence < 0.3:  # 통합 엔진 기준에 맞춰 완화
                 return False, f"신뢰도 낮음: {signal.confidence}"
             
             # 시장별 검증
             if signal.market == 'US':
                 if not IBKR_AVAILABLE:
                     return False, "IBKR 라이브러리 없음"
-                if not UTILS_AVAILABLE or not DataProcessor.detect_market(signal.symbol) == 'US':
+                if UTILS_AVAILABLE and not DataProcessor.detect_market(signal.symbol) == 'US':
                     return False, "미국 주식 심볼 형식 오류"
                     
             elif signal.market == 'JP':
@@ -693,535 +1330,4 @@ class TradingExecutor:
             return True, "검증 통과"
             
         except Exception as e:
-            logger.error(f"❌ 신호 검증 실패: {e}")
-            return False, f"검증 오류: {str(e)}"
-    
-    def _calculate_position_size(self, signal: TradingSignal, portfolio_value: float) -> Tuple[float, float]:
-        """포지션 크기 계산"""
-        try:
-            # 기본 포지션 크기 (신뢰도 기반)
-            base_position_pct = 0.05  # 5%
-            confidence_multiplier = signal.confidence * 2  # 0.5-1.0 → 1.0-2.0
-            position_pct = base_position_pct * confidence_multiplier
-            
-            # 최대 포지션 크기 제한
-            position_pct = min(position_pct, self.max_position_size)
-            
-            # 시장별 조정
-            if signal.market == 'COIN':
-                position_pct *= 0.8  # 암호화폐는 80%로 축소 (변동성 고려)
-            
-            # 포지션 금액 계산
-            position_value = portfolio_value * position_pct
-            
-            # 최소/최대 금액 제한
-            if signal.market in ['US', 'JP']:
-                min_amount = 1000  # $1,000 또는 ¥100,000
-                max_amount = portfolio_value * 0.2  # 최대 20%
-            else:  # COIN
-                min_amount = 50000  # ₩50,000
-                max_amount = portfolio_value * 0.15  # 최대 15%
-            
-            position_value = max(min_amount, min(position_value, max_amount))
-            
-            # 수량 계산
-            if signal.market in ['US', 'JP']:
-                # 주식: 주수 계산
-                shares = position_value / signal.price
-                
-                if signal.market == 'JP':
-                    # 일본 주식은 100주 단위
-                    shares = int(shares // 100) * 100
-                else:
-                    # 미국 주식은 1주 단위
-                    shares = int(shares)
-                
-                quantity = shares
-                actual_amount = shares * signal.price
-                
-            else:  # COIN
-                # 암호화폐: 금액 기준
-                quantity = position_value / signal.price
-                actual_amount = position_value
-            
-            return quantity, actual_amount
-            
-        except Exception as e:
-            logger.error(f"❌ 포지션 크기 계산 실패: {e}")
-            return 0.0, 0.0
-    
-    async def _get_portfolio_value(self, market: str) -> float:
-        """포트폴리오 가치 조회"""
-        try:
-            if market in ['US', 'JP']:
-                # IBKR 포트폴리오
-                if self.ibkr:
-                    portfolio = await self.ibkr.get_portfolio()
-                    if portfolio:
-                        return portfolio.total_value
-                return 100000.0  # 기본값 $100,000
-                
-            else:  # COIN
-                # 업비트 포트폴리오
-                portfolio = await self.upbit.get_portfolio()
-                if portfolio:
-                    return portfolio.total_value
-                return 50000000.0  # 기본값 ₩50,000,000
-                
-        except Exception as e:
-            logger.error(f"❌ 포트폴리오 가치 조회 실패: {e}")
-            return 100000.0 if market in ['US', 'JP'] else 50000000.0
-    
-    async def _execute_trade(self, signal: TradingSignal) -> Dict:
-        """실제 거래 실행"""
-        try:
-            # 포지션 크기 계산
-            portfolio_value = await self._get_portfolio_value(signal.market)
-            quantity, amount = self._calculate_position_size(signal, portfolio_value)
-            
-            if quantity <= 0:
-                return {'success': False, 'error': '포지션 크기 계산 실패'}
-            
-            # 브로커별 주문 실행
-            if signal.market in ['US', 'JP']:
-                # IBKR 주문
-                if not self.ibkr:
-                    return {'success': False, 'error': 'IBKR 연결 없음'}
-                
-                result = await self.ibkr.place_order(
-                    symbol=signal.symbol,
-                    market=signal.market,
-                    action=signal.action,
-                    quantity=quantity
-                )
-                
-            else:  # COIN
-                # 업비트 주문
-                if signal.action == 'buy':
-                    result = await self.upbit.place_order(
-                        symbol=signal.symbol,
-                        action=signal.action,
-                        amount=amount
-                    )
-                else:  # sell
-                    result = await self.upbit.place_order(
-                        symbol=signal.symbol,
-                        action=signal.action,
-                        quantity=quantity
-                    )
-            
-            # 결과 처리
-            if result.get('success', False):
-                self.daily_trades += 1
-                
-                # 거래 기록 저장
-                trade_record = {
-                    'timestamp': datetime.now().isoformat(),
-                    'market': signal.market,
-                    'symbol': signal.symbol,
-                    'action': signal.action,
-                    'quantity': result.get('quantity', quantity),
-                    'price': result.get('price', signal.price),
-                    'total_amount': result.get('quantity', quantity) * result.get('price', signal.price),
-                    'confidence': signal.confidence,
-                    'strategy': signal.strategy,
-                    'reasoning': signal.reasoning,
-                    'broker': 'ibkr' if signal.market in ['US', 'JP'] else 'upbit',
-                    'order_id': result.get('order_id', ''),
-                    'status': 'completed'
-                }
-                
-                # 데이터베이스 저장
-                if UTILS_AVAILABLE:
-                    DatabaseUtils.save_trade_record(trade_record)
-                
-                # 거래 로그 저장
-                if UTILS_AVAILABLE:
-                    save_trading_log(signal.market, signal.symbol, signal.action, {
-                        'result': result,
-                        'signal': asdict(signal)
-                    })
-                
-                logger.info(f"✅ 거래 완료: {signal.symbol} {signal.action} {result.get('quantity')} @ {result.get('price')}")
-                
-            return result
-            
-        except Exception as e:
-            logger.error(f"❌ 거래 실행 실패 {signal.symbol}: {e}")
-            return {'success': False, 'error': str(e)}
-    
-    async def _simulate_trade(self, signal: TradingSignal) -> Dict:
-        """모의 거래 실행"""
-        try:
-            # 포지션 크기 계산
-            portfolio_value = await self._get_portfolio_value(signal.market)
-            quantity, amount = self._calculate_position_size(signal, portfolio_value)
-            
-            if quantity <= 0:
-                return {'success': False, 'error': '포지션 크기 계산 실패'}
-            
-            # 현재가 조회 (실제 시세 사용)
-            current_price = signal.price
-            
-            if signal.market in ['US', 'JP'] and self.ibkr:
-                market_price = await self.ibkr.get_current_price(signal.symbol, signal.market)
-                if market_price:
-                    current_price = market_price
-                    
-            elif signal.market == 'COIN':
-                market_price = await self.upbit.get_current_price(signal.symbol)
-                if market_price:
-                    current_price = market_price
-            
-            # 약간의 슬리피지 적용
-            if signal.action == 'buy':
-                execution_price = current_price * 1.001  # 0.1% 슬리피지
-            else:
-                execution_price = current_price * 0.999
-            
-            # 모의 거래 결과
-            self.daily_trades += 1
-            
-            # 모의 거래 기록
-            mock_order_id = f"PAPER_{int(time.time())}"
-            
-            result = {
-                'success': True,
-                'order_id': mock_order_id,
-                'price': execution_price,
-                'quantity': quantity,
-                'status': 'filled',
-                'paper_trade': True
-            }
-            
-            # 거래 로그 저장
-            if UTILS_AVAILABLE:
-                save_trading_log(signal.market, signal.symbol, signal.action, {
-                    'result': result,
-                    'signal': asdict(signal),
-                    'paper_trading': True
-                })
-            
-            logger.info(f"📄 모의거래 완료: {signal.symbol} {signal.action} {quantity} @ {execution_price:.4f}")
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"❌ 모의거래 실패 {signal.symbol}: {e}")
-            return {'success': False, 'error': str(e)}
-    
-    async def execute_signal(self, signal: TradingSignal) -> Dict:
-        """매매 신호 실행 (메인 함수)"""
-        try:
-            # 신호 검증
-            is_valid, error_message = self._validate_signal(signal)
-            if not is_valid:
-                logger.warning(f"⚠️ 신호 검증 실패 {signal.symbol}: {error_message}")
-                return {'success': False, 'error': error_message}
-            
-            # 매매 실행
-            if self.paper_trading:
-                result = await self._simulate_trade(signal)
-            else:
-                result = await self._execute_trade(signal)
-            
-            # 알림 발송
-            if NOTIFIER_AVAILABLE and result.get('success', False):
-                await send_trading_alert(
-                    market=signal.market,
-                    symbol=signal.symbol,
-                    action=signal.action,
-                    price=result.get('price', signal.price),
-                    confidence=signal.confidence,
-                    reasoning=signal.reasoning,
-                    target_price=signal.target_price,
-                    execution_status="completed"
-                )
-            elif NOTIFIER_AVAILABLE and not result.get('success', False):
-                await send_trading_alert(
-                    market=signal.market,
-                    symbol=signal.symbol,
-                    action=signal.action,
-                    price=signal.price,
-                    confidence=signal.confidence,
-                    reasoning=result.get('error', '실행 실패'),
-                    execution_status="failed"
-                )
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"❌ 매매 신호 실행 실패: {e}")
-            return {'success': False, 'error': str(e)}
-    
-    async def get_portfolio_summary(self) -> Dict:
-        """포트폴리오 요약"""
-        try:
-            summary = {
-                'ibkr_portfolio': None,
-                'upbit_portfolio': None,
-                'total_value_usd': 0.0,
-                'total_value_krw': 0.0,
-                'last_updated': datetime.now().isoformat()
-            }
-            
-            # IBKR 포트폴리오
-            if self.ibkr:
-                ibkr_portfolio = await self.ibkr.get_portfolio()
-                if ibkr_portfolio:
-                    summary['ibkr_portfolio'] = asdict(ibkr_portfolio)
-                    summary['total_value_usd'] += ibkr_portfolio.total_value
-            
-            # 업비트 포트폴리오
-            upbit_portfolio = await self.upbit.get_portfolio()
-            if upbit_portfolio:
-                summary['upbit_portfolio'] = asdict(upbit_portfolio)
-                summary['total_value_krw'] += upbit_portfolio.total_value
-                
-                # 환율 적용 (간단히 1300으로 가정)
-                usd_equivalent = upbit_portfolio.total_value / 1300
-                summary['total_value_usd'] += usd_equivalent
-            
-            return summary
-            
-        except Exception as e:
-            logger.error(f"❌ 포트폴리오 요약 실패: {e}")
-            return {}
-    
-    def get_trading_stats(self) -> Dict:
-        """거래 통계"""
-        uptime = datetime.now() - self.session_start_time
-        
-        return {
-            'executor_status': 'running',
-            'session_uptime': str(uptime).split('.')[0],
-            'paper_trading': self.paper_trading,
-            'auto_execution': self.auto_execution,
-            'daily_trades': self.daily_trades,
-            'max_daily_trades': self.max_daily_trades,
-            'max_position_size': self.max_position_size,
-            'brokers': {
-                'ibkr_available': IBKR_AVAILABLE and self.ibkr is not None,
-                'upbit_configured': bool(self.upbit.access_key),
-                'ibkr_connected': self.ibkr.connected if self.ibkr else False
-            }
-        }
-    
-    async def cleanup(self):
-        """리소스 정리"""
-        try:
-            if self.ibkr:
-                await self.ibkr.disconnect()
-            
-            if self.upbit:
-                await self.upbit.close()
-            
-            logger.info("🧹 매매 실행기 리소스 정리 완료")
-            
-        except Exception as e:
-            logger.error(f"❌ 매매 실행기 정리 실패: {e}")
-
-# =====================================
-# 편의 함수들 (core.py에서 호출)
-# =====================================
-
-_global_executor = None
-
-async def execute_trade_signal(signal) -> Dict:
-    """매매 신호 실행 (편의 함수)"""
-    global _global_executor
-    
-    try:
-        if _global_executor is None:
-            _global_executor = TradingExecutor()
-        
-        # TradingSignal 객체로 변환 (core.py의 TradingSignal과 호환)
-        if hasattr(signal, 'market'):
-            trading_signal = TradingSignal(
-                market=signal.market,
-                symbol=signal.symbol,
-                action=signal.action,
-                confidence=signal.confidence,
-                price=signal.price,
-                strategy=signal.strategy,
-                reasoning=signal.reasoning,
-                target_price=signal.target_price,
-                timestamp=signal.timestamp,
-                sector=getattr(signal, 'sector', None),
-                position_size=getattr(signal, 'position_size', None),
-                additional_data=getattr(signal, 'additional_data', None)
-            )
-        else:
-            # 딕셔너리인 경우
-            trading_signal = TradingSignal(**signal)
-        
-        return await _global_executor.execute_signal(trading_signal)
-        
-    except Exception as e:
-        logger.error(f"❌ 매매 신호 실행 실패: {e}")
-        return {'success': False, 'error': str(e)}
-
-async def get_portfolio_summary() -> Dict:
-    """포트폴리오 요약 (편의 함수)"""
-    global _global_executor
-    
-    try:
-        if _global_executor is None:
-            _global_executor = TradingExecutor()
-        
-        return await _global_executor.get_portfolio_summary()
-        
-    except Exception as e:
-        logger.error(f"❌ 포트폴리오 요약 실패: {e}")
-        return {}
-
-def get_trading_stats() -> Dict:
-    """거래 통계 (편의 함수)"""
-    global _global_executor
-    
-    try:
-        if _global_executor is None:
-            return {'executor_status': 'not_initialized'}
-        
-        return _global_executor.get_trading_stats()
-        
-    except Exception as e:
-        logger.error(f"❌ 거래 통계 조회 실패: {e}")
-        return {'executor_status': 'error'}
-
-# =====================================
-# 테스트 함수
-# =====================================
-
-async def test_trading_system():
-    """🧪 매매 시스템 테스트"""
-    print("💰 최고퀸트프로젝트 매매 시스템 테스트")
-    print("=" * 50)
-    
-    # 1. 매매 실행기 초기화
-    print("1️⃣ 매매 실행기 초기화...")
-    executor = TradingExecutor()
-    print(f"   ✅ 완료 (모의거래: {executor.paper_trading})")
-    
-    # 2. 브로커 연결 테스트
-    print("2️⃣ 브로커 연결 테스트...")
-    
-    # IBKR 테스트
-    if executor.ibkr and IBKR_AVAILABLE:
-        try:
-            connected = await executor.ibkr.connect()
-            print(f"   🏦 IBKR: {'✅ 연결됨' if connected else '❌ 연결 실패'}")
-        except Exception as e:
-            print(f"   🏦 IBKR: ❌ 오류 ({e})")
-    else:
-        print("   🏦 IBKR: ⏭️ 스킵 (라이브러리 없음)")
-    
-    # 업비트 테스트
-    try:
-        btc_price = await executor.upbit.get_current_price('BTC-KRW')
-        print(f"   🪙 업비트: {'✅ 연결됨' if btc_price else '❌ 연결 실패'}")
-        if btc_price:
-            print(f"     📊 BTC 현재가: {Formatter.format_price(btc_price, 'COIN') if UTILS_AVAILABLE else btc_price}")
-    except Exception as e:
-        print(f"   🪙 업비트: ❌ 오류 ({e})")
-    
-    # 3. 테스트 신호 생성
-    print("3️⃣ 테스트 매매 신호...")
-    test_signals = [
-        TradingSignal(
-            market='US', symbol='AAPL', action='buy', confidence=0.85, price=175.50,
-            strategy='test', reasoning='테스트 매수 신호', target_price=195.80,
-            timestamp=datetime.now()
-        ),
-        TradingSignal(
-            market='COIN', symbol='BTC-KRW', action='buy', confidence=0.78, price=95000000,
-            strategy='test', reasoning='테스트 코인 매수', target_price=105000000,
-            timestamp=datetime.now()
-        )
-    ]
-    
-    # 4. 모의 거래 실행
-    print("4️⃣ 모의 거래 실행...")
-    for i, signal in enumerate(test_signals, 1):
-        try:
-            print(f"   📤 신호 {i}: {signal.symbol} {signal.action}")
-            result = await executor.execute_signal(signal)
-            
-            if result.get('success', False):
-                price = result.get('price', 0)
-                quantity = result.get('quantity', 0)
-                print(f"   ✅ 성공: {quantity} @ {price}")
-            else:
-                error = result.get('error', '알 수 없음')
-                print(f"   ❌ 실패: {error}")
-            print()
-            
-        except Exception as e:
-            print(f"   ❌ 신호 {i} 실행 실패: {e}")
-    
-    # 5. 포트폴리오 조회
-    print("5️⃣ 포트폴리오 조회...")
-    try:
-        portfolio = await executor.get_portfolio_summary()
-        
-        if portfolio.get('ibkr_portfolio'):
-            ibkr = portfolio['ibkr_portfolio']
-            print(f"   🏦 IBKR: {Formatter.format_price(ibkr['total_value'], 'US') if UTILS_AVAILABLE else ibkr['total_value']}")
-        
-        if portfolio.get('upbit_portfolio'):
-            upbit = portfolio['upbit_portfolio']
-            print(f"   🪙 업비트: {Formatter.format_price(upbit['total_value'], 'COIN') if UTILS_AVAILABLE else upbit['total_value']}")
-        
-        if not portfolio.get('ibkr_portfolio') and not portfolio.get('upbit_portfolio'):
-            print("   📊 포트폴리오 데이터 없음")
-            
-    except Exception as e:
-        print(f"   ❌ 포트폴리오 조회 실패: {e}")
-    
-    # 6. 거래 통계
-    print("6️⃣ 거래 통계...")
-    stats = executor.get_trading_stats()
-    print(f"   📊 상태: {stats['executor_status']}")
-    print(f"   📈 일일 거래: {stats['daily_trades']}/{stats['max_daily_trades']}")
-    print(f"   🔧 모의거래: {stats['paper_trading']}")
-    print(f"   🏦 IBKR 사용가능: {stats['brokers']['ibkr_available']}")
-    print(f"   🪙 업비트 설정: {stats['brokers']['upbit_configured']}")
-    
-    # 7. 편의 함수 테스트
-    print("7️⃣ 편의 함수 테스트...")
-    try:
-        # 거래 통계
-        stats = get_trading_stats()
-        print(f"   📋 편의함수 - 상태: {stats['executor_status']}")
-        
-        # 포트폴리오 요약
-        portfolio = await get_portfolio_summary()
-        portfolio_count = sum(1 for k in ['ibkr_portfolio', 'upbit_portfolio'] if portfolio.get(k))
-        print(f"   📊 편의함수 - 포트폴리오: {portfolio_count}개 연결")
-        
-    except Exception as e:
-        print(f"   ❌ 편의함수 테스트 실패: {e}")
-    
-    # 8. 리소스 정리
-    print("8️⃣ 리소스 정리...")
-    await executor.cleanup()
-    print("   ✅ 완료")
-    
-    print()
-    print("🎯 매매 시스템 테스트 완료!")
-    print("💰 IBKR + 업비트 통합 매매 시스템이 준비되었습니다")
-
-if __name__ == "__main__":
-    print("💰 최고퀸트프로젝트 매매 시스템")
-    print("=" * 50)
-    
-    # 테스트 실행
-    asyncio.run(test_trading_system())
-    
-    print("\n🚀 매매 시스템 준비 완료!")
-    print("💡 core.py에서 execute_trade_signal() 함수를 사용하세요")
-    print("\n⚙️ 설정:")
-    print("   📋 configs/settings.yaml에서 trading, api 섹션 설정")
-    print("   🏦 IBKR: TWS/Gateway 실행 + ib_insync 설치")
-    print("   🪙 업비트: API 키 설정 + PyJWT 설치")
-    print("   🛡️ 모의거래 모드로 안전하게 테스트 가능")
+            logger.error(f
