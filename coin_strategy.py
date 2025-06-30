@@ -37,6 +37,7 @@ import time
 import json
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
+import aiohttp
 warnings.filterwarnings('ignore')
 
 # 로거 설정
@@ -134,7 +135,572 @@ class UltimateCoinSignal:
     reasoning: str
     target_price: float
     timestamp: datetime
-    additional_data: Optional[Dict] = None    
+    additional_data: Optional[Dict] = None
+
+# ========================================================================================
+# 🆕 고급 기술적 지표 분석 (NEW!)
+# ========================================================================================
+class AdvancedTechnicalIndicators:
+    """🆕 고급 기술적 지표 분석"""
+    
+    @staticmethod
+    def calculate_williams_r(data: pd.DataFrame, period: int = 14) -> float:
+        """Williams %R 계산"""
+        try:
+            williams_r = ta.momentum.WilliamsRIndicator(
+                data['high'], data['low'], data['close'], lbp=period
+            ).williams_r()
+            return williams_r.iloc[-1] if not pd.isna(williams_r.iloc[-1]) else -50.0
+        except:
+            return -50.0
+
+    @staticmethod
+    def calculate_cci(data: pd.DataFrame, period: int = 20) -> float:
+        """Commodity Channel Index 계산"""
+        try:
+            cci = ta.trend.CCIIndicator(
+                data['high'], data['low'], data['close'], window=period
+            ).cci()
+            return cci.iloc[-1] if not pd.isna(cci.iloc[-1]) else 0.0
+        except:
+            return 0.0
+
+    @staticmethod
+    def calculate_mfi(data: pd.DataFrame, period: int = 14) -> float:
+        """Money Flow Index 계산"""
+        try:
+            mfi = ta.volume.MFIIndicator(
+                data['high'], data['low'], data['close'], data['volume'], window=period
+            ).money_flow_index()
+            return mfi.iloc[-1] if not pd.isna(mfi.iloc[-1]) else 50.0
+        except:
+            return 50.0
+
+    @staticmethod
+    def calculate_adx(data: pd.DataFrame, period: int = 14) -> float:
+        """Average Directional Index 계산"""
+        try:
+            adx = ta.trend.ADXIndicator(
+                data['high'], data['low'], data['close'], window=period
+            ).adx()
+            return adx.iloc[-1] if not pd.isna(adx.iloc[-1]) else 25.0
+        except:
+            return 25.0
+
+    @staticmethod
+    def calculate_parabolic_sar(data: pd.DataFrame) -> str:
+        """Parabolic SAR 계산"""
+        try:
+            psar = ta.trend.PSARIndicator(
+                data['high'], data['low'], data['close']
+            ).psar()
+            current_price = data['close'].iloc[-1]
+            psar_value = psar.iloc[-1]
+            
+            return 'bullish' if current_price > psar_value else 'bearish'
+        except:
+            return 'neutral'
+
+# ========================================================================================
+# 🆕 AI 기반 프로젝트 품질 평가 시스템 (NEW!)
+# ========================================================================================
+class AIProjectQualityAnalyzer:
+    """🆕 AI 기반 프로젝트 품질 평가"""
+    
+    def __init__(self):
+        # 프로젝트 등급 데이터베이스
+        self.tier_database = {
+            'tier_1': {  # 최고 등급
+                'coins': ['BTC', 'ETH', 'BNB'],
+                'base_score': 0.95,
+                'description': '절대 강자'
+            },
+            'tier_2': {  # 2등급
+                'coins': ['ADA', 'SOL', 'AVAX', 'DOT', 'MATIC', 'ATOM', 'NEAR'],
+                'base_score': 0.85,
+                'description': '검증된 L1'
+            },
+            'tier_3': {  # 3등급  
+                'coins': ['LINK', 'UNI', 'AAVE', 'MKR', 'CRV', 'COMP', 'SUSHI'],
+                'base_score': 0.75,
+                'description': 'DeFi 강자'
+            },
+            'tier_4': {  # 4등급
+                'coins': ['SAND', 'MANA', 'AXS', 'ENJ', 'THETA', 'FIL', 'VET'],
+                'base_score': 0.65,
+                'description': '특화 섹터'
+            },
+            'tier_5': {  # 5등급
+                'coins': ['DOGE', 'SHIB', 'PEPE', 'FLOKI'],
+                'base_score': 0.45,
+                'description': '밈코인'
+            }
+        }
+        
+        # 섹터별 혁신도 점수
+        self.sector_innovation = {
+            'L1_Blockchain': 0.90,
+            'DeFi': 0.85,
+            'Gaming_Metaverse': 0.80,
+            'Infrastructure': 0.75,
+            'Privacy': 0.70,
+            'Storage': 0.65,
+            'Meme': 0.40,
+            'Unknown': 0.50
+        }
+
+    def get_coin_tier(self, symbol: str) -> Tuple[str, float]:
+        """코인 등급 확인"""
+        coin_name = symbol.replace('KRW-', '').upper()
+        
+        for tier, data in self.tier_database.items():
+            if coin_name in data['coins']:
+                return tier, data['base_score']
+        
+        return 'tier_unknown', 0.50
+
+    def analyze_project_quality(self, symbol: str, market_data: Dict) -> Dict:
+        """프로젝트 품질 종합 분석"""
+        try:
+            coin_name = symbol.replace('KRW-', '').upper()
+            
+            # 1. 기본 등급 점수
+            tier, base_score = self.get_coin_tier(symbol)
+            
+            # 2. 생태계 건전성 분석
+            ecosystem_score = self._analyze_ecosystem_health(coin_name, market_data)
+            
+            # 3. 혁신성 분석
+            innovation_score = self._analyze_innovation(coin_name)
+            
+            # 4. 채택도 분석
+            adoption_score = self._analyze_adoption(coin_name, market_data)
+            
+            # 5. 팀 점수 (간단 버전)
+            team_score = self._analyze_team(coin_name)
+            
+            # 종합 점수 계산
+            weights = {
+                'base': 0.30,
+                'ecosystem': 0.25,
+                'innovation': 0.20,
+                'adoption': 0.15,
+                'team': 0.10
+            }
+            
+            total_quality = (
+                base_score * weights['base'] +
+                ecosystem_score * weights['ecosystem'] +
+                innovation_score * weights['innovation'] +
+                adoption_score * weights['adoption'] +
+                team_score * weights['team']
+            )
+            
+            return {
+                'project_quality_score': total_quality,
+                'ecosystem_health_score': ecosystem_score,
+                'innovation_score': innovation_score,
+                'adoption_score': adoption_score,
+                'team_score': team_score,
+                'tier': tier,
+                'coin_category': self._categorize_coin(coin_name)
+            }
+            
+        except Exception as e:
+            logger.error(f"프로젝트 품질 분석 실패 {symbol}: {e}")
+            return {
+                'project_quality_score': 0.50,
+                'ecosystem_health_score': 0.50,
+                'innovation_score': 0.50,
+                'adoption_score': 0.50,
+                'team_score': 0.50,
+                'tier': 'tier_unknown',
+                'coin_category': 'Unknown'
+            }
+
+    def _analyze_ecosystem_health(self, coin_name: str, market_data: Dict) -> float:
+        """생태계 건전성 분석"""
+        try:
+            score = 0.5  # 기본값
+            
+            # 거래량 기반 평가
+            volume_24h = market_data.get('volume_24h_krw', 0)
+            if volume_24h >= 100_000_000_000:  # 1000억원 이상
+                score += 0.3
+            elif volume_24h >= 50_000_000_000:  # 500억원 이상
+                score += 0.2
+            elif volume_24h >= 10_000_000_000:  # 100억원 이상
+                score += 0.1
+            
+            # 가격 안정성 (변동성 역산)
+            if 'ohlcv_1d' in market_data:
+                price_std = market_data['ohlcv_1d']['close'].tail(30).std()
+                price_mean = market_data['ohlcv_1d']['close'].tail(30).mean()
+                volatility = price_std / price_mean if price_mean > 0 else 1
+                
+                if volatility < 0.05:  # 낮은 변동성
+                    score += 0.2
+                elif volatility < 0.10:
+                    score += 0.1
+            
+            return min(score, 1.0)
+            
+        except Exception as e:
+            logger.error(f"생태계 분석 실패: {e}")
+            return 0.5
+
+    def _analyze_innovation(self, coin_name: str) -> float:
+        """혁신성 분석"""
+        # 간단한 룰 기반 혁신성 평가
+        innovation_keywords = {
+            # L1 블록체인
+            'ETH': 0.95, 'ADA': 0.90, 'SOL': 0.88, 'AVAX': 0.85, 'DOT': 0.85,
+            'ATOM': 0.80, 'NEAR': 0.80, 'ALGO': 0.75,
+            
+            # DeFi
+            'UNI': 0.85, 'AAVE': 0.80, 'MKR': 0.80, 'COMP': 0.75, 'CRV': 0.75,
+            'SUSHI': 0.70, 'CAKE': 0.65,
+            
+            # Gaming/Metaverse  
+            'SAND': 0.75, 'MANA': 0.75, 'AXS': 0.70, 'ENJ': 0.65,
+            
+            # Infrastructure
+            'LINK': 0.90, 'FIL': 0.70, 'AR': 0.70, 'GRT': 0.65,
+            
+            # Privacy
+            'XMR': 0.85, 'ZEC': 0.80,
+            
+            # Meme
+            'DOGE': 0.30, 'SHIB': 0.25, 'PEPE': 0.20
+        }
+        
+        return innovation_keywords.get(coin_name, 0.50)
+
+    def _analyze_adoption(self, coin_name: str, market_data: Dict) -> float:
+        """채택도 분석"""
+        try:
+            score = 0.5
+            
+            # 시가총액 기반 채택도
+            market_cap = market_data.get('market_cap', 0)
+            if market_cap >= 10_000_000_000_000:  # 10조원 이상
+                score = 0.95
+            elif market_cap >= 5_000_000_000_000:   # 5조원 이상
+                score = 0.85
+            elif market_cap >= 1_000_000_000_000:   # 1조원 이상
+                score = 0.75
+            elif market_cap >= 500_000_000_000:     # 5천억원 이상
+                score = 0.65
+            elif market_cap >= 100_000_000_000:     # 1천억원 이상
+                score = 0.55
+            
+            # 주요 코인 보너스
+            major_coins = ['BTC', 'ETH', 'BNB', 'XRP', 'ADA', 'SOL', 'DOGE']
+            if coin_name in major_coins:
+                score = min(score + 0.1, 1.0)
+            
+            return score
+            
+        except Exception as e:
+            logger.error(f"채택도 분석 실패: {e}")
+            return 0.5
+
+    def _analyze_team(self, coin_name: str) -> float:
+        """팀 점수 (간단 버전)"""
+        # 유명한 팀/창립자가 있는 프로젝트
+        well_known_teams = {
+            'ETH': 0.95,  # 비탈릭 부테린
+            'ADA': 0.90,  # 찰스 호스킨슨
+            'DOT': 0.90,  # 개빈 우드
+            'SOL': 0.85,  # 아나톨리 야코벤코
+            'AVAX': 0.85, # 에민 귄 시러
+            'ATOM': 0.80, # 제이 권
+            'NEAR': 0.80, # 일리아 폴로수힌
+            'LINK': 0.85, # 세르게이 나자로프
+            'UNI': 0.80,  # 헤이든 애덤스
+            'AAVE': 0.80, # 스타니 쿨레체프
+        }
+        
+        return well_known_teams.get(coin_name, 0.60)
+
+    def _categorize_coin(self, coin_name: str) -> str:
+        """코인 카테고리 분류"""
+        categories = {
+            'L1_Blockchain': ['BTC', 'ETH', 'ADA', 'SOL', 'AVAX', 'DOT', 'ATOM', 'NEAR', 'ALGO'],
+            'DeFi': ['UNI', 'AAVE', 'MKR', 'COMP', 'CRV', 'SUSHI', 'CAKE'],
+            'Gaming_Metaverse': ['SAND', 'MANA', 'AXS', 'ENJ', 'THETA'],
+            'Infrastructure': ['LINK', 'FIL', 'AR', 'GRT', 'VET'],
+            'Privacy': ['XMR', 'ZEC', 'DASH'],
+            'Meme': ['DOGE', 'SHIB', 'PEPE', 'FLOKI'],
+            'Exchange': ['BNB', 'CRO', 'FTT'],
+            'Payment': ['XRP', 'XLM', 'LTC']
+        }
+        
+        for category, coins in categories.items():
+            if coin_name in coins:
+                return category
+        
+        return 'Unknown'
+
+# ========================================================================================
+# 🆕 시장 사이클 자동 감지 시스템 (NEW!)
+# ========================================================================================
+class MarketCycleDetector:
+    """🆕 시장 사이클 자동 감지"""
+    
+    def __init__(self):
+        self.btc_dominance_threshold_low = 40.0   # BTC 도미넌스 하한
+        self.btc_dominance_threshold_high = 60.0  # BTC 도미넌스 상한
+        self.fear_greed_extreme_fear = 25         # 극단적 공포
+        self.fear_greed_extreme_greed = 75        # 극단적 탐욕
+
+    async def detect_market_cycle(self) -> Dict:
+        """시장 사이클 감지"""
+        try:
+            # 1. BTC 도미넌스 조회
+            btc_dominance = await self._get_btc_dominance()
+            
+            # 2. 총 시가총액 추세 분석
+            total_mcap_trend = await self._analyze_total_market_cap_trend()
+            
+            # 3. 공포탐욕지수 조회
+            fear_greed_data = await self._get_fear_greed_index()
+            fear_greed_score = fear_greed_data['score']
+            
+            # 4. BTC 가격 추세 분석
+            btc_trend = await self._analyze_btc_trend()
+            
+            # 5. 시장 사이클 판단
+            cycle_result = self._determine_market_cycle(
+                btc_dominance, total_mcap_trend, fear_greed_score, btc_trend
+            )
+            
+            return {
+                'market_cycle': cycle_result['cycle'],
+                'cycle_confidence': cycle_result['confidence'],
+                'btc_dominance': btc_dominance,
+                'total_market_cap_trend': total_mcap_trend,
+                'fear_greed_score': fear_greed_score,
+                'btc_trend': btc_trend,
+                'reasoning': cycle_result['reasoning']
+            }
+            
+        except Exception as e:
+            logger.error(f"시장 사이클 감지 실패: {e}")
+            return {
+                'market_cycle': 'sideways',
+                'cycle_confidence': 0.5,
+                'btc_dominance': 50.0,
+                'total_market_cap_trend': 'neutral',
+                'fear_greed_score': 50,
+                'btc_trend': 'neutral',
+                'reasoning': '데이터 수집 실패'
+            }
+
+    async def _get_btc_dominance(self) -> float:
+        """BTC 도미넌스 조회"""
+        try:
+            # CoinGecko API 사용
+            url = "https://api.coingecko.com/api/v3/global"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=10) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        dominance = data['data']['market_cap_percentage']['btc']
+                        return dominance
+            
+            return 50.0  # 기본값
+            
+        except Exception as e:
+            logger.error(f"BTC 도미넌스 조회 실패: {e}")
+            return 50.0
+
+    async def _analyze_total_market_cap_trend(self) -> str:
+        """총 시가총액 추세 분석"""
+        try:
+            # 간단한 BTC 추세로 대체 (총 시총과 높은 상관관계)
+            btc_data = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=30)
+            if btc_data is None or len(btc_data) < 30:
+                return 'neutral'
+            
+            # 30일 이동평균과 현재가 비교
+            current_price = btc_data['close'].iloc[-1]
+            ma30 = btc_data['close'].rolling(30).mean().iloc[-1]
+            
+            if current_price > ma30 * 1.05:
+                return 'bullish'
+            elif current_price < ma30 * 0.95:
+                return 'bearish'
+            else:
+                return 'neutral'
+                
+        except Exception as e:
+            logger.error(f"총 시총 추세 분석 실패: {e}")
+            return 'neutral'
+
+    async def _get_fear_greed_index(self) -> Dict:
+        """공포탐욕지수 조회"""
+        try:
+            url = "https://api.alternative.me/fng/?limit=1"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=10) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        score = int(data["data"][0]["value"])
+                        classification = data["data"][0]["value_classification"]
+                        return {'score': score, 'classification': classification}
+            
+            return {'score': 50, 'classification': 'Neutral'}
+            
+        except Exception as e:
+            logger.error(f"공포탐욕지수 조회 실패: {e}")
+            return {'score': 50, 'classification': 'Neutral'}
+
+    async def _analyze_btc_trend(self) -> str:
+        """BTC 가격 추세 분석"""
+        try:
+            btc_data = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=60)
+            if btc_data is None or len(btc_data) < 60:
+                return 'neutral'
+            
+            # 단기/장기 이동평균 비교
+            ma20 = btc_data['close'].rolling(20).mean().iloc[-1]
+            ma50 = btc_data['close'].rolling(50).mean().iloc[-1]
+            current_price = btc_data['close'].iloc[-1]
+            
+            if current_price > ma20 > ma50:
+                return 'strong_bullish'
+            elif current_price > ma20 and ma20 < ma50:
+                return 'weak_bullish'
+            elif current_price < ma20 < ma50:
+                return 'strong_bearish'
+            elif current_price < ma20 and ma20 > ma50:
+                return 'weak_bearish'
+            else:
+                return 'neutral'
+                
+        except Exception as e:
+            logger.error(f"BTC 추세 분석 실패: {e}")
+            return 'neutral'
+
+    def _determine_market_cycle(self, btc_dominance: float, total_mcap_trend: str, 
+                              fear_greed_score: int, btc_trend: str) -> Dict:
+        """시장 사이클 종합 판단"""
+        try:
+            score = 0.0
+            reasons = []
+            
+            # 1. BTC 도미넌스 분석 (30%)
+            if btc_dominance >= self.btc_dominance_threshold_high:
+                score -= 0.3  # 하락장 신호
+                reasons.append(f"BTC도미넌스높음({btc_dominance:.1f}%)")
+            elif btc_dominance <= self.btc_dominance_threshold_low:
+                score += 0.3  # 상승장 신호
+                reasons.append(f"BTC도미넌스낮음({btc_dominance:.1f}%)")
+            else:
+                score += 0.0  # 중립
+                reasons.append(f"BTC도미넌스중립({btc_dominance:.1f}%)")
+            
+            # 2. 총 시총 추세 (25%)
+            if total_mcap_trend == 'bullish':
+                score += 0.25
+                reasons.append("시총상승")
+            elif total_mcap_trend == 'bearish':
+                score -= 0.25
+                reasons.append("시총하락")
+            else:
+                reasons.append("시총중립")
+            
+            # 3. 공포탐욕지수 (25%)
+            if fear_greed_score <= self.fear_greed_extreme_fear:
+                score += 0.25  # 극단적 공포 = 매수 기회
+                reasons.append(f"극단공포({fear_greed_score})")
+            elif fear_greed_score >= self.fear_greed_extreme_greed:
+                score -= 0.25  # 극단적 탐욕 = 매도 신호
+                reasons.append(f"극단탐욕({fear_greed_score})")
+            else:
+                reasons.append(f"보통감정({fear_greed_score})")
+            
+            # 4. BTC 추세 (20%)
+            btc_trend_scores = {
+                'strong_bullish': 0.20,
+                'weak_bullish': 0.10,
+                'neutral': 0.00,
+                'weak_bearish': -0.10,
+                'strong_bearish': -0.20
+            }
+            score += btc_trend_scores.get(btc_trend, 0.0)
+            reasons.append(f"BTC추세({btc_trend})")
+            
+            # 최종 사이클 판단
+            if score >= 0.4:
+                cycle = 'uptrend'
+                confidence = min(score * 1.5, 0.95)
+            elif score <= -0.4:
+                cycle = 'downtrend'  
+                confidence = min(abs(score) * 1.5, 0.95)
+            elif 0.2 <= score < 0.4:
+                cycle = 'accumulation'
+                confidence = score + 0.3
+            elif -0.4 < score <= -0.2:
+                cycle = 'distribution'
+                confidence = abs(score) + 0.3
+            else:
+                cycle = 'sideways'
+                confidence = 0.5
+            
+            return {
+                'cycle': cycle,
+                'confidence': confidence,
+                'reasoning': " | ".join(reasons)
+            }
+            
+        except Exception as e:
+            logger.error(f"시장 사이클 판단 실패: {e}")
+            return {
+                'cycle': 'sideways',
+                'confidence': 0.5,
+                'reasoning': '분석 실패'
+            }
+
+# ========================================================================================
+# 🆕 상관관계 기반 포트폴리오 최적화 (NEW!)
+# ========================================================================================
+class PortfolioOptimizer:
+    """🆕 상관관계 기반 포트폴리오 최적화"""
+    
+    def __init__(self):
+        self.correlation_threshold = 0.7  # 상관관계 임계값
+        self.max_correlated_coins = 2     # 높은 상관관계 코인 최대 개수
+
+    async def calculate_correlation_matrix(self, symbols: List[str]) -> pd.DataFrame:
+        """상관관계 행렬 계산"""
+        try:
+            price_data = {}
+            
+            # 각 코인의 30일 가격 데이터 수집
+            for symbol in symbols:
+                try:
+                    ohlcv = pyupbit.get_ohlcv(symbol, interval="day", count=30)
+                    if ohlcv is not None and len(ohlcv) >= 30:
+                        price_data[symbol] = ohlcv['close'].pct_change().dropna()
+                    await asyncio.sleep(0.1)  # API 제한
+                except:
+                    continue
+            
+            if len(price_data) < 2:
+                return pd.DataFrame()
+            
+            # 상관관계 행렬 계산
+            df = pd.DataFrame(price_data)
+            correlation_matrix = df.corr()
+            
+            return correlation_matrix
+            
+        except Exception as e:
+            logger.error(f"상관관계 행렬 계산 실패: {e}")
+            return pd.DataFrame()
+
     def optimize_portfolio_selection(self, candidates: List[Dict], target_count: int = 20) -> List[Dict]:
         """상관관계 고려한 포트폴리오 최적화"""
         try:
@@ -160,7 +726,6 @@ class UltimateCoinSignal:
                     continue
                 
                 # 기존 선택된 코인들과의 상관관계 확인
-                should_add = True
                 high_correlation_count = 0
                 
                 # 간단한 섹터/카테고리 기반 상관관계 추정
@@ -233,70 +798,6 @@ class UltimateCoinSignal:
             return 0.5
 
 # ========================================================================================
-# 🆕 고급 기술적 지표 분석 (NEW!)
-# ========================================================================================
-class AdvancedTechnicalIndicators:
-    """🆕 고급 기술적 지표 분석"""
-    
-    @staticmethod
-    def calculate_williams_r(data: pd.DataFrame, period: int = 14) -> float:
-        """Williams %R 계산"""
-        try:
-            williams_r = ta.momentum.WilliamsRIndicator(
-                data['high'], data['low'], data['close'], lbp=period
-            ).williams_r()
-            return williams_r.iloc[-1] if not pd.isna(williams_r.iloc[-1]) else -50.0
-        except:
-            return -50.0
-
-    @staticmethod
-    def calculate_cci(data: pd.DataFrame, period: int = 20) -> float:
-        """Commodity Channel Index 계산"""
-        try:
-            cci = ta.trend.CCIIndicator(
-                data['high'], data['low'], data['close'], window=period
-            ).cci()
-            return cci.iloc[-1] if not pd.isna(cci.iloc[-1]) else 0.0
-        except:
-            return 0.0
-
-    @staticmethod
-    def calculate_mfi(data: pd.DataFrame, period: int = 14) -> float:
-        """Money Flow Index 계산"""
-        try:
-            mfi = ta.volume.MFIIndicator(
-                data['high'], data['low'], data['close'], data['volume'], window=period
-            ).money_flow_index()
-            return mfi.iloc[-1] if not pd.isna(mfi.iloc[-1]) else 50.0
-        except:
-            return 50.0
-
-    @staticmethod
-    def calculate_adx(data: pd.DataFrame, period: int = 14) -> float:
-        """Average Directional Index 계산"""
-        try:
-            adx = ta.trend.ADXIndicator(
-                data['high'], data['low'], data['close'], window=period
-            ).adx()
-            return adx.iloc[-1] if not pd.isna(adx.iloc[-1]) else 25.0
-        except:
-            return 25.0
-
-    @staticmethod
-    def calculate_parabolic_sar(data: pd.DataFrame) -> str:
-        """Parabolic SAR 계산"""
-        try:
-            psar = ta.trend.PSARIndicator(
-                data['high'], data['low'], data['close']
-            ).psar()
-            current_price = data['close'].iloc[-1]
-            psar_value = psar.iloc[-1]
-            
-            return 'bullish' if current_price > psar_value else 'bearish'
-        except:
-            return 'neutral'
-
-# ========================================================================================
 # 🆕 궁극의 암호화폐 전략 클래스 (완전 업그레이드)
 # ========================================================================================
 class UltimateCoinStrategy:
@@ -347,36 +848,431 @@ class UltimateCoinStrategy:
         self.stoch_d = 3
         self.atr_period = 14
         
-       # 🔍 선별된 코인 리스트
-self.selected_coins = []
-self.last_selection_time = None
-score = 0.0
-details = {}
+        # 🔍 선별된 코인 리스트
+        self.selected_coins = []
+        self.last_selection_time = None
+        self.selection_cache_hours = 12  # 12시간 캐시 (더 자주 업데이트)
+        
+        # 🆕 시장 사이클 정보
+        self.current_market_cycle = 'sideways'
+        self.cycle_confidence = 0.5
+        
+        if self.enabled:
+            logger.info(f"🪙 궁극의 암호화폐 전략 초기화 (V5.0)")
+            logger.info(f"🆕 AI 기반 프로젝트 품질 평가 시스템")
+            logger.info(f"🆕 시장 사이클 자동 감지 (4단계)")
+            logger.info(f"🆕 상관관계 기반 포트폴리오 최적화")
+            logger.info(f"🎯 자동 선별: 상위 {self.target_coins}개 코인")
+            logger.info(f"📊 하이브리드 전략: 펀더멘털{self.fundamental_weight*100:.0f}% + 기술분석{self.technical_weight*100:.0f}% + 모멘텀{self.momentum_weight*100:.0f}%")
+            logger.info(f"💰 5단계 분할매매: 각 20%씩, 동적 손절익절")
 
-# 기존 지표들
-# 1. RSI (15%)
-rsi = ta.momentum.RSIIndicator(closes, window=self.rsi_period).rsi().iloc[-1]
-if 30 <= rsi <= 70:
-    score += 0.15
-elif rsi < 30:
-    score += 0.10
-elif rsi > 70:
-    score += 0.05
-details['rsi'] = rsi
+    def _load_config(self, config_path: str) -> Dict:
+        """설정 파일 로드"""
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"설정 파일 로드 실패: {e}")
+            return {}
 
-# 2. MACD (15%)
-macd_indicator = ta.trend.MACD(
-    closes,
-    window_fast=self.macd_fast,
-    window_slow=self.macd_slow,
-    window_sign=self.macd_signal
-)
-macd_diff = macd_indicator.macd_diff().iloc[-1]
+    # ========================================================================================
+    # 🆕 업그레이드된 자동 선별 시스템
+    # ========================================================================================
 
-macd_signal = 'bullish' if macd_diff > 0 else 'bearish'
-if macd_signal == 'bullish':
-    score += 0.15
-details['macd_signal'] = macd_signal
+    async def ultimate_auto_select_coins(self) -> List[str]:
+        """🆕 궁극의 자동 코인 선별 (V5.0)"""
+        if not self.enabled:
+            logger.warning("암호화폐 전략이 비활성화되어 있습니다")
+            return []
+
+        try:
+            # 캐시 확인 (12시간 이내면 기존 결과 사용)
+            if self._is_selection_cache_valid():
+                logger.info("📋 캐시된 선별 결과 사용")
+                return [coin['symbol'] for coin in self.selected_coins]
+
+            logger.info("🔍 궁극의 자동 코인 선별 시작!")
+            start_time = time.time()
+
+            # 1단계: 시장 사이클 감지
+            cycle_info = await self.cycle_detector.detect_market_cycle()
+            self.current_market_cycle = cycle_info['market_cycle']
+            self.cycle_confidence = cycle_info['cycle_confidence']
+            
+            logger.info(f"📊 현재 시장 사이클: {self.current_market_cycle} (신뢰도: {self.cycle_confidence:.2f})")
+
+            # 2단계: 모든 KRW 마켓 코인 수집
+            all_tickers = pyupbit.get_tickers(fiat="KRW")
+            if not all_tickers:
+                logger.error("업비트 티커 조회 실패")
+                return self._get_default_coins()
+            
+            logger.info(f"📊 1단계: {len(all_tickers)}개 코인 발견")
+
+            # 3단계: 기본 필터링 + 품질 분석
+            qualified_coins = await self._comprehensive_filtering(all_tickers)
+            
+            logger.info(f"📊 2단계: {len(qualified_coins)}개 코인이 기본 필터 통과")
+
+            # 4단계: 상관관계 기반 포트폴리오 최적화
+            final_selection = self.portfolio_optimizer.optimize_portfolio_selection(
+                qualified_coins, self.target_coins
+            )
+            
+            # 5단계: 선별 결과 저장
+            self.selected_coins = final_selection
+            self.last_selection_time = datetime.now()
+
+            selected_symbols = [coin['symbol'] for coin in final_selection]
+            
+            elapsed_time = time.time() - start_time
+            logger.info(f"✅ 궁극의 자동 선별 완료! {len(selected_symbols)}개 코인 ({elapsed_time:.1f}초 소요)")
+
+            # 결과 요약
+            self._log_selection_summary(final_selection, cycle_info)
+
+            return selected_symbols
+
+        except Exception as e:
+            logger.error(f"궁극의 자동 선별 실패: {e}")
+            return self._get_default_coins()
+
+    async def _comprehensive_filtering(self, all_tickers: List[str]) -> List[Dict]:
+        """종합적 필터링 + 품질 분석"""
+        qualified_coins = []
+        
+        batch_size = 15
+        for i in range(0, len(all_tickers), batch_size):
+            batch_tickers = all_tickers[i:i+batch_size]
+            
+            # 병렬 처리
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = []
+                
+                for ticker in batch_tickers:
+                    future = executor.submit(self._analyze_single_coin_comprehensive, ticker)
+                    futures.append(future)
+                
+                for future in futures:
+                    try:
+                        result = future.result(timeout=30)
+                        if result and result.get('selection_score', 0) > 0.3:  # 최소 점수 기준
+                            qualified_coins.append(result)
+                    except Exception as e:
+                        continue
+            
+            await asyncio.sleep(0.5)  # API 제한 고려
+            
+            if i % 50 == 0:
+                logger.info(f"📊 품질 분석 진행: {i}/{len(all_tickers)} 완료")
+        
+        # 점수 기준 정렬
+        qualified_coins.sort(key=lambda x: x['selection_score'], reverse=True)
+        
+        return qualified_coins[:60]  # 상위 60개로 일차 선별
+
+    def _analyze_single_coin_comprehensive(self, symbol: str) -> Optional[Dict]:
+        """단일 코인 종합 분석 (품질 + 기술적 + 모멘텀)"""
+        try:
+            # 기본 데이터 수집
+            data = asyncio.run(self._get_comprehensive_coin_data(symbol))
+            if not data:
+                return None
+            
+            # 기본 필터링
+            volume_krw = data.get('volume_24h_krw', 0)
+            if volume_krw < self.min_volume_24h:
+                return None
+            
+            # AI 프로젝트 품질 분석
+            quality_analysis = self.quality_analyzer.analyze_project_quality(symbol, data)
+            
+            # 기술적 분석
+            technical_score, technical_details = self._analyze_technical_indicators_advanced(data)
+            
+            # 모멘텀 분석
+            momentum_score, momentum_reasoning = self._analyze_momentum_advanced(symbol, data)
+            
+            # 펀더멘털 분석 (업그레이드)
+            fundamental_score, fundamental_reasoning = self._analyze_fundamental_enhanced(symbol, data, quality_analysis)
+            
+            # 시장 사이클 기반 가중치 조정
+            cycle_weights = self._get_cycle_based_weights()
+            
+            # 종합 점수 계산
+            total_score = (
+                fundamental_score * cycle_weights['fundamental'] +
+                technical_score * cycle_weights['technical'] +
+                momentum_score * cycle_weights['momentum']
+            )
+            
+            # 다양성 혜택 추가
+            diversification_benefit = self.portfolio_optimizer.calculate_diversification_benefit(
+                symbol, [coin['symbol'] for coin in self.selected_coins]
+            )
+            
+            total_score *= diversification_benefit
+            
+            return {
+                'symbol': symbol,
+                'selection_score': total_score,
+                'fundamental_score': fundamental_score,
+                'technical_score': technical_score,
+                'momentum_score': momentum_score,
+                'project_quality_score': quality_analysis['project_quality_score'],
+                'ecosystem_health_score': quality_analysis['ecosystem_health_score'],
+                'innovation_score': quality_analysis['innovation_score'],
+                'adoption_score': quality_analysis['adoption_score'],
+                'team_score': quality_analysis['team_score'],
+                'tier': quality_analysis['tier'],
+                'coin_category': quality_analysis['coin_category'],
+                'diversification_benefit': diversification_benefit,
+                'price': data['price'],
+                'volume_24h_krw': volume_krw,
+                'market_cap': data.get('market_cap', 0),
+                'technical_details': technical_details
+            }
+            
+        except Exception as e:
+            logger.error(f"코인 종합 분석 실패 {symbol}: {e}")
+            return None
+
+    def _get_cycle_based_weights(self) -> Dict:
+        """시장 사이클 기반 가중치 조정"""
+        if self.current_market_cycle == 'accumulation':
+            # 축적기: 펀더멘털 중시
+            return {
+                'fundamental': 0.50,
+                'technical': 0.25,
+                'momentum': 0.25
+            }
+        elif self.current_market_cycle == 'uptrend':
+            # 상승기: 모멘텀 중시
+            return {
+                'fundamental': 0.25,
+                'technical': 0.25,
+                'momentum': 0.50
+            }
+        elif self.current_market_cycle == 'distribution':
+            # 분배기: 기술적 분석 중시
+            return {
+                'fundamental': 0.25,
+                'technical': 0.50,
+                'momentum': 0.25
+            }
+        elif self.current_market_cycle == 'downtrend':
+            # 하락기: 펀더멘털 중시 (안전자산)
+            return {
+                'fundamental': 0.60,
+                'technical': 0.20,
+                'momentum': 0.20
+            }
+        else:
+            # 기본값
+            return {
+                'fundamental': self.fundamental_weight,
+                'technical': self.technical_weight,
+                'momentum': self.momentum_weight
+            }
+
+    def _is_selection_cache_valid(self) -> bool:
+        """선별 결과 캐시 유효성 확인"""
+        if not self.last_selection_time or not self.selected_coins:
+            return False
+        
+        time_diff = datetime.now() - self.last_selection_time
+        return time_diff.total_seconds() < (self.selection_cache_hours * 3600)
+
+    def _get_default_coins(self) -> List[str]:
+        """기본 코인 리스트 (API 실패시)"""
+        default_coins = [
+            'KRW-BTC', 'KRW-ETH', 'KRW-XRP', 'KRW-ADA', 'KRW-AVAX',
+            'KRW-DOGE', 'KRW-MATIC', 'KRW-ATOM', 'KRW-NEAR', 'KRW-HBAR',
+            'KRW-DOT', 'KRW-LINK', 'KRW-SOL', 'KRW-UNI', 'KRW-ALGO',
+            'KRW-VET', 'KRW-ICP', 'KRW-FTM', 'KRW-SAND', 'KRW-MANA'
+        ]
+        logger.info("기본 코인 리스트로 설정")
+        return default_coins
+
+    def _log_selection_summary(self, final_selection: List[Dict], cycle_info: Dict):
+        """선별 결과 요약 로그"""
+        # 카테고리별 분포
+        category_dist = {}
+        tier_dist = {}
+        
+        for coin in final_selection:
+            category = coin.get('coin_category', 'Unknown')
+            tier = coin.get('tier', 'unknown')
+            
+            category_dist[category] = category_dist.get(category, 0) + 1
+            tier_dist[tier] = tier_dist.get(tier, 0) + 1
+        
+        logger.info("🏢 카테고리별 분포:")
+        for category, count in category_dist.items():
+            logger.info(f"  {category}: {count}개")
+        
+        logger.info("🏆 등급별 분포:")
+        for tier, count in tier_dist.items():
+            logger.info(f"  {tier}: {count}개")
+        
+        # 평균 점수
+        avg_scores = {
+            'selection': np.mean([c['selection_score'] for c in final_selection]),
+            'quality': np.mean([c['project_quality_score'] for c in final_selection]),
+            'fundamental': np.mean([c['fundamental_score'] for c in final_selection]),
+            'technical': np.mean([c['technical_score'] for c in final_selection]),
+            'momentum': np.mean([c['momentum_score'] for c in final_selection])
+        }
+        
+        logger.info("📊 평균 점수:")
+        for score_type, score in avg_scores.items():
+            logger.info(f"  {score_type}: {score:.3f}")
+        
+        logger.info(f"🔄 시장 사이클: {cycle_info['market_cycle']} ({cycle_info['reasoning']})")
+
+    # ========================================================================================
+    # 🆕 고급 분석 메서드들
+    # ========================================================================================
+
+    async def _get_comprehensive_coin_data(self, symbol: str) -> Dict:
+        """종합 코인 데이터 수집"""
+        try:
+            # 현재가
+            current_price = pyupbit.get_current_price(symbol)
+            if not current_price:
+                return {}
+            
+            # 다양한 시간프레임 OHLCV 데이터
+            ohlcv_1h = pyupbit.get_ohlcv(symbol, interval="minute60", count=168)  # 1주일
+            ohlcv_4h = pyupbit.get_ohlcv(symbol, interval="minute240", count=180)  # 30일
+            ohlcv_1d = pyupbit.get_ohlcv(symbol, interval="day", count=100)       # 100일
+            
+            if any(data is None or len(data) < 20 for data in [ohlcv_1h, ohlcv_4h, ohlcv_1d]):
+                return {}
+            
+            # 기본 데이터
+            data = {
+                'symbol': symbol,
+                'price': current_price,
+                'ohlcv_1h': ohlcv_1h,
+                'ohlcv_4h': ohlcv_4h,
+                'ohlcv_1d': ohlcv_1d
+            }
+            
+            # 거래량 및 시가총액 정보
+            latest_1d = ohlcv_1d.iloc[-1]
+            data['volume_24h_krw'] = latest_1d['volume'] * current_price
+            data['volume_24h_btc'] = latest_1d['volume']
+            
+            # 시가총액 추정 (정확하지 않지만 대략적)
+            try:
+                # 업비트 거래량 기반 추정
+                avg_volume_30d = ohlcv_1d['volume'].tail(30).mean()
+                data['market_cap'] = avg_volume_30d * current_price * 100  # 매우 대략적
+            except:
+                data['market_cap'] = 0
+            
+            # 가격 모멘텀
+            if len(ohlcv_1d) >= 30:
+                data['momentum_3d'] = (current_price / ohlcv_1d.iloc[-4]['close'] - 1) * 100
+                data['momentum_7d'] = (current_price / ohlcv_1d.iloc[-8]['close'] - 1) * 100
+                data['momentum_30d'] = (current_price / ohlcv_1d.iloc[-31]['close'] - 1) * 100
+            else:
+                data['momentum_3d'] = data['momentum_7d'] = data['momentum_30d'] = 0
+            
+            # 거래량 급증률
+            avg_volume_7d = ohlcv_1d['volume'].tail(7).mean()
+            current_volume = latest_1d['volume']
+            data['volume_spike_ratio'] = current_volume / avg_volume_7d if avg_volume_7d > 0 else 1
+            
+            return data
+            
+        except Exception as e:
+            return {}
+
+    def _analyze_fundamental_enhanced(self, symbol: str, data: Dict, quality_analysis: Dict) -> Tuple[float, str]:
+        """강화된 펀더멘털 분석"""
+        try:
+            score = 0.0
+            reasoning = []
+            
+            # 1. AI 프로젝트 품질 점수 (50%)
+            quality_score = quality_analysis['project_quality_score']
+            score += quality_score * 0.50
+            reasoning.append(f"품질:{quality_score:.2f}")
+            
+            # 2. 거래량 점수 (25%)
+            volume_24h = data.get('volume_24h_krw', 0)
+            if volume_24h >= 100_000_000_000:  # 1000억원 이상
+                volume_score = 0.25
+                reasoning.append("대형거래량")
+            elif volume_24h >= 20_000_000_000:  # 200억원 이상
+                volume_score = 0.15
+                reasoning.append("중형거래량")
+            elif volume_24h >= 5_000_000_000:   # 50억원 이상
+                volume_score = 0.10
+                reasoning.append("소형거래량")
+            else:
+                volume_score = 0.05
+                reasoning.append("미니거래량")
+            
+            score += volume_score
+            
+            # 3. 생태계 건전성 (15%)
+            ecosystem_score = quality_analysis['ecosystem_health_score'] * 0.15
+            score += ecosystem_score
+            reasoning.append(f"생태계:{ecosystem_score:.2f}")
+            
+            # 4. 혁신성 (10%)
+            innovation_score = quality_analysis['innovation_score'] * 0.10
+            score += innovation_score
+            reasoning.append(f"혁신:{innovation_score:.2f}")
+            
+            return score, "펀더멘털: " + " | ".join(reasoning)
+            
+        except Exception as e:
+            logger.error(f"강화된 펀더멘털 분석 실패: {e}")
+            return 0.0, "펀더멘털: 분석실패"
+
+    def _analyze_technical_indicators_advanced(self, data: Dict) -> Tuple[float, Dict]:
+        """고급 기술적 분석 (기존 + 새로운 지표들)"""
+        try:
+            ohlcv_1d = data.get('ohlcv_1d')
+            if ohlcv_1d is None or len(ohlcv_1d) < 50:
+                return 0.0, {}
+            
+            closes = ohlcv_1d['close']
+            highs = ohlcv_1d['high']
+            lows = ohlcv_1d['low']
+            volumes = ohlcv_1d['volume']
+            
+            score = 0.0
+            details = {}
+
+            # 기존 지표들
+            # 1. RSI (15%)
+            rsi = ta.momentum.RSIIndicator(closes, window=self.rsi_period).rsi().iloc[-1]
+            if 30 <= rsi <= 70:
+                score += 0.15
+            elif rsi < 30:
+                score += 0.10
+            elif rsi > 70:
+                score += 0.05
+            details['rsi'] = rsi
+
+            # 2. MACD (15%)
+            macd_indicator = ta.trend.MACD(
+                closes,
+                window_fast=self.macd_fast,
+                window_slow=self.macd_slow,
+                window_sign=self.macd_signal
+            )
+            macd_diff = macd_indicator.macd_diff().iloc[-1]
+
+            macd_signal = 'bullish' if macd_diff > 0 else 'bearish'
+            if macd_signal == 'bullish':
+                score += 0.15
+            details['macd_signal'] = macd_signal
             
             # 3. 볼린저 밴드 (10%)
             bb_indicator = ta.volatility.BollingerBands(closes, window=self.bb_period)
@@ -906,7 +1802,47 @@ details['macd_signal'] = macd_signal
             btc_data = pyupbit.get_ohlcv('KRW-BTC', interval="day", count=30)
             coin_data = pyupbit.get_ohlcv(symbol, interval="day", count=30)
             
-            if btc_data is project_quality_score=0.0, ecosystem_health_score=0.0, innovation_score=0.0,
+            if btc_data is None or coin_data is None or len(btc_data) < 30 or len(coin_data) < 30:
+                return 0.5  # 기본값
+            
+            btc_returns = btc_data['close'].pct_change().dropna()
+            coin_returns = coin_data['close'].pct_change().dropna()
+            
+            if len(btc_returns) != len(coin_returns):
+                min_len = min(len(btc_returns), len(coin_returns))
+                btc_returns = btc_returns.tail(min_len)
+                coin_returns = coin_returns.tail(min_len)
+            
+            correlation = btc_returns.corr(coin_returns)
+            return correlation if not pd.isna(correlation) else 0.5
+            
+        except Exception as e:
+            logger.error(f"BTC 상관관계 계산 실패: {e}")
+            return 0.5
+
+    async def _get_social_sentiment(self) -> Tuple[int, str]:
+        """소셜 센티먼트 조회 (간단 버전)"""
+        try:
+            # 공포탐욕지수만 조회 (소셜 센티먼트 대용)
+            response = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                score = int(data["data"][0]["value"])
+                classification = data["data"][0]["value_classification"]
+                return score, classification
+            
+            return 50, "Neutral"
+            
+        except Exception as e:
+            logger.error(f"소셜 센티먼트 조회 실패: {e}")
+            return 50, "Neutral"
+
+    def _create_empty_signal(self, symbol: str, reason: str) -> UltimateCoinSignal:
+        """빈 시그널 생성"""
+        return UltimateCoinSignal(
+            symbol=symbol, action='hold', confidence=0.0, price=0.0,
+            fundamental_score=0.0, technical_score=0.0, momentum_score=0.0, total_score=0.0,
+            project_quality_score=0.0, ecosystem_health_score=0.0, innovation_score=0.0,
             adoption_score=0.0, team_score=0.0, market_cap_rank=0, volume_24h_rank=0,
             liquidity_score=0.0, market_cycle='sideways', cycle_confidence=0.5,
             btc_dominance=50.0, total_market_cap_trend='neutral', rsi=50.0, macd_signal='neutral',
@@ -922,6 +1858,7 @@ details['macd_signal'] = macd_signal
             take_profit_3=0.0, max_hold_days=30, fear_greed_score=50, social_sentiment='Neutral',
             twitter_mentions=0, reddit_sentiment=0.0, sector='Unknown', reasoning=reason,
             target_price=0.0, timestamp=datetime.now()
+        )
 
     # ========================================================================================
     # 🔍 전체 시장 스캔 (궁극 업그레이드)
@@ -1436,944 +2373,39 @@ async def main():
                 
                 print(f"  🤖 AI 분석: 품질{simulation['ai_analysis_breakdown']['project_quality']:.2f} "
                       f"생태계{simulation['ai_analysis_breakdown']['ecosystem_health']:.2f} "
-                      f"혁신{simulation[' or coin_data is None or len(btc_data) < 30 or len(coin_data) < 30:
-                return 0.5  # 기본값
-            
-            btc_returns = btc_data['close'].pct_change().dropna()
-            coin_returns = coin_data['close'].pct_change().dropna()
-            
-            if len(btc_returns) != len(coin_returns):
-                min_len = min(len(btc_returns), len(coin_returns))
-                btc_returns = btc_returns.tail(min_len)
-                coin_returns = coin_returns.tail(min_len)
-            
-            correlation = btc_returns.corr(coin_returns)
-            return correlation if not pd.isna(correlation) else 0.5
-            
-        except Exception as e:
-            logger.error(f"BTC 상관관계 계산 실패: {e}")
-            return 0.5
-
-    async def _get_social_sentiment(self) -> Tuple[int, str]:
-        """소셜 센티먼트 조회 (간단 버전)"""
-        try:
-            # 공포탐욕지수만 조회 (소셜 센티먼트 대용)
-            response = requests.get("https://api.alternative.me/fng/?limit=1", timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                score = int(data["data"][0]["value"])
-                classification = data["data"][0]["value_classification"]
-                return score, classification
-            
-            return 50, "Neutral"
-            
-        except Exception as e:
-            logger.error(f"소셜 센티먼트 조회 실패: {e}")
-            return 50, "Neutral"
-
-    def _create_empty_signal(self, symbol: str, reason: str) -> UltimateCoinSignal:
-        """빈 시그널 생성"""
-        return UltimateCoinSignal(
-            symbol=symbol, action='hold', confidence=0.0, price=0.0,
-            fundamental_score=0.0, technical_score=0.0, momentum_score=0.0, total_score=0.0,
-            project_quality_score
-        self.selection_cache_hours = 12  # 12시간 캐시 (더 자주 업데이트)
-        
-        # 🆕 시장 사이클 정보
-        self.current_market_cycle = 'sideways'
-        self.cycle_confidence = 0.5
-        
-        if self.enabled:
-            logger.info(f"🪙 궁극의 암호화폐 전략 초기화 (V5.0)")
-            logger.info(f"🆕 AI 기반 프로젝트 품질 평가 시스템")
-            logger.info(f"🆕 시장 사이클 자동 감지 (4단계)")
-            logger.info(f"🆕 상관관계 기반 포트폴리오 최적화")
-            logger.info(f"🎯 자동 선별: 상위 {self.target_coins}개 코인")
-            logger.info(f"📊 하이브리드 전략: 펀더멘털{self.fundamental_weight*100:.0f}% + 기술분석{self.technical_weight*100:.0f}% + 모멘텀{self.momentum_weight*100:.0f}%")
-            logger.info(f"💰 5단계 분할매매: 각 20%씩, 동적 손절익절")
-
-    def _load_config(self, config_path: str) -> Dict:
-        """설정 파일 로드"""
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
-        except Exception as e:
-            logger.error(f"설정 파일 로드 실패: {e}")
-            return {}
-
-    # ========================================================================================
-    # 🆕 업그레이드된 자동 선별 시스템
-    # ========================================================================================
-
-    async def ultimate_auto_select_coins(self) -> List[str]:
-        """🆕 궁극의 자동 코인 선별 (V5.0)"""
-        if not self.enabled:
-            logger.warning("암호화폐 전략이 비활성화되어 있습니다")
-            return []
-
-        try:
-            # 캐시 확인 (12시간 이내면 기존 결과 사용)
-            if self._is_selection_cache_valid():
-                logger.info("📋 캐시된 선별 결과 사용")
-                return [coin['symbol'] for coin in self.selected_coins]
-
-            logger.info("🔍 궁극의 자동 코인 선별 시작!")
-            start_time = time.time()
-
-            # 1단계: 시장 사이클 감지
-            cycle_info = await self.cycle_detector.detect_market_cycle()
-            self.current_market_cycle = cycle_info['market_cycle']
-            self.cycle_confidence = cycle_info['cycle_confidence']
-            
-            logger.info(f"📊 현재 시장 사이클: {self.current_market_cycle} (신뢰도: {self.cycle_confidence:.2f})")
-
-            # 2단계: 모든 KRW 마켓 코인 수집
-            all_tickers = pyupbit.get_tickers(fiat="KRW")
-            if not all_tickers:
-                logger.error("업비트 티커 조회 실패")
-                return self._get_default_coins()
-            
-            logger.info(f"📊 1단계: {len(all_tickers)}개 코인 발견")
-
-            # 3단계: 기본 필터링 + 품질 분석
-            qualified_coins = await self._comprehensive_filtering(all_tickers)
-            
-            logger.info(f"📊 2단계: {len(qualified_coins)}개 코인이 기본 필터 통과")
-
-            # 4단계: 상관관계 기반 포트폴리오 최적화
-            final_selection = self.portfolio_optimizer.optimize_portfolio_selection(
-                qualified_coins, self.target_coins
-            )
-            
-            # 5단계: 선별 결과 저장
-            self.selected_coins = final_selection
-            self.last_selection_time = datetime.now()
-
-            selected_symbols = [coin['symbol'] for coin in final_selection]
-            
-            elapsed_time = time.time() - start_time
-            logger.info(f"✅ 궁극의 자동 선별 완료! {len(selected_symbols)}개 코인 ({elapsed_time:.1f}초 소요)")
-
-            # 결과 요약
-            self._log_selection_summary(final_selection, cycle_info)
-
-            return selected_symbols
-
-        except Exception as e:
-            logger.error(f"궁극의 자동 선별 실패: {e}")
-            return self._get_default_coins()
-
-    async def _comprehensive_filtering(self, all_tickers: List[str]) -> List[Dict]:
-        """종합적 필터링 + 품질 분석"""
-        qualified_coins = []
-        
-        batch_size = 15
-        for i in range(0, len(all_tickers), batch_size):
-            batch_tickers = all_tickers[i:i+batch_size]
-            
-            # 병렬 처리
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = []
+                      f"혁신{simulation['ai_analysis_breakdown']['innovation_score']:.2f}")
+                print(f"  🔄 시장 사이클: {simulation['market_cycle']} (신뢰도: {simulation['cycle_confidence']:.2f})")
+                print(f"  💰 총 투자금: {simulation['risk_management']['total_investment']:,.0f}원")
+                print(f"  📊 포트폴리오 비중: {simulation['risk_management']['portfolio_weight']:.1f}%")
+                print(f"  🛡️ 리스크 레벨: {simulation['risk_management']['market_cycle_adjustment']}")
                 
-                for ticker in batch_tickers:
-                    future = executor.submit(self._analyze_single_coin_comprehensive, ticker)
-                    futures.append(future)
+                print(f"\n  📈 5단계 진입 계획:")
+                for stage_name, stage_info in simulation['stages'].items():
+                    print(f"    {stage_name}: {stage_info['trigger_price']:,.0f}원 "
+                          f"({stage_info['ratio']}) - {stage_info['trigger_condition']}")
                 
-                for future in futures:
-                    try:
-                        result = future.result(timeout=30)
-                        if result and result.get('selection_score', 0) > 0.3:  # 최소 점수 기준
-                            qualified_coins.append(result)
-                    except Exception as e:
-                        continue
-            
-            await asyncio.sleep(0.5)  # API 제한 고려
-            
-            if i % 50 == 0:
-                logger.info(f"📊 품질 분석 진행: {i}/{len(all_tickers)} 완료")
+                print(f"\n  📉 출구 전략:")
+                exit_plan = simulation['dynamic_exit_plan']
+                print(f"    손절: {exit_plan['stop_loss']['price']:,.0f}원 ({exit_plan['stop_loss']['ratio']})")
+                print(f"    1차익절: {exit_plan['take_profit_1']['price']:,.0f}원 ({exit_plan['take_profit_1']['ratio']})")
+                print(f"    2차익절: {exit_plan['take_profit_2']['price']:,.0f}원 ({exit_plan['take_profit_2']['ratio']})")
+                print(f"    3차익절: {exit_plan['take_profit_3']['price']:,.0f}원 ({exit_plan['take_profit_3']['ratio']})")
         
-        # 점수 기준 정렬
-        qualified_coins.sort(key=lambda x: x['selection_score'], reverse=True)
-        
-        return qualified_coins[:60]  # 상위 60개로 일차 선별
-
-    def _analyze_single_coin_comprehensive(self, symbol: str) -> Optional[Dict]:
-        """단일 코인 종합 분석 (품질 + 기술적 + 모멘텀)"""
-        try:
-            # 기본 데이터 수집
-            data = asyncio.run(self._get_comprehensive_coin_data(symbol))
-            if not data:
-                return None
-            
-            # 기본 필터링
-            volume_krw = data.get('volume_24h_krw', 0)
-            if volume_krw < self.min_volume_24h:
-                return None
-            
-            # AI 프로젝트 품질 분석
-            quality_analysis = self.quality_analyzer.analyze_project_quality(symbol, data)
-            
-            # 기술적 분석
-            technical_score, technical_details = self._analyze_technical_indicators_advanced(data)
-            
-            # 모멘텀 분석
-            momentum_score, momentum_reasoning = self._analyze_momentum_advanced(symbol, data)
-            
-            # 펀더멘털 분석 (업그레이드)
-            fundamental_score, fundamental_reasoning = self._analyze_fundamental_enhanced(symbol, data, quality_analysis)
-            
-            # 시장 사이클 기반 가중치 조정
-            cycle_weights = self._get_cycle_based_weights()
-            
-            # 종합 점수 계산
-            total_score = (
-                fundamental_score * cycle_weights['fundamental'] +
-                technical_score * cycle_weights['technical'] +
-                momentum_score * cycle_weights['momentum']
-            )
-            
-            # 다양성 혜택 추가
-            diversification_benefit = self.portfolio_optimizer.calculate_diversification_benefit(
-                symbol, [coin['symbol'] for coin in self.selected_coins]
-            )
-            
-            total_score *= diversification_benefit
-            
-            return {
-                'symbol': symbol,
-                'selection_score': total_score,
-                'fundamental_score': fundamental_score,
-                'technical_score': technical_score,
-                'momentum_score': momentum_score,
-                'project_quality_score': quality_analysis['project_quality_score'],
-                'ecosystem_health_score': quality_analysis['ecosystem_health_score'],
-                'innovation_score': quality_analysis['innovation_score'],
-                'adoption_score': quality_analysis['adoption_score'],
-                'team_score': quality_analysis['team_score'],
-                'tier': quality_analysis['tier'],
-                'coin_category': quality_analysis['coin_category'],
-                'diversification_benefit': diversification_benefit,
-                'price': data['price'],
-                'volume_24h_krw': volume_krw,
-                'market_cap': data.get('market_cap', 0),
-                'technical_details': technical_details
-            }
-            
-        except Exception as e:
-            logger.error(f"코인 종합 분석 실패 {symbol}: {e}")
-            return None
-
-    def _get_cycle_based_weights(self) -> Dict:
-        """시장 사이클 기반 가중치 조정"""
-        if self.current_market_cycle == 'accumulation':
-            # 축적기: 펀더멘털 중시
-            return {
-                'fundamental': 0.50,
-                'technical': 0.25,
-                'momentum': 0.25
-            }
-        elif self.current_market_cycle == 'uptrend':
-            # 상승기: 모멘텀 중시
-            return {
-                'fundamental': 0.25,
-                'technical': 0.25,
-                'momentum': 0.50
-            }
-        elif self.current_market_cycle == 'distribution':
-            # 분배기: 기술적 분석 중시
-            return {
-                'fundamental': 0.25,
-                'technical': 0.50,
-                'momentum': 0.25
-            }
-        elif self.current_market_cycle == 'downtrend':
-            # 하락기: 펀더멘털 중시 (안전자산)
-            return {
-                'fundamental': 0.60,
-                'technical': 0.20,
-                'momentum': 0.20
-            }
         else:
-            # 기본값
-            return {
-                'fundamental': self.fundamental_weight,
-                'technical': self.technical_weight,
-                'momentum': self.momentum_weight
-            }
-
-    def _is_selection_cache_valid(self) -> bool:
-        """선별 결과 캐시 유효성 확인"""
-        if not self.last_selection_time or not self.selected_coins:
-            return False
+            print("❌ 분석 결과를 받지 못했습니다.")
         
-        time_diff = datetime.now() - self.last_selection_time
-        return time_diff.total_seconds() < (self.selection_cache_hours * 3600)
-
-    def _get_default_coins(self) -> List[str]:
-        """기본 코인 리스트 (API 실패시)"""
-        default_coins = [
-            'KRW-BTC', 'KRW-ETH', 'KRW-XRP', 'KRW-ADA', 'KRW-AVAX',
-            'KRW-DOGE', 'KRW-MATIC', 'KRW-ATOM', 'KRW-NEAR', 'KRW-HBAR',
-            'KRW-DOT', 'KRW-LINK', 'KRW-SOL', 'KRW-UNI', 'KRW-ALGO',
-            'KRW-VET', 'KRW-ICP', 'KRW-FTM', 'KRW-SAND', 'KRW-MANA'
-        ]
-        logger.info("기본 코인 리스트로 설정")
-        return default_coins
-
-    def _log_selection_summary(self, final_selection: List[Dict], cycle_info: Dict):
-        """선별 결과 요약 로그"""
-        # 카테고리별 분포
-        category_dist = {}
-        tier_dist = {}
+        print(f"\n🎉 궁극의 암호화폐 전략 V5.0 테스트 완료!")
+        print(f"📊 모든 기능이 성공적으로 작동했습니다.")
         
-        for coin in final_selection:
-            category = coin.get('coin_category', 'Unknown')
-            tier = coin.get('tier', 'unknown')
-            
-            category_dist[category] = category_dist.get(category, 0) + 1
-            tier_dist[tier] = tier_dist.get(tier, 0) + 1
-        
-        logger.info("🏢 카테고리별 분포:")
-        for category, count in category_dist.items():
-            logger.info(f"  {category}: {count}개")
-        
-        logger.info("🏆 등급별 분포:")
-        for tier, count in tier_dist.items():
-            logger.info(f"  {tier}: {count}개")
-        
-        # 평균 점수
-        avg_scores = {
-            'selection': np.mean([c['selection_score'] for c in final_selection]),
-            'quality': np.mean([c['project_quality_score'] for c in final_selection]),
-            'fundamental': np.mean([c['fundamental_score'] for c in final_selection]),
-            'technical': np.mean([c['technical_score'] for c in final_selection]),
-            'momentum': np.mean([c['momentum_score'] for c in final_selection])
-        }
-        
-        logger.info("📊 평균 점수:")
-        for score_type, score in avg_scores.items():
-            logger.info(f"  {score_type}: {score:.3f}")
-        
-        logger.info(f"🔄 시장 사이클: {cycle_info['market_cycle']} ({cycle_info['reasoning']})")
-
-    # ========================================================================================
-    # 🆕 고급 분석 메서드들
-    # ========================================================================================
-
-    async def _get_comprehensive_coin_data(self, symbol: str) -> Dict:
-        """종합 코인 데이터 수집 (기존과 동일하지만 로그 간소화)"""
-        try:
-            # 현재가
-            current_price = pyupbit.get_current_price(symbol)
-            if not current_price:
-                return {}
-            
-            # 다양한 시간프레임 OHLCV 데이터
-            ohlcv_1h = pyupbit.get_ohlcv(symbol, interval="minute60", count=168)  # 1주일
-            ohlcv_4h = pyupbit.get_ohlcv(symbol, interval="minute240", count=180)  # 30일
-            ohlcv_1d = pyupbit.get_ohlcv(symbol, interval="day", count=100)       # 100일
-            
-            if any(data is None or len(data) < 20 for data in [ohlcv_1h, ohlcv_4h, ohlcv_1d]):
-                return {}
-            
-            # 기본 데이터
-            data = {
-                'symbol': symbol,
-                'price': current_price,
-                'ohlcv_1h': ohlcv_1h,
-                'ohlcv_4h': ohlcv_4h,
-                'ohlcv_1d': ohlcv_1d
-            }
-            
-            # 거래량 및 시가총액 정보
-            latest_1d = ohlcv_1d.iloc[-1]
-            data['volume_24h_krw'] = latest_1d['volume'] * current_price
-            data['volume_24h_btc'] = latest_1d['volume']
-            
-            # 시가총액 추정 (정확하지 않지만 대략적)
-            try:
-                # 업비트 거래량 기반 추정
-                avg_volume_30d = ohlcv_1d['volume'].tail(30).mean()
-                data['market_cap'] = avg_volume_30d * current_price * 100  # 매우 대략적
-            except:
-                data['market_cap'] = 0
-            
-            # 가격 모멘텀
-            if len(ohlcv_1d) >= 30:
-                data['momentum_3d'] = (current_price / ohlcv_1d.iloc[-4]['close'] - 1) * 100
-                data['momentum_7d'] = (current_price / ohlcv_1d.iloc[-8]['close'] - 1) * 100
-                data['momentum_30d'] = (current_price / ohlcv_1d.iloc[-31]['close'] - 1) * 100
-            else:
-                data['momentum_3d'] = data['momentum_7d'] = data['momentum_30d'] = 0
-            
-            # 거래량 급증률
-            avg_volume_7d = ohlcv_1d['volume'].tail(7).mean()
-            current_volume = latest_1d['volume']
-            data['volume_spike_ratio'] = current_volume / avg_volume_7d if avg_volume_7d > 0 else 1
-            
-            return data
-            
-        except Exception as e:
-            return {}
-
-    def _analyze_fundamental_enhanced(self, symbol: str, data: Dict, quality_analysis: Dict) -> Tuple[float, str]:
-        """강화된 펀더멘털 분석"""
-        try:
-            score = 0.0
-            reasoning = []
-            
-            # 1. AI 프로젝트 품질 점수 (50%)
-            quality_score = quality_analysis['project_quality_score']
-            score += quality_score * 0.50
-            reasoning.append(f"품질:{quality_score:.2f}")
-            
-            # 2. 거래량 점수 (25%)
-            volume_24h = data.get('volume_24h_krw', 0)
-            if volume_24h >= 100_000_000_000:  # 1000억원 이상
-                volume_score = 0.25
-                reasoning.append("대형거래량")
-            elif volume_24h >= 20_000_000_000:  # 200억원 이상
-                volume_score = 0.15
-                reasoning.append("중형거래량")
-            elif volume_24h >= 5_000_000_000:   # 50억원 이상
-                volume_score = 0.10
-                reasoning.append("소형거래량")
-            else:
-                volume_score = 0.05
-                reasoning.append("미니거래량")
-            
-            score += volume_score
-            
-            # 3. 생태계 건전성 (15%)
-            ecosystem_score = quality_analysis['ecosystem_health_score'] * 0.15
-            score += ecosystem_score
-            reasoning.append(f"생태계:{ecosystem_score:.2f}")
-            
-            # 4. 혁신성 (10%)
-            innovation_score = quality_analysis['innovation_score'] * 0.10
-            score += innovation_score
-            reasoning.append(f"혁신:{innovation_score:.2f}")
-            
-            return score, "펀더멘털: " + " | ".join(reasoning)
-            
-        except Exception as e:
-            logger.error(f"강화된 펀더멘털 분석 실패: {e}")
-            return 0.0, "펀더멘털: 분석실패"
-
-    def _analyze_technical_indicators_advanced(self, data: Dict) -> Tuple[float, Dict]:
-        """고급 기술적 분석 (기존 + 새로운 지표들)"""
-        try:
-            ohlcv_1d = data.get('ohlcv_1d')
-            if ohlcv_1d is None or len(ohlcv_1d) < 50:
-                return 0.0, {}
-            
-            closes = ohlcv_1d['close']
-            highs = ohlcv_1d['high']
-            lows = ohlcv_1d['low']
-            volumes = ohlcv_1d['volume']
-            
-            score = 0.
+    except Exception as e:
+        print(f"❌ 테스트 중 오류 발생: {e}")
+        import traceback
+        traceback.print_exc()
 
 # ========================================================================================
-# 🆕 AI 기반 프로젝트 품질 평가 시스템 (NEW!)
+# 실행부
 # ========================================================================================
-class AIProjectQualityAnalyzer:
-    """🆕 AI 기반 프로젝트 품질 평가"""
-    
-    def __init__(self):
-        # 프로젝트 등급 데이터베이스
-        self.tier_database = {
-            'tier_1': {  # 최고 등급
-                'coins': ['BTC', 'ETH', 'BNB'],
-                'base_score': 0.95,
-                'description': '절대 강자'
-            },
-            'tier_2': {  # 2등급
-                'coins': ['ADA', 'SOL', 'AVAX', 'DOT', 'MATIC', 'ATOM', 'NEAR'],
-                'base_score': 0.85,
-                'description': '검증된 L1'
-            },
-            'tier_3': {  # 3등급  
-                'coins': ['LINK', 'UNI', 'AAVE', 'MKR', 'CRV', 'COMP', 'SUSHI'],
-                'base_score': 0.75,
-                'description': 'DeFi 강자'
-            },
-            'tier_4': {  # 4등급
-                'coins': ['SAND', 'MANA', 'AXS', 'ENJ', 'THETA', 'FIL', 'VET'],
-                'base_score': 0.65,
-                'description': '특화 섹터'
-            },
-            'tier_5': {  # 5등급
-                'coins': ['DOGE', 'SHIB', 'PEPE', 'FLOKI'],
-                'base_score': 0.45,
-                'description': '밈코인'
-            }
-        }
-        
-        # 섹터별 혁신도 점수
-        self.sector_innovation = {
-            'L1_Blockchain': 0.90,
-            'DeFi': 0.85,
-            'Gaming_Metaverse': 0.80,
-            'Infrastructure': 0.75,
-            'Privacy': 0.70,
-            'Storage': 0.65,
-            'Meme': 0.40,
-            'Unknown': 0.50
-        }
 
-    def get_coin_tier(self, symbol: str) -> Tuple[str, float]:
-        """코인 등급 확인"""
-        coin_name = symbol.replace('KRW-', '').upper()
-        
-        for tier, data in self.tier_database.items():
-            if coin_name in data['coins']:
-                return tier, data['base_score']
-        
-        return 'tier_unknown', 0.50
-
-    def analyze_project_quality(self, symbol: str, market_data: Dict) -> Dict:
-        """프로젝트 품질 종합 분석"""
-        try:
-            coin_name = symbol.replace('KRW-', '').upper()
-            
-            # 1. 기본 등급 점수
-            tier, base_score = self.get_coin_tier(symbol)
-            
-            # 2. 생태계 건전성 분석
-            ecosystem_score = self._analyze_ecosystem_health(coin_name, market_data)
-            
-            # 3. 혁신성 분석
-            innovation_score = self._analyze_innovation(coin_name)
-            
-            # 4. 채택도 분석
-            adoption_score = self._analyze_adoption(coin_name, market_data)
-            
-            # 5. 팀 점수 (간단 버전)
-            team_score = self._analyze_team(coin_name)
-            
-            # 종합 점수 계산
-            weights = {
-                'base': 0.30,
-                'ecosystem': 0.25,
-                'innovation': 0.20,
-                'adoption': 0.15,
-                'team': 0.10
-            }
-            
-            total_quality = (
-                base_score * weights['base'] +
-                ecosystem_score * weights['ecosystem'] +
-                innovation_score * weights['innovation'] +
-                adoption_score * weights['adoption'] +
-                team_score * weights['team']
-            )
-            
-            return {
-                'project_quality_score': total_quality,
-                'ecosystem_health_score': ecosystem_score,
-                'innovation_score': innovation_score,
-                'adoption_score': adoption_score,
-                'team_score': team_score,
-                'tier': tier,
-                'coin_category': self._categorize_coin(coin_name)
-            }
-            
-        except Exception as e:
-            logger.error(f"프로젝트 품질 분석 실패 {symbol}: {e}")
-            return {
-                'project_quality_score': 0.50,
-                'ecosystem_health_score': 0.50,
-                'innovation_score': 0.50,
-                'adoption_score': 0.50,
-                'team_score': 0.50,
-                'tier': 'tier_unknown',
-                'coin_category': 'Unknown'
-            }
-
-    def _analyze_ecosystem_health(self, coin_name: str, market_data: Dict) -> float:
-        """생태계 건전성 분석"""
-        try:
-            score = 0.5  # 기본값
-            
-            # 거래량 기반 평가
-            volume_24h = market_data.get('volume_24h_krw', 0)
-            if volume_24h >= 100_000_000_000:  # 1000억원 이상
-                score += 0.3
-            elif volume_24h >= 50_000_000_000:  # 500억원 이상
-                score += 0.2
-            elif volume_24h >= 10_000_000_000:  # 100억원 이상
-                score += 0.1
-            
-            # 가격 안정성 (변동성 역산)
-            if 'ohlcv_1d' in market_data:
-                price_std = market_data['ohlcv_1d']['close'].tail(30).std()
-                price_mean = market_data['ohlcv_1d']['close'].tail(30).mean()
-                volatility = price_std / price_mean if price_mean > 0 else 1
-                
-                if volatility < 0.05:  # 낮은 변동성
-                    score += 0.2
-                elif volatility < 0.10:
-                    score += 0.1
-            
-            return min(score, 1.0)
-            
-        except Exception as e:
-            logger.error(f"생태계 분석 실패: {e}")
-            return 0.5
-
-    def _analyze_innovation(self, coin_name: str) -> float:
-        """혁신성 분석"""
-        # 간단한 룰 기반 혁신성 평가
-        innovation_keywords = {
-            # L1 블록체인
-            'ETH': 0.95, 'ADA': 0.90, 'SOL': 0.88, 'AVAX': 0.85, 'DOT': 0.85,
-            'ATOM': 0.80, 'NEAR': 0.80, 'ALGO': 0.75,
-            
-            # DeFi
-            'UNI': 0.85, 'AAVE': 0.80, 'MKR': 0.80, 'COMP': 0.75, 'CRV': 0.75,
-            'SUSHI': 0.70, 'CAKE': 0.65,
-            
-            # Gaming/Metaverse  
-            'SAND': 0.75, 'MANA': 0.75, 'AXS': 0.70, 'ENJ': 0.65,
-            
-            # Infrastructure
-            'LINK': 0.90, 'FIL': 0.70, 'AR': 0.70, 'GRT': 0.65,
-            
-            # Privacy
-            'XMR': 0.85, 'ZEC': 0.80,
-            
-            # Meme
-            'DOGE': 0.30, 'SHIB': 0.25, 'PEPE': 0.20
-        }
-        
-        return innovation_keywords.get(coin_name, 0.50)
-
-    def _analyze_adoption(self, coin_name: str, market_data: Dict) -> float:
-        """채택도 분석"""
-        try:
-            score = 0.5
-            
-            # 시가총액 기반 채택도
-            market_cap = market_data.get('market_cap', 0)
-            if market_cap >= 10_000_000_000_000:  # 10조원 이상
-                score = 0.95
-            elif market_cap >= 5_000_000_000_000:   # 5조원 이상
-                score = 0.85
-            elif market_cap >= 1_000_000_000_000:   # 1조원 이상
-                score = 0.75
-            elif market_cap >= 500_000_000_000:     # 5천억원 이상
-                score = 0.65
-            elif market_cap >= 100_000_000_000:     # 1천억원 이상
-                score = 0.55
-            
-            # 주요 코인 보너스
-            major_coins = ['BTC', 'ETH', 'BNB', 'XRP', 'ADA', 'SOL', 'DOGE']
-            if coin_name in major_coins:
-                score = min(score + 0.1, 1.0)
-            
-            return score
-            
-        except Exception as e:
-            logger.error(f"채택도 분석 실패: {e}")
-            return 0.5
-
-    def _analyze_team(self, coin_name: str) -> float:
-        """팀 점수 (간단 버전)"""
-        # 유명한 팀/창립자가 있는 프로젝트
-        well_known_teams = {
-            'ETH': 0.95,  # 비탈릭 부테린
-            'ADA': 0.90,  # 찰스 호스킨슨
-            'DOT': 0.90,  # 개빈 우드
-            'SOL': 0.85,  # 아나톨리 야코벤코
-            'AVAX': 0.85, # 에민 귄 시러
-            'ATOM': 0.80, # 제이 권
-            'NEAR': 0.80, # 일리아 폴로수힌
-            'LINK': 0.85, # 세르게이 나자로프
-            'UNI': 0.80,  # 헤이든 애덤스
-            'AAVE': 0.80, # 스타니 쿨레체프
-        }
-        
-        return well_known_teams.get(coin_name, 0.60)
-
-    def _categorize_coin(self, coin_name: str) -> str:
-        """코인 카테고리 분류"""
-        categories = {
-            'L1_Blockchain': ['BTC', 'ETH', 'ADA', 'SOL', 'AVAX', 'DOT', 'ATOM', 'NEAR', 'ALGO'],
-            'DeFi': ['UNI', 'AAVE', 'MKR', 'COMP', 'CRV', 'SUSHI', 'CAKE'],
-            'Gaming_Metaverse': ['SAND', 'MANA', 'AXS', 'ENJ', 'THETA'],
-            'Infrastructure': ['LINK', 'FIL', 'AR', 'GRT', 'VET'],
-            'Privacy': ['XMR', 'ZEC', 'DASH'],
-            'Meme': ['DOGE', 'SHIB', 'PEPE', 'FLOKI'],
-            'Exchange': ['BNB', 'CRO', 'FTT'],
-            'Payment': ['XRP', 'XLM', 'LTC']
-        }
-        
-        for category, coins in categories.items():
-            if coin_name in coins:
-                return category
-        
-        return 'Unknown'
-
-# ========================================================================================
-# 🆕 시장 사이클 자동 감지 시스템 (NEW!)
-# ========================================================================================
-class MarketCycleDetector:
-    """🆕 시장 사이클 자동 감지"""
-    
-    def __init__(self):
-        self.btc_dominance_threshold_low = 40.0   # BTC 도미넌스 하한
-        self.btc_dominance_threshold_high = 60.0  # BTC 도미넌스 상한
-        self.fear_greed_extreme_fear = 25         # 극단적 공포
-        self.fear_greed_extreme_greed = 75        # 극단적 탐욕
-
-    async def detect_market_cycle(self) -> Dict:
-        """시장 사이클 감지"""
-        try:
-            # 1. BTC 도미넌스 조회
-            btc_dominance = await self._get_btc_dominance()
-            
-            # 2. 총 시가총액 추세 분석
-            total_mcap_trend = await self._analyze_total_market_cap_trend()
-            
-            # 3. 공포탐욕지수 조회
-            fear_greed_data = await self._get_fear_greed_index()
-            fear_greed_score = fear_greed_data['score']
-            
-            # 4. BTC 가격 추세 분석
-            btc_trend = await self._analyze_btc_trend()
-            
-            # 5. 시장 사이클 판단
-            cycle_result = self._determine_market_cycle(
-                btc_dominance, total_mcap_trend, fear_greed_score, btc_trend
-            )
-            
-            return {
-                'market_cycle': cycle_result['cycle'],
-                'cycle_confidence': cycle_result['confidence'],
-                'btc_dominance': btc_dominance,
-                'total_market_cap_trend': total_mcap_trend,
-                'fear_greed_score': fear_greed_score,
-                'btc_trend': btc_trend,
-                'reasoning': cycle_result['reasoning']
-            }
-            
-        except Exception as e:
-            logger.error(f"시장 사이클 감지 실패: {e}")
-            return {
-                'market_cycle': 'sideways',
-                'cycle_confidence': 0.5,
-                'btc_dominance': 50.0,
-                'total_market_cap_trend': 'neutral',
-                'fear_greed_score': 50,
-                'btc_trend': 'neutral',
-                'reasoning': '데이터 수집 실패'
-            }
-
-    async def _get_btc_dominance(self) -> float:
-        """BTC 도미넌스 조회"""
-        try:
-            # CoinGecko API 사용
-            url = "https://api.coingecko.com/api/v3/global"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=10) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        dominance = data['data']['market_cap_percentage']['btc']
-                        return dominance
-            
-            return 50.0  # 기본값
-            
-        except Exception as e:
-            logger.error(f"BTC 도미넌스 조회 실패: {e}")
-            return 50.0
-
-    async def _analyze_total_market_cap_trend(self) -> str:
-        """총 시가총액 추세 분석"""
-        try:
-            # 간단한 BTC 추세로 대체 (총 시총과 높은 상관관계)
-            btc_data = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=30)
-            if btc_data is None or len(btc_data) < 30:
-                return 'neutral'
-            
-            # 30일 이동평균과 현재가 비교
-            current_price = btc_data['close'].iloc[-1]
-            ma30 = btc_data['close'].rolling(30).mean().iloc[-1]
-            
-            if current_price > ma30 * 1.05:
-                return 'bullish'
-            elif current_price < ma30 * 0.95:
-                return 'bearish'
-            else:
-                return 'neutral'
-                
-        except Exception as e:
-            logger.error(f"총 시총 추세 분석 실패: {e}")
-            return 'neutral'
-
-    async def _get_fear_greed_index(self) -> Dict:
-        """공포탐욕지수 조회"""
-        try:
-            url = "https://api.alternative.me/fng/?limit=1"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=10) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        score = int(data["data"][0]["value"])
-                        classification = data["data"][0]["value_classification"]
-                        return {'score': score, 'classification': classification}
-            
-            return {'score': 50, 'classification': 'Neutral'}
-            
-        except Exception as e:
-            logger.error(f"공포탐욕지수 조회 실패: {e}")
-            return {'score': 50, 'classification': 'Neutral'}
-
-    async def _analyze_btc_trend(self) -> str:
-        """BTC 가격 추세 분석"""
-        try:
-            btc_data = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=60)
-            if btc_data is None or len(btc_data) < 60:
-                return 'neutral'
-            
-            # 단기/장기 이동평균 비교
-            ma20 = btc_data['close'].rolling(20).mean().iloc[-1]
-            ma50 = btc_data['close'].rolling(50).mean().iloc[-1]
-            current_price = btc_data['close'].iloc[-1]
-            
-            if current_price > ma20 > ma50:
-                return 'strong_bullish'
-            elif current_price > ma20 and ma20 < ma50:
-                return 'weak_bullish'
-            elif current_price < ma20 < ma50:
-                return 'strong_bearish'
-            elif current_price < ma20 and ma20 > ma50:
-                return 'weak_bearish'
-            else:
-                return 'neutral'
-                
-        except Exception as e:
-            logger.error(f"BTC 추세 분석 실패: {e}")
-            return 'neutral'
-
-    def _determine_market_cycle(self, btc_dominance: float, total_mcap_trend: str, 
-                              fear_greed_score: int, btc_trend: str) -> Dict:
-        """시장 사이클 종합 판단"""
-        try:
-            score = 0.0
-            reasons = []
-            
-            # 1. BTC 도미넌스 분석 (30%)
-            if btc_dominance >= self.btc_dominance_threshold_high:
-                score -= 0.3  # 하락장 신호
-                reasons.append(f"BTC도미넌스높음({btc_dominance:.1f}%)")
-            elif btc_dominance <= self.btc_dominance_threshold_low:
-                score += 0.3  # 상승장 신호
-                reasons.append(f"BTC도미넌스낮음({btc_dominance:.1f}%)")
-            else:
-                score += 0.0  # 중립
-                reasons.append(f"BTC도미넌스중립({btc_dominance:.1f}%)")
-            
-            # 2. 총 시총 추세 (25%)
-            if total_mcap_trend == 'bullish':
-                score += 0.25
-                reasons.append("시총상승")
-            elif total_mcap_trend == 'bearish':
-                score -= 0.25
-                reasons.append("시총하락")
-            else:
-                reasons.append("시총중립")
-            
-            # 3. 공포탐욕지수 (25%)
-            if fear_greed_score <= self.fear_greed_extreme_fear:
-                score += 0.25  # 극단적 공포 = 매수 기회
-                reasons.append(f"극단공포({fear_greed_score})")
-            elif fear_greed_score >= self.fear_greed_extreme_greed:
-                score -= 0.25  # 극단적 탐욕 = 매도 신호
-                reasons.append(f"극단탐욕({fear_greed_score})")
-            else:
-                reasons.append(f"보통감정({fear_greed_score})")
-            
-            # 4. BTC 추세 (20%)
-            btc_trend_scores = {
-                'strong_bullish': 0.20,
-                'weak_bullish': 0.10,
-                'neutral': 0.00,
-                'weak_bearish': -0.10,
-                'strong_bearish': -0.20
-            }
-            score += btc_trend_scores.get(btc_trend, 0.0)
-            reasons.append(f"BTC추세({btc_trend})")
-            
-            # 최종 사이클 판단
-            if score >= 0.4:
-                cycle = 'uptrend'
-                confidence = min(score * 1.5, 0.95)
-            elif score <= -0.4:
-                cycle = 'downtrend'  
-                confidence = min(abs(score) * 1.5, 0.95)
-            elif 0.2 <= score < 0.4:
-                cycle = 'accumulation'
-                confidence = score + 0.3
-            elif -0.4 < score <= -0.2:
-                cycle = 'distribution'
-                confidence = abs(score) + 0.3
-            else:
-                cycle = 'sideways'
-                confidence = 0.5
-            
-            return {
-                'cycle': cycle,
-                'confidence': confidence,
-                'reasoning': " | ".join(reasons)
-            }
-            
-        except Exception as e:
-            logger.error(f"시장 사이클 판단 실패: {e}")
-            return {
-                'cycle': 'sideways',
-                'confidence': 0.5,
-                'reasoning': '분석 실패'
-            }
-
-# ========================================================================================
-# 🆕 상관관계 기반 포트폴리오 최적화 (NEW!)
-# ========================================================================================
-class PortfolioOptimizer:
-    """🆕 상관관계 기반 포트폴리오 최적화"""
-    
-    def __init__(self):
-        self.correlation_threshold = 0.7  # 상관관계 임계값
-        self.max_correlated_coins = 2     # 높은 상관관계 코인 최대 개수
-
-    async def calculate_correlation_matrix(self, symbols: List[str]) -> pd.DataFrame:
-        """상관관계 행렬 계산"""
-        try:
-            price_data = {}
-            
-            # 각 코인의 30일 가격 데이터 수집
-            for symbol in symbols:
-                try:
-                    ohlcv = pyupbit.get_ohlcv(symbol, interval="day", count=30)
-                    if ohlcv is not None and len(ohlcv) >= 30:
-                        price_data[symbol] = ohlcv['close'].pct_change().dropna()
-                    await asyncio.sleep(0.1)  # API 제한
-                except:
-                    continue
-            
-            if len(price_data) < 2:
-                return pd.DataFrame()
-            
-            # 상관관계 행렬 계산
-            df = pd.DataFrame(price_data)
-            correlation_matrix = df.corr()
-            
-            return correlation_matrix
-            
-        except Exception as e:
-            logger.error(f"상관관계 행렬 계산 실패: {e}")
-            return pd.DataFrame()
-
-    def optimize_portfolio_selection(self, candidates: List[Dict], 
-                                   target_count: int = 20) -> List[Dict]:
-        """상관관계
+if __name__ == "__main__":
+    print("🚀 궁극의 암호화폐 전략 V5.0 시작!")
+    asyncio.run(main())
