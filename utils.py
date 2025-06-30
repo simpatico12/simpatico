@@ -722,9 +722,9 @@ class Validator:
         # 기본적인 패턴 체크
         import re
         patterns = [
-            r'^[A-Z]{1,10},           # 미국 주식 (AAPL, MSFT 등)
-            r'^[0-9]{4}\.T,           # 일본 주식 (7203.T 등)
-            r'^[A-Z]{2,10}-[A-Z]{3,10} # 암호화폐 (BTC-KRW 등)
+            r'^[A-Z]{1,10}$',           # 미국 주식 (AAPL, MSFT 등)
+            r'^[0-9]{4}\.T$',           # 일본 주식 (7203.T 등)
+            r'^[A-Z]{2,10}-[A-Z]{3,10}$' # 암호화폐 (BTC-KRW 등)
         ]
         
         return any(re.match(pattern, symbol) for pattern in patterns)
