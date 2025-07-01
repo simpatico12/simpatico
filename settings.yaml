@@ -2,7 +2,7 @@
 # 🏆 최고퀸트프로젝트 - 통합 설정 파일 (Enhanced Edition)
 # =====================================
 # 
-# 파일 위치: ./configs/settings.yaml
+# 파일 위치: settings.yaml
 # 연동 파일: .env.example, .gitignore, requirements.txt
 # 
 # 이 파일은 다음과 완벽하게 연동됩니다:
