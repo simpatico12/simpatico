@@ -1,115 +1,374 @@
 # =====================================
-# 🏆 최고퀸트프로젝트 - Git 무시 파일
+# 🏆 최고퀸트프로젝트 - Git 무시 파일 (Enhanced)
 # =====================================
 # 
 # 퀀트 트레이딩 시스템용 완전체 .gitignore
-# 보안, 개인정보, 임시파일 등을 Git에서 제외
+# 보안, 개인정보, 임시파일, ML 모델, 클라우드 연동 등 모든 것을 커버
 #
 # Author: 최고퀸트팀
-# Version: 1.0.0
+# Version: 2.0.0 (Enhanced Edition)
 # Project: 최고퀸트프로젝트
+# Last Updated: 2025-07-01
 # =====================================
 
 # =====================================
-# 🔐 보안 및 API 키 (절대 커밋 금지!)
+# 🔐 최우선 보안 파일 (절대 커밋 금지!)
 # =====================================
+
+# 환경 변수 파일 (모든 변형)
 .env
-.env.local
-.env.production
-.env.staging
-.env.development
+.env.*
+.environment
+*.env
+env.*
 
-# API 키가 포함된 실제 설정 파일
+# API 키 및 시크릿 파일
+api_keys.*
+secrets.*
+credentials.*
+tokens.*
+keys.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# 브로커별 인증 파일
+ibkr_credentials.*
+upbit_keys.*
+binance_api.*
+alpaca_keys.*
+polygon_keys.*
+alpha_vantage_key.*
+quandl_api.*
+
+# 클라우드 서비스 인증
+aws_credentials.*
+gcp_service_account.*
+azure_credentials.*
+
+# SSH 키
+id_rsa*
+id_ed25519*
+*.ppk
+
+# PGP/GPG 키
+*.gpg
+*.asc
+secring.*
+
+# 인증서
+*.crt
+*.cer
+*.ca-bundle
+
+# 패스워드 파일
+passwords.*
+passwd.*
+*.pwd
+
+# =====================================
+# 📊 설정 파일 (개인정보 포함)
+# =====================================
+
+# 메인 설정 파일들
 configs/settings.yaml
 configs/production.yaml
+configs/staging.yaml
 configs/local.yaml
+configs/personal.yaml
+configs/private.yaml
 
-# 브로커 인증 파일
-**/api_keys.json
-**/credentials.json
-**/tokens.json
-ibkr_credentials.txt
-upbit_keys.txt
+# 브로커별 설정
+configs/brokers/
+configs/exchanges/
+broker_configs/
 
-# 개인 설정 파일
-personal_config.yaml
-user_settings.yaml
-my_*.yaml
+# 사용자별 설정
+user_settings.*
+personal_config.*
+my_config.*
+custom_settings.*
+
+# 전략 개인 설정
+strategy_configs/personal/
+my_strategies/
+private_strategies/
 
 # =====================================
-# 💰 거래 데이터 및 개인정보
+# 💰 거래 및 포트폴리오 데이터
 # =====================================
-# 거래 기록 (개인정보 포함)
+
+# 실제 거래 기록
 data/trades/
-data/portfolio/
-data/positions/
 data/orders/
-
-# 개인 성과 리포트
-reports/personal/
-reports/performance/
-reports/private/
-
-# 백테스트 결과 (개인 전략 포함)
-backtest_results/
-strategy_performance/
-personal_backtest/
+data/positions/
+data/portfolio/
+data/accounts/
+data/balances/
 
 # 개인 거래 히스토리
-trading_history.json
-my_trades.csv
-personal_trades.db
+trading_history.*
+trade_log.*
+order_history.*
+portfolio_history.*
+pnl_history.*
+
+# 거래 실행 로그
+execution_log.*
+fill_log.*
+slippage_log.*
+
+# 리스크 관리 데이터
+risk_metrics.*
+exposure_data.*
+var_calculations.*
+
+# 개인 성과 데이터
+performance_metrics.*
+sharpe_ratios.*
+returns_analysis.*
+
+# 세금 관련 데이터
+tax_reports/
+tax_calculations.*
+cost_basis.*
 
 # =====================================
-# 📊 데이터베이스 파일
+# 🧠 AI/ML 모델 및 데이터
 # =====================================
+
+# 훈련된 모델 파일
+models/
+*.pkl
+*.joblib
+*.h5
+*.pb
+*.onnx
+*.pt
+*.pth
+*.model
+*.bin
+
+# 모델 체크포인트
+checkpoints/
+*.ckpt
+model_checkpoints/
+
+# 텐서보드 로그
+runs/
+tensorboard_logs/
+tb_logs/
+
+# 특성 데이터
+features/
+feature_engineering/
+engineered_features/
+
+# 학습 데이터
+training_data/
+validation_data/
+test_data/
+ml_datasets/
+
+# 예측 결과
+predictions/
+forecasts/
+model_outputs/
+
+# 하이퍼파라미터 튜닝 결과
+hyperopt_results/
+optuna_studies/
+grid_search_results/
+
+# MLOps 관련
+mlflow_artifacts/
+wandb/
+.neptune/
+
+# =====================================
+# 📊 데이터베이스 및 캐시
+# =====================================
+
+# SQLite 데이터베이스
 *.db
 *.sqlite
 *.sqlite3
 *.db-journal
-
-# SQLite 임시 파일
 *.db-shm
 *.db-wal
 
+# 기타 데이터베이스 파일
+*.mdb
+*.accdb
+*.fdb
+
 # 데이터베이스 백업
+db_backups/
 database_backup/
-db_backup_*/
 *.sql.backup
+*.dump
+*.bak
+
+# 캐시 디렉토리
+cache/
+.cache/
+__pycache__/
+*.cache
+.pytest_cache/
+
+# Redis 덤프
+dump.rdb
+*.rdb
 
 # =====================================
-# 📝 로그 파일
+# 📈 금융 데이터 및 마켓 데이터
 # =====================================
-# 모든 로그 파일
+
+# 시장 데이터 캐시
+market_data/
+price_data/
+tick_data/
+ohlcv_data/
+level2_data/
+
+# 히스토리컬 데이터
+historical_data/
+historical_prices/
+historical_volumes/
+
+# 실시간 데이터 캐시
+realtime_cache/
+live_data/
+streaming_data/
+
+# 뉴스 및 센티멘트 데이터
+news_data/
+sentiment_data/
+social_data/
+reddit_data/
+twitter_data/
+
+# 경제 지표 데이터
+economic_data/
+fed_data/
+macro_data/
+
+# 대체 데이터
+alternative_data/
+satellite_data/
+web_scraping_data/
+
+# 벤더 데이터 (Bloomberg, Refinitiv 등)
+bloomberg_data/
+refinitiv_data/
+factset_data/
+
+# =====================================
+# 📊 백테스트 및 분석 결과
+# =====================================
+
+# 백테스트 결과
+backtest_results/
+backtesting/
+bt_results/
+strategy_performance/
+
+# 퍼포먼스 분석
+performance_analysis/
+attribution_analysis/
+risk_analysis/
+
+# 포트폴리오 최적화 결과
+optimization_results/
+efficient_frontier/
+portfolio_weights/
+
+# 시나리오 분석
+scenario_analysis/
+stress_testing/
+monte_carlo/
+
+# 팩터 분석
+factor_analysis/
+factor_loadings/
+factor_returns/
+
+# =====================================
+# 📝 로그 파일 (상세 분류)
+# =====================================
+
+# 일반 로그 디렉토리
 logs/
+log/
+
+# 로그 파일 패턴
 *.log
 *.log.*
-log_*/
+*.out
 
-# 특정 로그 패턴
+# 애플리케이션별 로그
 trading_*.log
-analysis_*.log
+execution_*.log
+strategy_*.log
+risk_*.log
+data_*.log
+api_*.log
+websocket_*.log
+
+# 에러 및 디버그 로그
 error_*.log
 debug_*.log
+trace_*.log
+crash_*.log
+
+# 성능 로그
+performance_*.log
+latency_*.log
+throughput_*.log
+
+# 시스템 로그
 system_*.log
+memory_*.log
+cpu_*.log
+network_*.log
 
-# 로그 백업
-logs_backup/
+# 감사 로그
+audit_*.log
+compliance_*.log
+surveillance_*.log
+
+# 로그 아카이브
+logs_archive/
 old_logs/
+archived_logs/
 
 # =====================================
-# 🐍 Python 관련
+# 🐍 Python 환경 (확장)
 # =====================================
-# Byte-compiled / optimized / DLL files
+
+# 표준 Python 파일들
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
 
-# Distribution / packaging
-.Python
+# 가상환경
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# 패키지 관리
+pip-log.txt
+pip-delete-this-directory.txt
+.pip_download_cache/
+
+# 설치 패키지
 build/
 develop-eggs/
 dist/
@@ -127,112 +386,94 @@ wheels/
 *.egg
 MANIFEST
 
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
+# 테스트 및 커버리지
+.coverage
+.coverage.*
 htmlcov/
 .tox/
 .nox/
-.coverage
-.coverage.*
-.cache
+.pytest_cache/
 nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
-.pytest_cache/
 
-# Translations
-*.mo
-*.pot
+# 프로파일링
+*.prof
+*.profile
+.prof/
 
-# Django stuff:
-local_settings.py
-db.sqlite3
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
+# 문서
 docs/_build/
-
-# PyBuilder
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# celery beat schedule file
-celerybeat-schedule
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
+.sphinx/
 
 # =====================================
-# 🖥️ IDE 및 에디터 설정
+# 📱 Jupyter 노트북 및 분석 도구
 # =====================================
+
+# Jupyter 체크포인트
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Jupyter 설정
+.jupyter/
+jupyter_config/
+
+# 노트북 백업
+*.ipynb.backup
+notebook_backups/
+
+# JupyterLab 워크스페이스
+.jupyterlab-settings/
+.jupyterlab-workspaces/
+
+# Google Colab
+*.ipynb.colab
+
+# Observable 노트북
+*.ojs
+
+# R 관련 (만약 R을 사용한다면)
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# =====================================
+# 🖥️ IDE 및 에디터 (확장)
+# =====================================
+
 # VSCode
 .vscode/
 *.code-workspace
+.history/
 
-# PyCharm
+# PyCharm / IntelliJ
 .idea/
 *.iml
 *.iws
 *.ipr
+.idea_modules/
 
 # Sublime Text
 *.sublime-project
 *.sublime-workspace
+.sublime-settings
+
+# Atom
+.atom/
+
+# Eclipse
+.project
+.pydevproject
+.settings/
+.metadata/
 
 # Vim
 *.swp
 *.swo
 *~
+.vim/
 
 # Emacs
 *~
@@ -244,17 +485,402 @@ auto-save-list
 tramp
 .\#*
 
-# Eclipse
-.project
-.pydevproject
-.settings/
-
-# Atom
-.atom/
+# Spyder
+.spyderproject
+.spyproject
 
 # =====================================
-# 🖥️ 운영체제 파일
+# 🌐 웹 및 프론트엔드 (확장 대비)
 # =====================================
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+
+# Next.js
+.next/
+out/
+
+# React
+build/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vue.js
+dist/
+.nuxt/
+
+# Angular
+dist/
+.angular/
+
+# 정적 파일
+static/uploaded/
+media/uploads/
+
+# 웹 캐시
+.webassets-cache/
+
+# =====================================
+# 🐳 컨테이너 및 오케스트레이션
+# =====================================
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+docker-compose.local.yml
+.docker/
+
+# Kubernetes
+*.k8s.yaml
+k8s-secrets.yaml
+kustomization.yaml
+
+# Helm
+charts/*/charts/
+charts/*/requirements.lock
+
+# =====================================
+# ☁️ 클라우드 서비스
+# =====================================
+
+# AWS
+.aws/
+aws_credentials
+.elasticbeanstalk/
+
+# Google Cloud
+.gcp/
+gcp_credentials.json
+service_account.json
+
+# Azure
+.azure/
+azure_credentials
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Pulumi
+Pulumi.*.yaml
+.pulumi/
+
+# =====================================
+# 📊 데이터 과학 도구
+# =====================================
+
+# Dask
+dask-worker-space/
+
+# Ray
+ray_results/
+.ray/
+
+# Apache Spark
+metastore_db/
+spark-warehouse/
+
+# MLflow
+mlruns/
+mlflow_artifacts/
+
+# Weights & Biases
+wandb/
+
+# DVC (Data Version Control)
+.dvc/
+.dvcignore
+
+# =====================================
+# 🔄 백업 및 동기화
+# =====================================
+
+# 백업 파일
+*.backup
+*.bak
+*.orig
+*.save
+*~
+
+# 자동 백업
+auto_backup/
+daily_backup/
+weekly_backup/
+monthly_backup/
+
+# 클라우드 동기화
+.dropbox
+.dropbox.attr
+.sync/
+.syncthing/
+.google-drive/
+
+# 버전 관리 백업
+.git.bak/
+
+# =====================================
+# 📱 모바일 앱 (향후 확장)
+# =====================================
+
+# React Native
+.expo/
+.expo-shared/
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# =====================================
+# 🎯 특수 퀀트 파일들 (확장)
+# =====================================
+
+# 실험적 전략
+experimental_strategies/
+alpha_strategies/
+research_strategies/
+draft_strategies/
+
+# 개인 연구
+research_notes/
+strategy_ideas/
+market_insights/
+alpha_research/
+
+# 프로프라이어터리 코드
+proprietary/
+confidential/
+internal/
+
+# 라이브 트레이딩 전용
+live_trading/
+production_strategies/
+hot_strategies/
+
+# 페이퍼 트레이딩 결과
+paper_trading_results/
+simulation_results/
+
+# 고객 데이터 (만약 있다면)
+client_data/
+customer_portfolios/
+managed_accounts/
+
+# =====================================
+# 🔍 모니터링 및 관찰성
+# =====================================
+
+# 메트릭 데이터
+metrics/
+prometheus_data/
+grafana_data/
+
+# 트레이싱
+jaeger_traces/
+zipkin_traces/
+
+# APM 도구
+newrelic_agent.log
+elastic_apm/
+
+# 시스템 모니터링
+system_metrics/
+performance_data/
+health_checks/
+
+# =====================================
+# 🧪 테스트 및 QA
+# =====================================
+
+# 테스트 결과
+test_results/
+test_reports/
+junit_reports/
+
+# 커버리지 리포트
+coverage_reports/
+.coverage.*
+
+# 성능 테스트
+load_test_results/
+stress_test_results/
+benchmark_results/
+
+# E2E 테스트 데이터
+e2e_test_data/
+integration_test_data/
+
+# 테스트 환경 데이터
+test_databases/
+test_configs/
+
+# =====================================
+# 🔒 보안 및 컴플라이언스
+# =====================================
+
+# 보안 스캔 결과
+security_reports/
+vulnerability_scans/
+*.security
+
+# 컴플라이언스 데이터
+compliance_reports/
+audit_logs/
+regulatory_data/
+
+# 펜테스트 결과
+pentest_results/
+
+# =====================================
+# 🌍 다국가 및 지역화
+# =====================================
+
+# 번역 파일 (동적 생성)
+*.mo
+*.pot
+locale/*/LC_MESSAGES/django.po
+
+# 지역별 설정
+configs/us/
+configs/eu/
+configs/asia/
+
+# =====================================
+# 📊 리포팅 및 문서
+# =====================================
+
+# 자동 생성 리포트
+auto_reports/
+generated_reports/
+daily_reports/
+weekly_reports/
+monthly_reports/
+
+# 고객 리포트
+client_reports/
+investor_reports/
+
+# 임시 문서
+temp_docs/
+draft_docs/
+
+# PDF 생성 임시 파일
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.toc
+
+# =====================================
+# 🔄 CI/CD 및 배포
+# =====================================
+
+# GitHub Actions 비밀
+.github/workflows/secrets/
+
+# Jenkins
+.jenkins/
+
+# GitLab CI
+.gitlab-ci-cache/
+
+# 배포 스크립트 (민감한 정보 포함 가능)
+deploy/production/
+deploy/secrets/
+production_deploy.*
+
+# 환경별 배포 설정
+deploy_configs/
+
+# =====================================
+# 🎮 게임화 및 시뮬레이션
+# =====================================
+
+# 트레이딩 게임 데이터
+game_data/
+leaderboards/
+achievements/
+
+# 시뮬레이션 결과
+simulation_runs/
+monte_carlo_runs/
+
+# =====================================
+# 🤖 자동화 및 스크립팅
+# =====================================
+
+# 자동화 스크립트 로그
+automation_logs/
+cron_logs/
+scheduler_logs/
+
+# 임시 스크립트
+temp_scripts/
+quick_scripts/
+one_off_scripts/
+
+# =====================================
+# 📱 알림 및 커뮤니케이션
+# =====================================
+
+# 알림 히스토리
+notification_history/
+alert_logs/
+telegram_cache/
+slack_cache/
+discord_cache/
+
+# 이메일 템플릿 캐시
+email_cache/
+
+# =====================================
+# 🔧 시스템 및 하드웨어
+# =====================================
+
+# 시스템 파일
+*.pid
+*.lock
+*.sock
+
+# 하드웨어 로그
+hardware_logs/
+gpu_logs/
+
+# 네트워크 캐시
+network_cache/
+dns_cache/
+
+# =====================================
+# 🎨 에셋 및 미디어
+# =====================================
+
+# 이미지 캐시
+image_cache/
+chart_cache/
+
+# 동영상 파일 (대용량)
+*.mp4
+*.avi
+*.mkv
+
+# 오디오 파일
+*.mp3
+*.wav
+
+# =====================================
+# 📋 운영체제 파일 (확장)
+# =====================================
+
 # Windows
 Thumbs.db
 ehthumbs.db
@@ -266,12 +892,14 @@ $RECYCLE.BIN/
 *.msm
 *.msp
 *.lnk
+hiberfil.sys
+pagefile.sys
 
 # macOS
-.DS_Store
+.DS_Store*
 .AppleDouble
 .LSOverride
-Icon
+Icon?
 ._*
 .DocumentRevisions-V100
 .fseventsd
@@ -294,259 +922,240 @@ Temporary Items
 .nfs*
 
 # =====================================
-# 📁 임시 파일 및 캐시
+# 🔗 심볼릭 링크 및 단축키
 # =====================================
-# 임시 파일
-tmp/
-temp/
-*.tmp
-*.temp
-*.bak
-*.backup
-*.orig
-*.save
 
-# 캐시 파일
-cache/
-.cache/
-*.cache
-
-# 압축 파일 (개발용)
-*.zip
-*.tar.gz
-*.rar
-*.7z
+# 심볼릭 링크 (내용이 아닌 링크 자체)
+*.lnk
+*.url
+*.webloc
 
 # =====================================
-# 📈 금융 데이터 캐시
+# 🎯 프로젝트별 임시 파일 (확장)
 # =====================================
-# yfinance 캐시
-.yfinance_cache/
 
-# 가격 데이터 캐시
-price_data_cache/
-market_data_cache/
-historical_data/
-
-# 뉴스 데이터 캐시
-news_cache/
-sentiment_cache/
-
-# =====================================
-# 🔧 설정 및 빌드 파일
-# =====================================
-# Node.js (웹 인터페이스가 있는 경우)
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# 빌드 산출물
-build/
-dist/
-out/
-
-# =====================================
-# 📊 데이터 파일 (크기가 큰 것들)
-# =====================================
-# 대용량 CSV 파일
-large_data/
-historical_prices/
-*.csv.gz
-*.csv.zip
-
-# 백업 데이터
-data_backup/
-backup_*/
-
-# 임시 분석 파일
-analysis_temp/
-temp_analysis/
-
-# =====================================
-# 🧪 테스트 관련
-# =====================================
-# 테스트 결과
-test_results/
-test_reports/
-.coverage
-htmlcov/
-
-# 성능 테스트 결과
-benchmark_results/
-performance_tests/
-
-# =====================================
-# 📱 알림 및 모니터링
-# =====================================
-# 알림 히스토리 (개인정보 포함)
-notification_history/
-alert_logs/
-telegram_logs/
-
-# 모니터링 데이터
-monitoring_data/
-system_metrics/
-
-# =====================================
-# 🔄 백업 및 아카이브
-# =====================================
-# 자동 백업
-auto_backup/
-daily_backup/
-weekly_backup/
-
-# 아카이브 파일
-archive/
-archived_*/
-old_versions/
-
-# =====================================
-# 📋 문서 관련 (자동 생성)
-# =====================================
-# 자동 생성된 문서
-docs/auto_generated/
-api_docs/
-generated_reports/
-
-# LaTeX 임시 파일
-*.aux
-*.bbl
-*.blg
-*.fdb_latexmk
-*.fls
-*.toc
-
-# =====================================
-# 🌐 웹 관련 (향후 확장)
-# =====================================
-# 정적 파일
-static/uploads/
-media/
-
-# 세션 파일
-sessions/
-
-# =====================================
-# 📊 Jupyter 노트북 체크포인트
-# =====================================
-.ipynb_checkpoints/
-*/.ipynb_checkpoints/*
-
-# =====================================
-# 🔍 기타 개발 도구
-# =====================================
-# Profiling 결과
-*.prof
-*.profile
-
-# Memory profiling
-*.mprof
-
-# Linting 결과
-.pylint.d/
-
-# =====================================
-# 🚀 배포 관련
-# =====================================
-# Docker
-.dockerignore
-docker-compose.override.yml
-
-# Kubernetes
-*.k8s.yaml
-k8s-secrets.yaml
-
-# 배포 스크립트 (개인정보 포함 가능)
-deploy_personal.sh
-production_deploy.sh
-
-# =====================================
-# 📝 개인 메모 및 문서
-# =====================================
-# 개인 메모
-NOTES.md
-TODO.md
-personal_notes/
-my_strategy_ideas/
-
-# 개인 연구 자료
-research/
-strategy_research/
-market_analysis/
-
-# =====================================
-# 🔒 보안 스캔 결과
-# =====================================
-# 보안 스캔 리포트
-security_scan/
-vulnerability_report/
-*.security
-
-# =====================================
-# 📈 특수 퀀트 파일들
-# =====================================
-# 전략 백테스트 개인 결과
-my_backtest_*/
-personal_strategy_*/
-private_analysis/
-
-# 개인 투자 기록
-investment_diary/
-trade_journal/
-personal_performance/
-
-# 실험적 전략 (공개 전)
-experimental_strategies/
-beta_strategies/
-research_strategies/
-
-# =====================================
-# 🎯 프로젝트별 임시 파일
-# =====================================
-# 임시 실험 파일
-experiment_*/
-test_*.py.backup
-quick_test_*/
-
-# 개발 중인 피처
+# 개발 중인 기능
 feature_*/
 wip_*/
-draft_*/
+experimental_*/
+prototype_*/
+
+# 버전별 임시 파일
+v1_backup/
+v2_draft/
+legacy_*/
+
+# 브랜치별 임시 데이터
+branch_data_*/
 
 # =====================================
-# 📊 성능 모니터링
+# 🏷️ 태깅 및 메타데이터
 # =====================================
-# 성능 로그
-performance_*.log
-memory_usage.log
-cpu_usage.log
 
-# 시스템 상태 로그
-system_status/
-health_check_logs/
+# Git 태그 백업
+.git_tags_backup
 
-# =====================================
-# 🔄 동기화 제외
-# =====================================
-# 클라우드 동기화 임시 파일
-*.tmp.sync
-.sync/
-.syncthing/
-
-# Dropbox
-.dropbox
-.dropbox.attr
-
-# Google Drive
-.google-drive/
+# 메타데이터 캐시
+.metadata/
+metadata_cache/
 
 # =====================================
-# 🏁 프로젝트 완료 마크
+# 🌐 네트워크 및 프록시
 # =====================================
-# 이 .gitignore는 최고퀸트프로젝트의 
-# 모든 민감한 정보와 임시 파일을 보호합니다.
-# 
-# 💡 TIP: 새로운 민감한 파일이 생기면
-# 이 파일에 추가하는 것을 잊지 마세요!
+
+# 프록시 설정 (민감할 수 있음)
+proxy_configs/
+
+# VPN 설정
+vpn_configs/
+
+# SSL 인증서 (개인)
+*.p12
+*.pfx
+private_certs/
+
+# =====================================
+# 🎪 엔터테인먼트 및 데모
+# =====================================
+
+# 데모 데이터
+demo_data/
+sample_data/
+mock_data/
+
+# 프레젠테이션 임시 파일
+presentation_cache/
+
+# =====================================
+# 🚀 성능 최적화
+# =====================================
+
+# 프로파일링 결과
+profiling_results/
+*.pstats
+
+# 메모리 덤프
+*.hprof
+*.dump
+
+# =====================================
+# 📚 라이브러리 및 의존성
+# =====================================
+
+# 로컬 라이브러리
+lib/
+libs/
+vendor/
+
+# 패치된 라이브러리
+patched_libs/
+
+# =====================================
+# 🔍 검색 인덱스
+# =====================================
+
+# Elasticsearch
+elasticsearch_data/
+
+# Solr
+solr_data/
+
+# 검색 인덱스
+search_index/
+
+# =====================================
+# 📡 IoT 및 센서 데이터 (향후 확장)
+# =====================================
+
+# IoT 디바이스 데이터
+iot_data/
+sensor_data/
+device_logs/
+
+# =====================================
+# 🎭 A/B 테스트 및 실험
+# =====================================
+
+# 실험 결과
+experiments/
+ab_test_results/
+multivariate_tests/
+
+# =====================================
+# 🔮 예측 및 예보
+# =====================================
+
+# 예측 모델 출력
+forecasts/
+predictions/
+scenarios/
+
+# =====================================
+# 💎 고급 퀀트 특화 파일들
+# =====================================
+
+# 고주파 거래 데이터
+hft_data/
+tick_by_tick/
+nanosecond_data/
+
+# 다크풀 데이터
+darkpool_data/
+
+# 옵션 체인 데이터
+options_chains/
+greeks_data/
+
+# 채권 데이터
+bond_data/
+yield_curves/
+
+# 선물 데이터
+futures_data/
+contango_data/
+
+# 스왑 데이터
+swap_curves/
+irs_data/
+
+# 크레딧 데이터
+credit_spreads/
+cds_data/
+
+# 볼라틸리티 데이터
+vol_surfaces/
+implied_vol/
+
+# =====================================
+# 🏁 완료 및 유지보수
+# =====================================
+
+# 유지보수 파일
+maintenance_logs/
+cleanup_logs/
+
+# 마이그레이션 데이터
+migration_backup/
+schema_backup/
+
+# =====================================
+# 🎯 커스텀 패턴 (프로젝트 특화)
+# =====================================
+
+# 회사/팀 특화 패턴을 여기에 추가하세요
+# 예시:
+# company_specific_data/
+# team_configs/
+# custom_indicators/
+
+# =====================================
+# 📖 사용 가이드
+# =====================================
+
+# 이 .gitignore 파일은 다음과 같이 사용하세요:
+#
+# 1. 새 프로젝트에서:
+#    - 이 파일을 .gitignore로 복사
+#    - 프로젝트에 특화된 패턴 추가
+#
+# 2. 기존 프로젝트에서:
+#    - 현재 .gitignore와 병합
+#    - 이미 커밋된 민감한 파일들은 별도 제거 필요
+#
+# 3. 팀 작업 시:
+#    - 팀 전체가 동일한 .gitignore 사용
+#    - 새로운 패턴은 팀과 상의 후 추가
+#
+# ⚠️ 중요 주의사항:
+# - 이미 Git에 추가된 파일은 .gitignore가 적용되지 않습니다
+# - git rm --cached <파일명> 으로 기존 파일 제거 필요
+# - 민감한 데이터가 이미 푸시되었다면 히스토리 정리 필요
+#
+# 🔧 유용한 Git 명령어:
+# - git check-ignore -v <파일명>  # 무시 규칙 확인
+# - git clean -fX                 # 무시된 파일들 삭제
+# - git status --ignored          # 무시된 파일들 보기
+#
+# 🛡️ 보안 검토:
+# - 정기적으로 .gitignore 패턴 검토
+# - 새로운 보안 위험 요소 추가
+# - 팀 전체의 보안 인식 교육
+
+# =====================================
+# ✅ 최종 체크리스트
+# =====================================
+
+# □ 모든 API 키 패턴이 포함되었는가?
+# □ 개인정보 관련 파일들이 모두 제외되었는가?
+# □ 대용량 데이터 파일들이 제외되었는가?
+# □ 임시 파일들이 모두 포함되었는가?
+# □ IDE별 설정 파일들이 제외되었는가?
+# □ 운영체제별 파일들이 제외되었는가?
+# □ 백업 파일들이 제외되었는가?
+# □ 로그 파일들이 제외되었는가?
+# □ 테스트 결과 파일들이 제외되었는가?
+# □ 빌드 산출물들이 제외되었는가?
+
+# =====================================
+# 🎉 최고퀸트프로젝트 - 보안 완료!
 # =====================================
