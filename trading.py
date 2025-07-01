@@ -1328,16 +1328,4 @@ if __name__ == "__main__":
     asyncio.run(test_trading_system())
     
     print("\n🚀 통합 엔진 호환 매매 시스템 준비 완료!")
-    print("💡 통합 엔진(main_engine.py)에서 다음 함수들 사용:")
-    print("   - execute_trade_signal(signal)")
-    print("   - get_portfolio_summary()")  
-    print("   - get_trading_stats()")
-    print("   - cleanup_trading_system()")
-    print("\n⚙️ 설정:")
-    print("   📋 settings.yaml에서 trading, api 섹션 설정")
-    print("   🏦 IBKR: TWS/Gateway 실행 + ib_insync 설치")
-    print("   🪙 업비트: API 키 설정 + PyJWT 설치")
-    print("   🛡️ 모의거래 모드로 안전하게 테스트 가능")
-    
-    print("\n🎉 최고퀸트프로젝트 통합 매매 시스템 완성!")
-    print("📈 Happy Trading! 안전하고 수익성 있는 투자 되세요! 💰")
+    print("💡 통합 엔진(main_engine.py)
