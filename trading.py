@@ -64,6 +64,12 @@ except ImportError as e:
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 @dataclass
 class UnifiedTradingSignal:
@@ -77,87 +83,11 @@ class UnifiedTradingSignal:
     reasoning: str
     target_price: float
     timestamp: datetime
-    sector: Optional[str] = None
-    
-    # 통합 점수 정보
-    total_score: float = 0.0
-    selection_score: float = 0.0
-    
-    # 분할매매 정보 (통합)
-    position_size: Optional[float] = None  # 실제 매매용 포지션 크기
-    total_investment: Optional[float] = None  # 총 투자금액
-    split_stages: Optional[int] = None  # 분할 단계 수
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
-    max_hold_days: Optional[int] = None
-    
-    additional_data: Optional[Dict] = None
-
-@dataclass
-class TradeOrder:
-    """거래 주문 정보"""
-    order_id: str
-    symbol: str
-    market: str
-    action: str  # 'buy', 'sell'
-    quantity: float
-    price: float
-    order_type: str  # 'market', 'limit'
-    status: str  # 'pending', 'filled', 'cancelled', 'failed'
-    broker: str  # 'ibkr', 'upbit'
-    created_at: datetime
-    filled_at: Optional[datetime] = None
-    filled_price: Optional[float] = None
-    filled_quantity: Optional[float] = None
-    error_message: Optional[str] = None
-
-@dataclass
-class Portfolio:
-    """포트폴리오 정보"""
-    broker: str
-    currency: str
-    cash_balance: float
-    total_value: float
-    positions: List[Dict]
-    last_updated: datetime
-
-class IBKRConnector:
-    """Interactive Brokers 연동"""
-    
-    def __init__(self, config: Dict):
-        self.config = config
-        self.ib = None
-        self.connected = False
-        
-        # IBKR 설정
-        self.ibkr_config = config.get('api', {}).get('ibkr', {})
-        self.paper_trading = self.ibkr_config.get('paper_trading', True)
-        self.tws_port = self.ibkr_config.get('tws_port', 7497 if self.paper_trading else 7496)
-        self.client_id = self.ibkr_config.get('client_id', 1)
-        
-        logger.info(f"🏦 IBKR 커넥터 초기화 (모의거래: {self.paper_trading})")
-    
-    async def connect(self) -> bool:
-        """IBKR TWS 연결"""
-        try:
-            if not IBKR_AVAILABLE:
-                logger.error("❌ IBKR 라이브러리 없음 (pip install ib_insync)")
-                return False
+    sector: Optional[str] =             # 일일 거래 한도 확인
+            if self.daily_trades >= self.max_daily_trades:
+                return False, f"일일 거래 한도 초과: {self.daily_trades}/{self.max_daily_trades}"
             
-            self.ib = IB()
-            
-            # TWS 연결 시도
-            await self.ib.connectAsync('127.0.0.1', self.tws_port, clientId=self.client_id)
-            self.connected = True
-            
-            logger.info(f"✅ IBKR 연결 성공 (포트: {self.tws_port})")
-            
-            # 계좌 정보 확인
-            accounts = self.ib.managedAccounts()
-            if accounts:
-                logger.info(f"📊 연결된 계좌: {accounts}")
-            
-            return True
+            return True, "검증 통과"
             
         except Exception as e:
             logger.error(f"❌ 신호 검증 실패: {e}")
@@ -779,7 +709,92 @@ if __name__ == "__main__":
     print("   🏦 IBKR: TWS/Gateway 실행 + ib_insync 설치")
     print("   🪙 업비트: API 키 설정 + PyJWT 설치")
     print("   🛡️ 모의거래 모드로 안전하게 테스트 가능")
-    print("   🤝 UnifiedTradingSignal 완벽 호환")"❌ IBKR 연결 실패: {e}")
+    
+    print("\n🎉 최고퀸트프로젝트 통합 매매 시스템 완성!")
+    print("📈 Happy Trading! 안전하고 수익성 있는 투자 되세요! 💰")
+    
+    # 통합 점수 정보
+    total_score: float = 0.0
+    selection_score: float = 0.0
+    
+    # 분할매매 정보 (통합)
+    position_size: Optional[float] = None  # 실제 매매용 포지션 크기
+    total_investment: Optional[float] = None  # 총 투자금액
+    split_stages: Optional[int] = None  # 분할 단계 수
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
+    max_hold_days: Optional[int] = None
+    
+    additional_data: Optional[Dict] = None
+
+@dataclass
+class TradeOrder:
+    """거래 주문 정보"""
+    order_id: str
+    symbol: str
+    market: str
+    action: str  # 'buy', 'sell'
+    quantity: float
+    price: float
+    order_type: str  # 'market', 'limit'
+    status: str  # 'pending', 'filled', 'cancelled', 'failed'
+    broker: str  # 'ibkr', 'upbit'
+    created_at: datetime
+    filled_at: Optional[datetime] = None
+    filled_price: Optional[float] = None
+    filled_quantity: Optional[float] = None
+    error_message: Optional[str] = None
+
+@dataclass
+class Portfolio:
+    """포트폴리오 정보"""
+    broker: str
+    currency: str
+    cash_balance: float
+    total_value: float
+    positions: List[Dict]
+    last_updated: datetime
+
+class IBKRConnector:
+    """Interactive Brokers 연동"""
+    
+    def __init__(self, config: Dict):
+        self.config = config
+        self.ib = None
+        self.connected = False
+        
+        # IBKR 설정
+        self.ibkr_config = config.get('api', {}).get('ibkr', {})
+        self.paper_trading = self.ibkr_config.get('paper_trading', True)
+        self.tws_port = self.ibkr_config.get('tws_port', 7497 if self.paper_trading else 7496)
+        self.client_id = self.ibkr_config.get('client_id', 1)
+        
+        logger.info(f"🏦 IBKR 커넥터 초기화 (모의거래: {self.paper_trading})")
+    
+    async def connect(self) -> bool:
+        """IBKR TWS 연결"""
+        try:
+            if not IBKR_AVAILABLE:
+                logger.error("❌ IBKR 라이브러리 없음 (pip install ib_insync)")
+                return False
+            
+            self.ib = IB()
+            
+            # TWS 연결 시도
+            await self.ib.connectAsync('127.0.0.1', self.tws_port, clientId=self.client_id)
+            self.connected = True
+            
+            logger.info(f"✅ IBKR 연결 성공 (포트: {self.tws_port})")
+            
+            # 계좌 정보 확인
+            accounts = self.ib.managedAccounts()
+            if accounts:
+                logger.info(f"📊 연결된 계좌: {accounts}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ IBKR 연결 실패: {e}")
             self.connected = False
             return False
     
@@ -1275,6 +1290,8 @@ class TradingExecutor:
         
         logger.info("💰 최고퀸트프로젝트 매매 실행기 초기화 완료")
         logger.info(f"⚙️ 모의거래: {self.paper_trading}, 자동실행: {self.auto_execution}")
+        if UTILS_AVAILABLE:
+            print("   🤝 UnifiedTradingSignal 완벽 호환")
     
     def _load_config(self) -> Dict:
         """설정 파일 로드"""
@@ -1325,9 +1342,4 @@ class TradingExecutor:
             
             # 일일 거래 한도 확인
             if self.daily_trades >= self.max_daily_trades:
-                return False, f"일일 거래 한도 초과: {self.daily_trades}/{self.max_daily_trades}"
-            
-            return True, "검증 통과"
-            
-        except Exception as e:
-            logger.error(f
+                return False, f"일일 거래 한도 초과
