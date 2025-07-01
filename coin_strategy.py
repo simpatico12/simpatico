@@ -141,7 +141,7 @@ class UltimateCoinSignal:
     reasoning: str
     target_price: float
     timestamp: datetime
-    additional_data: Optional[Dict] = 
+    additional_data: Optional[Dict] = None
     # ========================================================================================
     # 🎯 메인 분석 메서드 (완전 업그레이드)
     # ========================================================================================
