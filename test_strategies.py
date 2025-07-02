@@ -36,45 +36,16 @@ import traceback
 from pathlib import Path
 import json
 
+# =====================================
+# 🎯 전역 변수 및 설정
+# =====================================
+
 # 테스트 결과 저장
 test_results = []
 performance_results = {}
 strategy_results = {}
 
-class Colors:
-    """터미널 컬러"""
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    PURPLE = '\033[95m'
-    CYAN = '\033[96m'
-    BOLD = '\033[1m'
-    END = '\033[0m'
-
-def log_test_result(test_name: str, success: bool, message: str = "", duration: float = 0.0):
-    """테스트 결과 기록"""
-    global test_results
-    result = {
-        'test_name': test_name,
-        'success': success,
-        'message': message,
-        'duration': duration,
-        'timestamp': datetime.now()
-    }
-    test_results.append(result)
-    
-    # 실시간 출력
-    status = f"{Colors.GREEN}✅ 성공{Colors.END}" if success else f"{Colors.RED}❌ 실패{Colors.END}"
-    duration_str = f"({duration:.2f}s)" if duration > 0 else ""
-    print(f"   {status} {duration_str}")
-    if message and not success:
-        print(f"     {Colors.YELLOW}└─ {message}{Colors.END}")
-
-# =====================================
-# 🎯 전략 파일 정보 정의
-# =====================================
-
+# 전략 파일 정보 정의
 STRATEGY_FILES = {
     'jp_strategy': {
         'file_path': 'strategies/jp_strategy.py',
@@ -113,6 +84,36 @@ STRATEGY_FILES = {
         'async_function': True
     }
 }
+
+class Colors:
+    """터미널 컬러"""
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    PURPLE = '\033[95m'
+    CYAN = '\033[96m'
+    BOLD = '\033[1m'
+    END = '\033[0m'
+
+def log_test_result(test_name: str, success: bool, message: str = "", duration: float = 0.0):
+    """테스트 결과 기록"""
+    global test_results
+    result = {
+        'test_name': test_name,
+        'success': success,
+        'message': message,
+        'duration': duration,
+        'timestamp': datetime.now()
+    }
+    test_results.append(result)
+    
+    # 실시간 출력
+    status = f"{Colors.GREEN}✅ 성공{Colors.END}" if success else f"{Colors.RED}❌ 실패{Colors.END}"
+    duration_str = f"({duration:.2f}s)" if duration > 0 else ""
+    print(f"   {status} {duration_str}")
+    if message and not success:
+        print(f"     {Colors.YELLOW}└─ {message}{Colors.END}")
 
 # =====================================
 # 📁 파일 기반 동적 로더
