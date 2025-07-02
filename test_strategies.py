@@ -29,7 +29,9 @@ import logging
 import sys
 import os
 import importlib
+import importlib.util
 import inspect
+import types
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Callable
 import traceback
@@ -143,7 +145,7 @@ class StrategyFileLoader:
         return None
     
     def load_strategy_module(self, strategy_name: str) -> Optional[Any]:
-        """전략 모듈 동적 로드"""
+        """전략 모듈 동적 로드 (호환성 개선)"""
         try:
             file_path = self.find_strategy_file(strategy_name)
             if not file_path:
@@ -152,24 +154,48 @@ class StrategyFileLoader:
             # 모듈 이름 생성
             module_name = f"dynamic_{strategy_name}_{int(time.time())}"
             
-            # 파일을 모듈로 로드
-            spec = importlib.util.spec_from_file_location(module_name, file_path)
-            if spec is None or spec.loader is None:
-                raise ImportError(f"{file_path} 스펙 생성 실패")
-            
-            module = importlib.util.module_from_spec(spec)
-            
-            # sys.modules에 추가 (순환 import 방지)
-            sys.modules[module_name] = module
-            
-            # 모듈 실행
-            spec.loader.exec_module(module)
-            
-            self.loaded_modules[strategy_name] = module
-            return module
+            # 방법 1: importlib.util 사용 시도
+            try:
+                if hasattr(importlib, 'util') and hasattr(importlib.util, 'spec_from_file_location'):
+                    spec = importlib.util.spec_from_file_location(module_name, file_path)
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        sys.modules[module_name] = module
+                        spec.loader.exec_module(module)
+                        self.loaded_modules[strategy_name] = module
+                        return module
+                raise ImportError("importlib.util 사용 불가")
+                
+            except (AttributeError, ImportError):
+                # 방법 2: 직접 파일 읽기 + exec 사용
+                print(f"   📝 {strategy_name}: 백업 로딩 방식 사용")
+                
+                # 파일 읽기
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    code = f.read()
+                
+                # 새 모듈 생성
+                module = types.ModuleType(module_name)
+                module.__file__ = file_path
+                module.__name__ = module_name
+                
+                # 기본 import들 추가
+                module.__builtins__ = __builtins__
+                
+                # 코드 실행
+                exec(code, module.__dict__)
+                
+                # 모듈 등록
+                sys.modules[module_name] = module
+                self.loaded_modules[strategy_name] = module
+                
+                return module
             
         except Exception as e:
             print(f"❌ {strategy_name} 모듈 로드 실패: {e}")
+            # 상세 에러 정보
+            print(f"   📁 파일 경로: {file_path if 'file_path' in locals() else 'N/A'}")
+            print(f"   🐍 Python 버전: {sys.version}")
             return None
     
     def get_strategy_function(self, strategy_name: str) -> Optional[Callable]:
