@@ -624,17 +624,16 @@ class QuantTradingEngine:
                     'daily_trades': self.daily_trades_count,
                     'shutdown_requested': self.shutdown_requested
                 }
-            } {
+             {
                     'uptime_hours': (datetime.now() - self.session_start_time).total_seconds() / 3600,
                     'daily_trades': self.daily_trades_count,
                     'shutdown_requested': self.shutdown_requested
                 }
-            } {
+             {
                     'uptime_hours': (datetime.now() - self.session_start_time).total_seconds() / 3600,
                     'daily_trades': self.daily_trades_count,
                     'shutdown_requested': self.shutdown_requested
                 }
-            }
 
     async def force_reselection_all_markets(self) -> Dict[str, List[str]]:
         """모든 시장 강제 재선별 (개선된 버전)"""
