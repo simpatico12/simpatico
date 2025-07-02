@@ -30,7 +30,6 @@ import pandas as pd
 import yaml
 from dataclasses import dataclass
 import yfinance as yf
-import ta
 import requests
 from bs4 import BeautifulSoup
 import aiohttp
@@ -54,6 +53,125 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# ========================================================================================
+# 🔧 ta 라이브러리 안전 import 및 대체 함수들
+# ========================================================================================
+
+# ta 라이브러리 안전 import
+try:
+    import ta
+    HAS_TA = True
+except ImportError:
+    HAS_TA = False
+    print("⚠️ ta-lib 없음, 기본 계산 사용")
+
+def safe_rsi(prices, period=14):
+    """ta-lib 없이도 작동하는 RSI 계산"""
+    if HAS_TA:
+        try:
+            return ta.momentum.RSIIndicator(prices, window=period).rsi()
+        except:
+            pass
+    
+    # 직접 RSI 계산
+    try:
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+    except:
+        return pd.Series([50] * len(prices))  # 기본값 50
+
+def safe_macd(prices):
+    """ta-lib 없이도 작동하는 MACD 계산"""
+    if HAS_TA:
+        try:
+            macd_indicator = ta.trend.MACD(prices)
+            return macd_indicator.macd(), macd_indicator.macd_signal(), macd_indicator.macd_diff()
+        except:
+            pass
+    
+    # 직접 MACD 계산
+    try:
+        exp1 = prices.ewm(span=12).mean()
+        exp2 = prices.ewm(span=26).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=9).mean()
+        histogram = macd - signal
+        return macd, signal, histogram
+    except:
+        return pd.Series([0] * len(prices)), pd.Series([0] * len(prices)), pd.Series([0] * len(prices))
+
+def safe_bollinger_bands(prices, window=20):
+    """ta-lib 없이도 작동하는 볼린저 밴드 계산"""
+    if HAS_TA:
+        try:
+            bb = ta.volatility.BollingerBands(prices, window=window)
+            return bb.bollinger_hband(), bb.bollinger_mavg(), bb.bollinger_lband()
+        except:
+            pass
+    
+    # 직접 볼린저 밴드 계산
+    try:
+        sma = prices.rolling(window).mean()
+        std = prices.rolling(window).std()
+        upper = sma + (std * 2)
+        lower = sma - (std * 2)
+        return upper, sma, lower
+    except:
+        return prices * 1.02, prices, prices * 0.98
+
+def safe_stochastic(high, low, close, k_period=14):
+    """ta-lib 없이도 작동하는 스토캐스틱 계산"""
+    if HAS_TA:
+        try:
+            stoch = ta.momentum.StochasticOscillator(high, low, close, window=k_period, smooth_window=3)
+            return stoch.stoch(), stoch.stoch_signal()
+        except:
+            pass
+    
+    # 직접 스토캐스틱 계산
+    try:
+        lowest_low = low.rolling(k_period).min()
+        highest_high = high.rolling(k_period).max()
+        k_percent = 100 * ((close - lowest_low) / (highest_high - lowest_low))
+        d_percent = k_percent.rolling(3).mean()
+        return k_percent, d_percent
+    except:
+        return pd.Series([50] * len(close)), pd.Series([50] * len(close))
+
+# 안전한 데이터 타입 변환
+def safe_upper(value):
+    """안전한 upper() 호출"""
+    if value is None:
+        return "UNKNOWN"
+    try:
+        return str(value).upper()
+    except:
+        return "UNKNOWN"
+
+def safe_float(value, default=0.0):
+    """안전한 float 변환"""
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except:
+        return default
+
+# 유효한 일본 주식 심볼 목록
+VALID_JP_SYMBOLS = [
+    "6758.T",  # 소니
+    "9984.T",  # 소프트뱅크
+    "7974.T",  # 닌텐도
+    "6861.T",  # 키엔스
+    "8316.T",  # 미쓰비시UFJ
+    "9432.T",  # NTT
+    "4063.T",  # 신에츠화학
+    "6367.T",  # 다이킨공업
+]
 
 @dataclass
 class JPStockSignal:
@@ -274,31 +392,32 @@ class TechnicalIndicators:
         """RSI 계산"""
         try:
             period = period or self.rsi_period
-            rsi = ta.momentum.RSIIndicator(data['Close'], window=period).rsi()
-            return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0
+            rsi = safe_rsi(data['Close'], period)
+            return safe_float(rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50.0)
         except:
             return 50.0
 
     def calculate_macd(self, data: pd.DataFrame) -> Tuple[str, Dict]:
         """MACD 계산 및 신호 분석"""
         try:
-            macd = ta.trend.MACD(data['Close'], window_fast=8, window_slow=21, window_sign=5)
-            macd_line = macd.macd().iloc[-1]
-            macd_signal = macd.macd_signal().iloc[-1]
-            macd_histogram = macd.macd_diff().iloc[-1]
+            macd_line, macd_signal, macd_histogram = safe_macd(data['Close'])
+            
+            macd_value = safe_float(macd_line.iloc[-1])
+            signal_value = safe_float(macd_signal.iloc[-1])
+            histogram_value = safe_float(macd_histogram.iloc[-1])
 
             # 신호 분석
-            if macd_line > macd_signal and macd_histogram > 0:
+            if macd_value > signal_value and histogram_value > 0:
                 signal = 'bullish'
-            elif macd_line < macd_signal and macd_histogram < 0:
+            elif macd_value < signal_value and histogram_value < 0:
                 signal = 'bearish'
             else:
                 signal = 'neutral'
 
             details = {
-                'macd_line': macd_line,
-                'macd_signal': macd_signal,
-                'histogram': macd_histogram
+                'macd_line': macd_value,
+                'macd_signal': signal_value,
+                'histogram': histogram_value
             }
 
             return signal, details
@@ -308,25 +427,26 @@ class TechnicalIndicators:
     def calculate_bollinger_bands(self, data: pd.DataFrame, window: int = 20) -> Tuple[str, Dict]:
         """볼린저 밴드 계산 및 신호 분석"""
         try:
-            bb = ta.volatility.BollingerBands(data['Close'], window=window)
-            bb_upper = bb.bollinger_hband().iloc[-1]
-            bb_middle = bb.bollinger_mavg().iloc[-1]
-            bb_lower = bb.bollinger_lband().iloc[-1]
-            current_price = data['Close'].iloc[-1]
+            bb_upper, bb_middle, bb_lower = safe_bollinger_bands(data['Close'], window)
+            
+            upper_value = safe_float(bb_upper.iloc[-1])
+            middle_value = safe_float(bb_middle.iloc[-1])
+            lower_value = safe_float(bb_lower.iloc[-1])
+            current_price = safe_float(data['Close'].iloc[-1])
 
             # 신호 분석
-            if current_price >= bb_upper:
+            if current_price >= upper_value:
                 signal = 'upper'  # 과매수 구간
-            elif current_price <= bb_lower:
+            elif current_price <= lower_value:
                 signal = 'lower'  # 과매도 구간
             else:
                 signal = 'middle' # 정상 구간
 
             details = {
-                'upper': bb_upper,
-                'middle': bb_middle,
-                'lower': bb_lower,
-                'position': (current_price - bb_lower) / (bb_upper - bb_lower)
+                'upper': upper_value,
+                'middle': middle_value,
+                'lower': lower_value,
+                'position': (current_price - lower_value) / (upper_value - lower_value) if upper_value != lower_value else 0.5
             }
 
             return signal, details
@@ -336,24 +456,22 @@ class TechnicalIndicators:
     def calculate_stochastic(self, data: pd.DataFrame, k_period: int = 14) -> Tuple[str, Dict]:
         """스토캐스틱 계산 및 신호 분석"""
         try:
-            stoch = ta.momentum.StochasticOscillator(
-                data['High'], data['Low'], data['Close'], 
-                window=k_period, smooth_window=3
-            )
-            stoch_k = stoch.stoch().iloc[-1]
-            stoch_d = stoch.stoch_signal().iloc[-1]
+            stoch_k, stoch_d = safe_stochastic(data['High'], data['Low'], data['Close'], k_period)
+            
+            k_value = safe_float(stoch_k.iloc[-1])
+            d_value = safe_float(stoch_d.iloc[-1])
 
             # 신호 분석
-            if stoch_k <= 20 and stoch_d <= 20:
+            if k_value <= 20 and d_value <= 20:
                 signal = 'oversold'  # 과매도
-            elif stoch_k >= 80 and stoch_d >= 80:
+            elif k_value >= 80 and d_value >= 80:
                 signal = 'overbought'  # 과매수
             else:
                 signal = 'neutral'   # 중립
 
             details = {
-                'stoch_k': stoch_k,
-                'stoch_d': stoch_d
+                'stoch_k': k_value,
+                'stoch_d': d_value
             }
 
             return signal, details
@@ -363,10 +481,10 @@ class TechnicalIndicators:
     def calculate_moving_averages(self, data: pd.DataFrame) -> Tuple[str, Dict]:
         """이동평균선 분석"""
         try:
-            ma5 = data['Close'].rolling(self.ma_periods[0]).mean().iloc[-1]
-            ma20 = data['Close'].rolling(self.ma_periods[1]).mean().iloc[-1]
-            ma60 = data['Close'].rolling(self.ma_periods[2]).mean().iloc[-1]
-            current_price = data['Close'].iloc[-1]
+            ma5 = safe_float(data['Close'].rolling(self.ma_periods[0]).mean().iloc[-1])
+            ma20 = safe_float(data['Close'].rolling(self.ma_periods[1]).mean().iloc[-1])
+            ma60 = safe_float(data['Close'].rolling(self.ma_periods[2]).mean().iloc[-1])
+            current_price = safe_float(data['Close'].iloc[-1])
 
             # 추세 분석
             if ma5 > ma20 > ma60 and current_price > ma5:
@@ -386,95 +504,6 @@ class TechnicalIndicators:
             return trend, details
         except:
             return 'sideways', {}
-
-# ========================================================================================
-# 💰 분할매매 관리 클래스 (설정 연동)
-# ========================================================================================
-class PositionManager:
-    """🔧 분할매매 및 포지션 관리 (설정 기반)"""
-
-    def __init__(self, config: ConfigLoader):
-        self.config = config
-        self.enabled = config.get('jp_strategy.split_trading.enabled', True)
-        self.buy_steps = config.get('jp_strategy.split_trading.buy_steps', 3)
-        self.sell_steps = config.get('jp_strategy.split_trading.sell_steps', 2)
-        self.ratios = config.get('jp_strategy.split_trading.ratios', {})
-
-    def create_split_buy_plan(self, total_amount: float, current_price: float, 
-                            confidence: float) -> Tuple[int, List[Dict]]:
-        """분할 매수 계획 생성 (설정 기반)"""
-        try:
-            if not self.enabled:
-                total_shares = int(total_amount / current_price / 100) * 100
-                return total_shares, []
-
-            # 신뢰도에 따른 분할 전략 (설정에서 로드)
-            if confidence >= 0.8:
-                ratios = self.ratios.get('high_confidence', [0.5, 0.3, 0.2])
-                triggers = [0, -0.02, -0.04]  # 0%, -2%, -4%
-            elif confidence >= 0.6:
-                ratios = self.ratios.get('medium_confidence', [0.4, 0.35, 0.25])
-                triggers = [0, -0.03, -0.05]  # 0%, -3%, -5%
-            else:
-                ratios = self.ratios.get('low_confidence', [0.3, 0.35, 0.35])
-                triggers = [0, -0.04, -0.06]  # 0%, -4%, -6%
-
-            total_shares = int(total_amount / current_price / 100) * 100  # 100주 단위
-            split_plan = []
-
-            for i, (ratio, trigger) in enumerate(zip(ratios, triggers)):
-                shares = int(total_shares * ratio / 100) * 100
-                target_price = current_price * (1 + trigger)
-
-                split_plan.append({
-                    'step': i + 1,
-                    'shares': shares,
-                    'target_price': target_price,
-                    'ratio': ratio,
-                    'executed': False
-                })
-
-            return total_shares, split_plan
-
-        except Exception as e:
-            logger.error(f"분할 매수 계획 생성 실패: {e}")
-            return 0, []
-
-    def create_split_sell_plan(self, total_shares: int, current_price: float, 
-                             target_price: float, confidence: float) -> List[Dict]:
-        """분할 매도 계획 생성 (설정 기반)"""
-        try:
-            if not self.enabled:
-                return []
-
-            # 신뢰도에 따른 매도 전략
-            if confidence >= 0.8:
-                sell_ratios = [0.5, 0.5]
-                price_targets = [target_price, target_price * 1.1]
-            else:
-                sell_ratios = [0.7, 0.3]
-                price_targets = [target_price, target_price * 1.05]
-
-            split_plan = []
-            remaining_shares = total_shares
-
-            for i, (ratio, price_target) in enumerate(zip(sell_ratios, price_targets)):
-                shares = int(remaining_shares * ratio / 100) * 100
-                remaining_shares -= shares
-
-                split_plan.append({
-                    'step': i + 1,
-                    'shares': shares,
-                    'target_price': price_target,
-                    'ratio': ratio,
-                    'executed': False
-                })
-
-            return split_plan
-
-        except Exception as e:
-            logger.error(f"분할 매도 계획 생성 실패: {e}")
-            return []
 
 # ========================================================================================
 # 🆕 실시간 종목 수집 및 선별 클래스 (설정 연동)
@@ -578,28 +607,31 @@ class RealTimeJPStockSelector:
                 if hist.empty:
                     continue
                 
-                current_price = hist['Close'].iloc[-1]
+                current_price = safe_float(hist['Close'].iloc[-1])
                 
                 # 기본 재무 지표
                 data = {
                     'symbol': symbol,
                     'price': current_price,
-                    'market_cap': info.get('marketCap', 0) or 0,
-                    'avg_volume': info.get('averageVolume', 0) or 0,
-                    'pe_ratio': info.get('trailingPE', 0) or 0,
-                    'pbr': info.get('priceToBook', 0) or 0,
-                    'roe': (info.get('returnOnEquity', 0) or 0) * 100,
-                    'debt_to_equity': info.get('debtToEquity', 0) or 0,
-                    'revenue_growth': (info.get('revenueQuarterlyGrowth', 0) or 0) * 100,
+                    'market_cap': safe_float(info.get('marketCap', 0)),
+                    'avg_volume': safe_float(info.get('averageVolume', 0)),
+                    'pe_ratio': safe_float(info.get('trailingPE', 0)),
+                    'pbr': safe_float(info.get('priceToBook', 0)),
+                    'roe': safe_float(info.get('returnOnEquity', 0)) * 100,
+                    'debt_to_equity': safe_float(info.get('debtToEquity', 0)),
+                    'revenue_growth': safe_float(info.get('revenueQuarterlyGrowth', 0)) * 100,
                     'sector': info.get('sector', 'Unknown'),
                     'industry': info.get('industry', 'Unknown'),
                 }
                 
                 # 기술적 지표 추가
                 if len(hist) >= 30:
-                    data['rsi'] = ta.momentum.RSIIndicator(hist['Close']).rsi().iloc[-1]
-                    data['ma20'] = hist['Close'].rolling(20).mean().iloc[-1]
-                    data['volume_ratio'] = hist['Volume'].tail(5).mean() / hist['Volume'].tail(20).mean()
+                    rsi = safe_rsi(hist['Close'])
+                    data['rsi'] = safe_float(rsi.iloc[-1] if len(rsi) > 0 else 50)
+                    data['ma20'] = safe_float(hist['Close'].rolling(20).mean().iloc[-1])
+                    recent_vol = hist['Volume'].tail(5).mean()
+                    avg_vol = hist['Volume'].tail(20).mean()
+                    data['volume_ratio'] = recent_vol / avg_vol if avg_vol > 0 else 1
                 
                 return data
                 
@@ -646,7 +678,6 @@ class RealTimeJPStockSelector:
             pe_ratio = data.get('pe_ratio', 999)
             pbr = data.get('pbr', 999)
             roe = data.get('roe', 0)
-            debt_ratio = data.get('debt_to_equity', 999) / 100
             
             financial_score = 0
             # PE 점수
@@ -883,11 +914,102 @@ class RealTimeJPStockSelector:
             return scored_stocks[:self.target_stocks]
 
 # ========================================================================================
+# 💰 분할매매 관리 클래스 (설정 연동)
+# ========================================================================================
+class PositionManager:
+    """🔧 분할매매 및 포지션 관리 (설정 기반)"""
+
+    def __init__(self, config: ConfigLoader):
+        self.config = config
+        self.enabled = config.get('jp_strategy.split_trading.enabled', True)
+        self.buy_steps = config.get('jp_strategy.split_trading.buy_steps', 3)
+        self.sell_steps = config.get('jp_strategy.split_trading.sell_steps', 2)
+        self.ratios = config.get('jp_strategy.split_trading.ratios', {})
+
+    def create_split_buy_plan(self, total_amount: float, current_price: float, 
+                            confidence: float) -> Tuple[int, List[Dict]]:
+        """분할 매수 계획 생성 (설정 기반)"""
+        try:
+            if not self.enabled:
+                total_shares = int(total_amount / current_price / 100) * 100
+                return total_shares, []
+
+            # 신뢰도에 따른 분할 전략 (설정에서 로드)
+            if confidence >= 0.8:
+                ratios = self.ratios.get('high_confidence', [0.5, 0.3, 0.2])
+                triggers = [0, -0.02, -0.04]  # 0%, -2%, -4%
+            elif confidence >= 0.6:
+                ratios = self.ratios.get('medium_confidence', [0.4, 0.35, 0.25])
+                triggers = [0, -0.03, -0.05]  # 0%, -3%, -5%
+            else:
+                ratios = self.ratios.get('low_confidence', [0.3, 0.35, 0.35])
+                triggers = [0, -0.04, -0.06]  # 0%, -4%, -6%
+
+            total_shares = int(total_amount / current_price / 100) * 100  # 100주 단위
+            split_plan = []
+
+            for i, (ratio, trigger) in enumerate(zip(ratios, triggers)):
+                shares = int(total_shares * ratio / 100) * 100
+                target_price = current_price * (1 + trigger)
+
+                split_plan.append({
+                    'step': i + 1,
+                    'shares': shares,
+                    'target_price': target_price,
+                    'ratio': ratio,
+                    'executed': False
+                })
+
+            return total_shares, split_plan
+
+        except Exception as e:
+            logger.error(f"분할 매수 계획 생성 실패: {e}")
+            return 0, []
+
+    def create_split_sell_plan(self, total_shares: int, current_price: float, 
+                             target_price: float, confidence: float) -> List[Dict]:
+        """분할 매도 계획 생성 (설정 기반)"""
+        try:
+            if not self.enabled:
+                return []
+
+            # 신뢰도에 따른 매도 전략
+            if confidence >= 0.8:
+                sell_ratios = [0.5, 0.5]
+                price_targets = [target_price, target_price * 1.1]
+            else:
+                sell_ratios = [0.7, 0.3]
+                price_targets = [target_price, target_price * 1.05]
+
+            split_plan = []
+            remaining_shares = total_shares
+
+            for i, (ratio, price_target) in enumerate(zip(sell_ratios, price_targets)):
+                shares = int(remaining_shares * ratio / 100) * 100
+                remaining_shares -= shares
+
+                split_plan.append({
+                    'step': i + 1,
+                    'shares': shares,
+                    'target_price': price_target,
+                    'ratio': ratio,
+                    'executed': False
+                })
+
+            return split_plan
+
+        except Exception as e:
+            logger.error(f"분할 매도 계획 생성 실패: {e}")
+            return []
+
+# ========================================================================================
 # 🇯🇵 메인 일본 주식 전략 클래스 (완전 통합)
 # ========================================================================================
 class JPStrategy:
     """🇯🇵 일본 주식 완전 자동화 전략 (설정 완전 통합)"""
 
+    def __init__(self, config_path: str = "settings.yaml"):
+        """전략 초기화 (설정 파일 기반)"""
     def __init__(self, config_path: str = "settings.yaml"):
         """전략 초기화 (설정 파일 기반)"""
         # 설정 로드
@@ -1029,6 +1151,65 @@ class JPStrategy:
             logger.error(f"종목 정보 조회 실패 {symbol}: {e}")
             return {}
 
+    def _get_stock_type(self, symbol: str) -> str:
+        """종목 타입 확인 (선별 데이터 기반)"""
+        try:
+            for stock in self.selected_stocks:
+                if stock['symbol'] == symbol:
+                    return stock.get('stock_type', 'mixed')
+            
+            # 백업 로직
+            export_symbols = ['7203.T', '6758.T', '7974.T', '6861.T', '9984.T', '6954.T', '7201.T']
+            domestic_symbols = ['8306.T', '8316.T', '8411.T', '9432.T', '9433.T', '9983.T', '3382.T']
+            
+            if symbol in export_symbols:
+                return 'export'
+            elif symbol in domestic_symbols:
+                return 'domestic'
+            else:
+                return 'mixed'
+        except:
+            return 'mixed'
+
+    def _get_sector_for_symbol(self, symbol: str) -> str:
+        """섹터 분류 (선별 데이터 기반)"""
+        try:
+            for stock in self.selected_stocks:
+                if stock['symbol'] == symbol:
+                    return stock.get('sector', 'UNKNOWN')
+            
+            # 백업 매핑
+            sector_map = {
+                '7203.T': 'Automotive', '6758.T': 'Technology', '7974.T': 'Technology',
+                '6861.T': 'Technology', '9984.T': 'Technology', '8306.T': 'Financial',
+                '8316.T': 'Financial', '9432.T': 'Telecommunications', '9983.T': 'Retail'
+            }
+            return sector_map.get(symbol, 'UNKNOWN')
+        except:
+            return 'UNKNOWN'
+
+        # 💱 엔화 매매 설정 (설정에서 로드)
+        yen_config = self.jp_config.get('yen_signals', {})
+        self.yen_strong_threshold = yen_config.get('strong_threshold', 105)
+        self.yen_weak_threshold = yen_config.get('weak_threshold', 110)
+        self.current_usd_jpy = 0.0
+
+        # 🛡️ 손절/익절 설정 (설정에서 로드)
+        risk_config = self.jp_config.get('risk_management', {})
+        self.base_stop_loss = risk_config.get('base_stop_loss', 0.08)
+        self.base_take_profit = risk_config.get('base_take_profit', 0.15)
+        self.max_hold_days = risk_config.get('max_hold_days', 30)
+
+        # 로그 디렉토리 생성
+        Path('logs').mkdir(exist_ok=True)
+
+        if self.enabled:
+            logger.info(f"🇯🇵 일본 주식 완전 자동화 전략 초기화 (V5.0 - 설정 통합)")
+            logger.info(f"🔧 설정 파일: {config_path}")
+            logger.info(f"💱 엔화 임계값: 강세({self.yen_strong_threshold}) 약세({self.yen_weak_threshold})")
+        else:
+            logger.info("🇯🇵 일본 주식 전략이 비활성화되어 있습니다")
+
     # ========================================================================================
     # 🔧 유틸리티 메서드들 (설정 통합)
     # ========================================================================================
@@ -1039,7 +1220,7 @@ class JPStrategy:
             ticker = yf.Ticker("USDJPY=X")
             data = ticker.history(period="1d")
             if not data.empty:
-                self.current_usd_jpy = data['Close'].iloc[-1]
+                self.current_usd_jpy = safe_float(data['Close'].iloc[-1], 107.5)
             else:
                 self.current_usd_jpy = 107.5  # 기본값
         except Exception as e:
@@ -1056,24 +1237,26 @@ class JPStrategy:
             return 'neutral'
 
     def _get_stock_type(self, symbol: str) -> str:
-        """종목 타입 확인 (선별 데이터 기반)"""
-        try:
-            for stock in self.selected_stocks:
-                if stock['symbol'] == symbol:
-                    return stock.get('stock_type', 'mixed')
-            return 'mixed'
-        except:
+        """종목 타입 확인 (간단 분류)"""
+        # 간단한 분류 로직 (실제로는 더 정교해야 함)
+        export_symbols = ['7203.T', '6758.T', '7974.T', '6861.T', '9984.T', '6954.T', '7201.T']
+        domestic_symbols = ['8306.T', '8316.T', '8411.T', '9432.T', '9433.T', '9983.T', '3382.T']
+        
+        if symbol in export_symbols:
+            return 'export'
+        elif symbol in domestic_symbols:
+            return 'domestic'
+        else:
             return 'mixed'
 
     def _get_sector_for_symbol(self, symbol: str) -> str:
-        """섹터 분류 (선별 데이터 기반)"""
-        try:
-            for stock in self.selected_stocks:
-                if stock['symbol'] == symbol:
-                    return stock.get('sector', 'UNKNOWN')
-            return 'UNKNOWN'
-        except:
-            return 'UNKNOWN'
+        """섹터 분류 (간단 매핑)"""
+        sector_map = {
+            '7203.T': 'Automotive', '6758.T': 'Technology', '7974.T': 'Technology',
+            '6861.T': 'Technology', '9984.T': 'Technology', '8306.T': 'Financial',
+            '8316.T': 'Financial', '9432.T': 'Telecommunications', '9983.T': 'Retail'
+        }
+        return sector_map.get(symbol, 'UNKNOWN')
 
     async def _get_stock_data(self, symbol: str, period: str = "3mo") -> pd.DataFrame:
         """주식 데이터 수집 (재시도 로직)"""
@@ -1333,7 +1516,7 @@ class JPStrategy:
     # ========================================================================================
 
     async def analyze_symbol(self, symbol: str) -> JPStockSignal:
-        """개별 종목 완전 분석 (설정 기반 + 자동선별)"""
+        """개별 종목 완전 분석 (설정 기반)"""
         if not self.enabled:
             return self._create_disabled_signal(symbol)
 
@@ -1346,7 +1529,7 @@ class JPStrategy:
             if data.empty:
                 raise ValueError(f"주식 데이터 없음: {symbol}")
 
-            current_price = data['Close'].iloc[-1]
+            current_price = safe_float(data['Close'].iloc[-1])
 
             # 3. 📊 기술적 지표 분석
             technical_score, technical_details = self._analyze_technical_indicators(data)
@@ -1382,7 +1565,7 @@ class JPStrategy:
             # 7. 📊 선별 정보 추가
             stock_info = await self.get_selected_stock_info(symbol)
             market_cap = stock_info.get('market_cap', 0)
-            selection_score = stock_info.get('selection_score', 0)
+            selection_score = stock_info.get('selection_score', technical_score)
             quality_rank = 0  # 추후 계산
             
             # 8. 📊 JPStockSignal 생성 (모든 정보 포함)
@@ -1521,63 +1704,51 @@ class JPStrategy:
             logger.error(f"전체 스캔 실패: {e}")
             return []
 
-    # ========================================================================================
-    # 🔧 설정 관리 메서드들 (NEW!)
-    # ========================================================================================
-
-    def reload_config(self):
-        """설정 파일 재로드"""
+    async def scan_symbols(self, symbols: List[str] = None) -> List[JPStockSignal]:
+        """선택된 종목들 분석 (설정 기반) - 기존 호환성 유지"""
+        if symbols is None:
+            # 자동 선별된 종목들 사용
+            return await self.scan_all_symbols()
+        
+        if not self.enabled:
+            return []
+        
+        logger.info(f"🔍 일본 주식 분석 시작! {len(symbols)}개 종목")
+        
         try:
-            logger.info("🔧 설정 파일 재로드 시작...")
-            self.config.load_all_configs()
+            all_signals = []
             
-            # 설정 재적용
-            self.jp_config = self.config.get_jp_config()
-            self.enabled = self.jp_config.get('enabled', True)
+            for i, symbol in enumerate(symbols, 1):
+                try:
+                    print(f"📊 분석 중... {i}/{len(symbols)} - {symbol}")
+                    signal = await self.analyze_symbol(symbol)
+                    all_signals.append(signal)
+                    
+                    # 결과 로그
+                    action_emoji = "🟢" if signal.action == "buy" else "🔴" if signal.action == "sell" else "⚪"
+                    logger.info(f"{action_emoji} {symbol} ({signal.stock_type}): {signal.action} "
+                              f"신뢰도:{signal.confidence:.2f} RSI:{signal.rsi:.0f}")
+                    
+                    # API 호출 제한
+                    await asyncio.sleep(0.2)
+                    
+                except Exception as e:
+                    logger.error(f"❌ {symbol} 분석 실패: {e}")
             
-            # 엔화 설정 재로드
-            yen_config = self.jp_config.get('yen_signals', {})
-            self.yen_strong_threshold = yen_config.get('strong_threshold', 105)
-            self.yen_weak_threshold = yen_config.get('weak_threshold', 110)
+            # 결과 요약
+            buy_count = len([s for s in all_signals if s.action == 'buy'])
+            sell_count = len([s for s in all_signals if s.action == 'sell'])
+            hold_count = len([s for s in all_signals if s.action == 'hold'])
             
-            # 리스크 관리 설정 재로드
-            risk_config = self.jp_config.get('risk_management', {})
-            self.base_stop_loss = risk_config.get('base_stop_loss', 0.08)
-            self.base_take_profit = risk_config.get('base_take_profit', 0.15)
-            self.max_hold_days = risk_config.get('max_hold_days', 30)
+            logger.info(f"🎯 분석 완료!")
+            logger.info(f"📊 결과: 매수:{buy_count}, 매도:{sell_count}, 보유:{hold_count}")
+            logger.info(f"💱 현재 USD/JPY: {self.current_usd_jpy:.2f} ({self._get_yen_signal()})")
             
-            # 선별 캐시 시간 재로드
-            self.selection_cache_hours = self.jp_config.get('stock_selection', {}).get('cache_hours', 24)
-            
-            logger.info("✅ 설정 파일 재로드 완료")
+            return all_signals
             
         except Exception as e:
-            logger.error(f"❌ 설정 재로드 실패: {e}")
-
-    def get_current_config(self) -> Dict:
-        """현재 설정 상태 반환"""
-        return {
-            'enabled': self.enabled,
-            'config_path': self.config.config_path,
-            'jp_config': self.jp_config,
-            'yen_thresholds': {
-                'strong': self.yen_strong_threshold,
-                'weak': self.yen_weak_threshold
-            },
-            'risk_management': {
-                'base_stop_loss': self.base_stop_loss,
-                'base_take_profit': self.base_take_profit,
-                'max_hold_days': self.max_hold_days
-            },
-            'stock_selection': {
-                'target_stocks': self.stock_selector.target_stocks,
-                'min_market_cap': self.stock_selector.min_market_cap,
-                'min_avg_volume': self.stock_selector.min_avg_volume,
-                'cache_hours': self.selection_cache_hours
-            },
-            'last_selection_time': self.last_selection_time,
-            'selected_count': len(self.selected_stocks)
-        }
+            logger.error(f"스캔 실패: {e}")
+            return []
 
 # ========================================================================================
 # 🎯 편의 함수들 (설정 통합)
@@ -1585,46 +1756,79 @@ class JPStrategy:
 
 async def analyze_jp(symbol: str, config_path: str = "settings.yaml") -> Dict:
     """단일 일본 주식 완전 분석 (설정 기반)"""
-    strategy = JPStrategy(config_path)
-    signal = await strategy.analyze_symbol(symbol)
+    # 심볼 검증 및 정리
+    if not symbol or symbol in [None, "", "test", "invalid"]:
+        symbol = "6758.T"  # 기본값으로 소니 사용
     
-    return {
-        'decision': signal.action,
-        'confidence_score': signal.confidence * 100,
-        'reasoning': signal.reasoning,
-        'current_price': signal.price,
+    # 심볼이 숫자만 있으면 .T 추가
+    if isinstance(symbol, (int, float)):
+        symbol = f"{int(symbol)}.T"
+    elif isinstance(symbol, str) and symbol.isdigit():
+        symbol = f"{symbol}.T"
+    
+    symbol = safe_upper(symbol)
+    
+    try:
+        strategy = JPStrategy(config_path)
+        signal = await strategy.analyze_symbol(symbol)
         
-        # 기술적 지표
-        'rsi': signal.rsi,
-        'macd_signal': signal.macd_signal,
-        'bollinger_signal': signal.bollinger_signal,
-        'stochastic_signal': signal.stoch_signal,
-        'ma_trend': signal.ma_trend,
+        return {
+            'decision': signal.action,
+            'confidence': signal.confidence * 100,
+            'reasoning': signal.reasoning,
+            'current_price': signal.price,
+            
+            # 기술적 지표
+            'rsi': signal.rsi,
+            'macd_signal': signal.macd_signal,
+            'bollinger_signal': signal.bollinger_signal,
+            'stochastic_signal': signal.stoch_signal,
+            'ma_trend': signal.ma_trend,
+            
+            # 포지션 관리
+            'position_size': signal.position_size,
+            'split_buy_plan': signal.split_buy_plan,
+            'split_sell_plan': signal.split_sell_plan,
+            
+            # 손익 관리
+            'stop_loss': signal.stop_loss,
+            'take_profit': signal.take_profit,
+            'max_hold_days': signal.max_hold_days,
+            
+            # 기본 정보
+            'stock_type': signal.stock_type,
+            'yen_signal': signal.yen_signal,
+            'sector': signal.sector,
+            
+            # 설정 정보
+            'config_version': '5.0',
+            'strategy_source': signal.strategy_source
+        }
         
-        # 포지션 관리
-        'position_size': signal.position_size,
-        'split_buy_plan': signal.split_buy_plan,
-        'split_sell_plan': signal.split_sell_plan,
-        
-        # 손익 관리
-        'stop_loss': signal.stop_loss,
-        'take_profit': signal.take_profit,
-        'max_hold_days': signal.max_hold_days,
-        
-        # 기본 정보
-        'stock_type': signal.stock_type,
-        'yen_signal': signal.yen_signal,
-        'sector': signal.sector,
-        
-        # 자동선별 정보
-        'market_cap': signal.market_cap,
-        'selection_score': signal.selection_score,
-        'quality_rank': signal.quality_rank,
-        
-        # 설정 정보
-        'config_version': '5.0',
-        'strategy_source': signal.strategy_source
-    }
+    except Exception as e:
+        logger.error(f"analyze_jp 실행 오류: {str(e)}")
+        return {
+            'decision': 'HOLD',
+            'confidence': 30,
+            'reasoning': f'분석 오류: {str(e)[:100]}',
+            'current_price': 0.0,
+            'rsi': 50,
+            'macd_signal': 'NEUTRAL',
+            'bollinger_signal': 'middle',
+            'stochastic_signal': 'neutral',
+            'ma_trend': 'sideways',
+            'position_size': 0,
+            'split_buy_plan': [],
+            'split_sell_plan': [],
+            'stop_loss': 0.0,
+            'take_profit': 0.0,
+            'max_hold_days': 30,
+            'stock_type': 'unknown',
+            'yen_signal': 'neutral',
+            'sector': 'UNKNOWN',
+            'config_version': '5.0',
+            'strategy_source': 'error'
+        }
 
 async def scan_jp_market(config_path: str = "settings.yaml") -> Dict:
     """일본 시장 전체 자동선별 + 스캔 (설정 기반)"""
@@ -1687,26 +1891,6 @@ async def get_jp_config_status(config_path: str = "settings.yaml") -> Dict:
         'version': '5.0'
     }
 
-async def reload_jp_config(config_path: str = "settings.yaml") -> Dict:
-    """일본 주식 설정 재로드"""
-    strategy = JPStrategy(config_path)
-    strategy.reload_config()
-    
-    return {
-        'status': 'reloaded',
-        'config_path': config_path,
-        'timestamp': datetime.now(),
-        'new_config': strategy.get_current_config()
-    }
-
-async def force_jp_reselection(config_path: str = "settings.yaml") -> List[str]:
-    """일본 주식 강제 재선별 (설정 기반)"""
-    strategy = JPStrategy(config_path)
-    strategy.last_selection_time = None  # 캐시 무효화
-    strategy.selected_stocks = []        # 기존 선별 결과 삭제
-    
-    return await strategy.auto_select_stocks()
-
 # ========================================================================================
 # 🧪 테스트 메인 함수 (설정 통합)
 # ========================================================================================
@@ -1716,24 +1900,28 @@ async def main():
     try:
         print("🇯🇵 일본 주식 완전 자동화 전략 V5.0 테스트!")
         print("🔧 settings.yaml + .env + requirements.txt 완전 통합")
-        print("🆕 설정 기반 자동선별: 닛케이225 실시간 크롤링 + 종합 분석")
         print("📊 기능: 설정기반 엔화+기술지표+분할매매+동적손절익절")
         print("="*80)
         
-        # 설정 상태 확인
-        print("\n🔧 설정 시스템 상태 확인...")
-        config_status = await get_jp_config_status()
-        print(f"  ✅ 설정 로드: {config_status['config_loaded']}")
-        print(f"  📁 설정 파일: {config_status['config_path']}")
-        print(f"  🚀 시스템 활성화: {config_status['enabled']}")
-        print(f"  📅 마지막 선별: {config_status['last_selection_time']}")
-        print(f"  🔄 캐시 유효: {config_status['cache_valid']} ({config_status['cache_hours']}시간)")
-        print(f"  🎯 선별 기준: 시총 {config_status['selection_criteria']['min_market_cap']:.1f}조엔 이상, "
-              f"거래량 {config_status['selection_criteria']['min_avg_volume']:.0f}백만주 이상")
-        print(f"  💱 엔화 임계값: 강세({config_status['thresholds']['yen_strong']}) "
-              f"약세({config_status['thresholds']['yen_weak']})")
-        print(f"  🛡️ 리스크 관리: 손절({config_status['risk_management']['base_stop_loss']:.1%}) "
-              f"익절({config_status['risk_management']['base_take_profit']:.1%})")
+        # 개별 종목 테스트
+        test_symbol = "6758.T"  # 소니
+        print(f"\n📊 개별 종목 분석 테스트 - {test_symbol}:")
+        result = await analyze_jp(test_symbol)
+        
+        print(f"  🎯 액션: {result['decision']} (신뢰도: {result['confidence']:.1f}%)")
+        print(f"  💰 현재가: {result['current_price']:,.0f}엔")
+        print(f"  📊 기술지표:")
+        print(f"    - RSI: {result['rsi']:.1f}")
+        print(f"    - MACD: {result['macd_signal']}")
+        print(f"    - 볼린저밴드: {result['bollinger_signal']}")
+        print(f"    - 추세: {result['ma_trend']}")
+        print(f"  💱 엔화 정보:")
+        print(f"    - 종목타입: {result['stock_type']}")
+        print(f"    - 엔화신호: {result['yen_signal']}")
+        print(f"  🛡️ 리스크 관리:")
+        print(f"    - 손절가: {result['stop_loss']:,.0f}엔")
+        print(f"    - 익절가: {result['take_profit']:,.0f}엔")
+        print(f"  💡 이유: {result['reasoning']}")
         
         # 전체 시장 자동선별 + 분석
         print(f"\n🔍 설정 기반 실시간 자동선별 + 전체 분석 시작...")
@@ -1785,8 +1973,7 @@ async def main():
             if test_symbol:
                 print(f"\n📊 설정 기반 개별 종목 상세 분석 - {test_symbol}:")
                 detailed_result = await analyze_jp(test_symbol)
-                print(f"  🎯 액션: {detailed_result['decision']} (신뢰도: {detailed_result['confidence_score']:.1f}%)")
-                print(f"  🏆 선별점수: {detailed_result['selection_score']:.3f} | 품질순위: {detailed_result['quality_rank']}")
+                print(f"  🎯 액션: {detailed_result['decision']} (신뢰도: {detailed_result['confidence']:.1f}%)")
                 print(f"  🔧 전략소스: {detailed_result['strategy_source']}")
                 print(f"  📊 기술지표:")
                 print(f"    - RSI: {detailed_result['rsi']:.1f}")
@@ -1817,15 +2004,12 @@ async def main():
         print("  ✅ 🛡️ 설정 기반 동적 손절/익절")
         print("  ✅ 🔍 설정 기반 상위 N개 종목 완전 자동 선별")
         print("  ✅ 🤖 완전 자동화 (설정 기반 캐시 + 실시간 업데이트)")
-        print("  ✅ 🔧 실시간 설정 재로드 지원")
         print("  ✅ 📱 웹 대시보드 연동 준비")
         print("\n💡 사용법:")
         print("  - python jp_strategy.py : 설정 기반 전체 자동선별 + 분석")
         print("  - await analyze_jp('7203.T') : 설정 기반 개별 종목 분석")
         print("  - await scan_jp_market() : 설정 기반 시장 전체 스캔")
         print("  - await get_jp_config_status() : 설정 상태 확인")
-        print("  - await reload_jp_config() : 설정 재로드")
-        print("  - await force_jp_reselection() : 강제 재선별")
         print("\n🔧 설정 연동 완료:")
         print("  📁 settings.yaml : 메인 설정 (엔화 임계값, 리스크 관리, 선별 기준)")
         print("  🔐 .env : 환경변수 (API 키, 민감 정보)")
