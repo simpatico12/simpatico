@@ -1973,8 +1973,7 @@ class UltimateCoinStrategy:
                 diversification_benefit=diversification_benefit,
                 position_stage=0,
                 total_investment=split_plan.get('total_investment', 0),
-                }
-    }
+            )
 
 # ============================================================================
 # 🎯 메인 실행 함수들
