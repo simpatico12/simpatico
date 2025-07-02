@@ -353,7 +353,6 @@ class EnhancedMarketCycleDetector:
                 take_profit_3=split_plan.get('take_profits', [data['price']*1.2]*3)[2],
                 reasoning=reasoning,
                 timestamp=datetime.now()
-        
         except Exception as e:
             self.logger.error(f"완전체 분석 실패 {symbol}: {e}")
             return self._create_empty_signal(symbol, f"분석 실패: {str(e)}")
