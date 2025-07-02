@@ -919,7 +919,7 @@ async def run_all_strategy_tests(export_results: bool = True):
     print(f"{Colors.BOLD}{Colors.CYAN}🧪 최고퀸트프로젝트 - 파일 기반 전략 테스트 시스템{Colors.END}")
     print("=" * 80)
     print(f"🎯 테스트 대상: {len(STRATEGY_FILES)}개 전략 파일")
-    print(f"📁 일본 주식, 미국 주식, 암호화폐 전략")
+    print(f"📁 선택된 전략: {', '.join(STRATEGY_FILES.keys())}")
     print(f"⏰ 시작 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
     
@@ -1030,12 +1030,16 @@ def main():
     else:
         logging.basicConfig(level=logging.WARNING)
     
-    # 특정 전략만 테스트
+    # 테스트할 전략 선택
     if args.strategy:
         if args.strategy in STRATEGY_FILES:
-            global STRATEGY_FILES
-            STRATEGY_FILES = {args.strategy: STRATEGY_FILES[args.strategy]}
             print(f"🎯 특정 전략 테스트: {args.strategy}")
+            # 임시로 전역 변수 수정하지 않고 필터링된 딕셔너리 생성
+            filtered_strategies = {args.strategy: STRATEGY_FILES[args.strategy]}
+            # 전역 변수 임시 교체
+            original_strategies = STRATEGY_FILES.copy()
+            STRATEGY_FILES.clear()
+            STRATEGY_FILES.update(filtered_strategies)
         else:
             print(f"❌ 알 수 없는 전략: {args.strategy}")
             print(f"사용 가능한 전략: {', '.join(STRATEGY_FILES.keys())}")
@@ -1053,6 +1057,11 @@ def main():
         print(f"\n{Colors.RED}❌ 테스트 실행 실패: {e}{Colors.END}")
         if args.verbose:
             traceback.print_exc()
+    finally:
+        # 전역 변수 복구 (필요한 경우)
+        if args.strategy and args.strategy in original_strategies:
+            STRATEGY_FILES.clear()
+            STRATEGY_FILES.update(original_strategies)
 
 if __name__ == "__main__":
     main()
