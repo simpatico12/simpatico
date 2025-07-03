@@ -1,120 +1,4 @@
-return {
-            'open_positions': len(self.positions),
-            'closed_trades': len(self.closed_positions),
-            'total_value': total_value,
-            'avg_pnl': total_pnl,
-            'positions': list(self.positions.keys()),
-            'ibkr_connected': self.ibkr_connected,
-            'live_trading': Config.LIVE_TRADING
-        }
-    
-    async def cleanup(self):
-        """정리 작업"""
-        if self.ibkr_connected:
-            await self.ibkr.disconnect()
-
-# ============================================================================
-# 🏆 전설의 메인 엔진 (IBKR 통합)
-# ============================================================================
-class YenHunter:
-    """전설적인 YEN-HUNTER 메인 엔진 (IBKR 실거래 + 가상거래)"""
-    
-    def __init__(self):
-        self.hunter = StockHunter()
-        self.signal_gen = SignalGenerator()
-        self.position_mgr = PositionManager()
-        self.selected_stocks = []
-        
-        print("🏆 YEN-HUNTER 초기화 완료!")
-        print(f"💱 엔화 임계값: 강세({Config.YEN_STRONG}) 약세({Config.YEN_WEAK})")
-        print(f"🎯 선별 기준: 시총{Config.MIN_MARKET_CAP/1e11:.0f}천억엔+ 탑{Config.TARGET_STOCKS}개")
-        print(f"💰 포지션 크기: {Config.BASE_POSITION_SIZE/1e6:.0f}백만엔 (최대 {Config.MAX_POSITIONS}개)")
-        
-        # IBKR 상태 표시
-        if Config.LIVE_TRADING:
-            if HAS_IBKR:
-                print("🚀 IBKR 실거래 모드 (연결 대기중)")
-            else:
-                print("⚠️ IBKR 라이브러리 없음 - pip install ib_insync")
-        else:
-            print("💡 가상거래 모드 (실거래: LIVE_TRADING=true)")
-    
-    async def initialize(self):
-        """전략 초기화 (IBKR 연결 포함)"""
-        print("\n🔧 YEN-HUNTER 초기화 중...")
-        
-        # IBKR 초기화
-        await self.position_mgr.initialize_ibkr()
-        
-        # 현재 상태 출력
-        if Config.LIVE_TRADING and self.position_mgr.ibkr_connected:
-            print("🚀 실거래 모드 준비 완료!")
-            
-            # IBKR 포트폴리오 확인
-            try:
-                portfolio = await self.position_mgr.ibkr.get_portfolio_summary()
-                if portfolio.get('positions'):
-                    print(f"📊 기존 포지션: {portfolio['total_positions']}개")
-                    for pos in portfolio['positions'][:3]:  # 상위 3개만
-                        print(f"   {pos['symbol']}: {pos['shares']:,}주")
-            except:
-                pass
-        else:
-            print("💡 가상거래 모드로 시작")
-    
-    async def full_trading_cycle(self) -> Dict:
-        """🚀 완전한 매매 사이클 (IBKR 실거래 + 포지션 관리)"""
-        print("\n🔥 전설적인 완전 매매 사이클 시작!")
-        
-        # 초기화 확인
-        if not hasattr(self, '_initialized'):
-            await self.initialize()
-            self._initialized = True
-        
-        # 1단계: 기존 포지션 체크
-        print("🛡️ 기존 포지션 체크...")
-        position_actions = await self.position_mgr.check_positions()
-        
-        for action in position_actions:
-            emoji = "🛑" if action['action'] == 'STOP_LOSS' else "💰" if 'PROFIT' in action['action'] else "⏰"
-            trade_type = "🚀실거래" if action.get('ibkr_executed') else "💡가상"
-            print(f"{emoji} {trade_type} {action['symbol']}: {action['reason']}")
-        
-        # 2단계: 새로운 매수 기회 탐색
-        print("\n🔍 새로운 기회 탐색...")
-        signals = await self.hunt_and_analyze()
-        
-        # 3단계: 매수 신호 실행
-        buy_signals = [s for s in signals if s.action == 'BUY' and s.symbol not in self.position_mgr.positions]
-        
-        executed_buys = []
-        for signal in buy_signals[:Config.MAX_POSITIONS]:  # 최대 포지션 수 제한
-            if len(self.position_mgr.positions) >= Config.MAX_POSITIONS:
-                print(f"⚠️ 최대 포지션 수({Config.MAX_POSITIONS}) 도달")
-                break
-                
-            await self.position_mgr.open_position(signal)
-            executed_buys.append(signal)
-        
-        # 4단계: 포트폴리오 현황
-        portfolio = self.position_mgr.get_portfolio_status()
-        
-        return {
-            'timestamp': datetime.now(),
-            'position_actions': position_actions,
-            'new_signals': len(signals),
-            'executed_buys': len(executed_buys),
-            'portfolio': portfolio,
-            'top_signals': signals[:5] if signals else [],
-            'live_trading': Config.LIVE_TRADING,
-            'ibkr_connected': self.position_mgr.ibkr_connected
-        }
-    
-    async def cleanup(self):
-        """정리 작업"""
-        print("\n🔧 YEN-HUNTER 정리 중...")
-        await self.position_mgr.cleanup()
-        print("✅ 정리 완료")#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 🏆 YEN-HUNTER: 전설적인 일본 주식 퀸트 전략 + IBKR 실거래
 ==========================================================
@@ -1425,13 +1309,8 @@ class YenHunter:
         }
     
     async def monitor_positions(self):
-        """포지션 모니터링 (IBKR 실거래 + 실시간 실행용)"""
+        """포지션 모니터링 (실시간 실행용)"""
         print("👁️ 포지션 모니터링 시작...")
-        
-        # 초기화 확인
-        if not hasattr(self, '_initialized'):
-            await self.initialize()
-            self._initialized = True
         
         while True:
             try:
@@ -1440,28 +1319,24 @@ class YenHunter:
                 if actions:
                     print(f"\n⚡ {len(actions)}개 액션 발생:")
                     for action in actions:
-                        trade_type = "🚀실거래" if action.get('ibkr_executed') else "💡가상"
-                        print(f"  {trade_type} {action['symbol']}: {action['reason']}")
+                        print(f"  {action['symbol']}: {action['reason']}")
                 
                 # 포트폴리오 현황
                 portfolio = self.position_mgr.get_portfolio_status()
                 if portfolio['open_positions'] > 0:
-                    trade_mode = "🚀실거래" if portfolio['live_trading'] else "💡가상"
-                    connection = "🔗연결됨" if portfolio['ibkr_connected'] else "🔌끊어짐"
-                    print(f"📊 {trade_mode} 포트폴리오: {portfolio['open_positions']}개 포지션, 평균:{portfolio['avg_pnl']:.1f}% (IBKR:{connection})")
+                    print(f"📊 현재 포트폴리오: {portfolio['open_positions']}개 포지션, 평균 수익률: {portfolio['avg_pnl']:.1f}%")
                 
                 await asyncio.sleep(300)  # 5분마다 체크
                 
             except KeyboardInterrupt:
                 print("🛑 모니터링 종료")
-                await self.cleanup()
                 break
             except Exception as e:
                 print(f"⚠️ 모니터링 오류: {e}")
                 await asyncio.sleep(60)  # 1분 후 재시도
     
     async def hunt_and_analyze(self) -> List[LegendarySignal]:
-        """전설적인 헌팅 + 분석 (기존과 동일)"""
+        """전설적인 헌팅 + 분석"""
         print("\n🔍 전설적인 종목 헌팅 시작...")
         start_time = time.time()
         
@@ -1510,7 +1385,7 @@ class YenHunter:
         return sorted(filtered, key=lambda x: x.confidence, reverse=True)[:top]
 
 # ============================================================================
-# 📈 간단 백테스터 (기존과 동일)
+# 📈 간단 백테스터
 # ============================================================================
 class SimpleBacktester:
     """전설적인 간단 백테스터"""
@@ -1568,12 +1443,11 @@ class SimpleBacktester:
             return {"error": str(e)}
 
 # ============================================================================
-# 🎮 편의 함수들 (IBKR 통합)
+# 🎮 편의 함수들
 # ============================================================================
 async def hunt_jp_legends() -> List[LegendarySignal]:
     """일본 전설급 종목 헌팅"""
     hunter = YenHunter()
-    await hunter.initialize()
     return await hunter.hunt_and_analyze()
 
 async def analyze_jp_single(symbol: str) -> LegendarySignal:
@@ -1585,144 +1459,16 @@ async def backtest_jp(symbol: str) -> Dict:
     """백테스트 실행"""
     return await SimpleBacktester.backtest_symbol(symbol)
 
-async def start_live_trading():
-    """🚀 실거래 시작"""
-    if not Config.LIVE_TRADING:
-        print("❌ 실거래 모드가 아닙니다. LIVE_TRADING=true로 설정하세요.")
-        return
-        
-    hunter = YenHunter()
-    await hunter.initialize()
-    
-    try:
-        # 실거래 모니터링 시작
-        await hunter.monitor_positions()
-    except KeyboardInterrupt:
-        print("🛑 실거래 종료")
-    finally:
-        await hunter.cleanup()
-
 # ============================================================================
-# 🧪 테스트 실행 (IBKR 통합)
+# 🧪 테스트 실행
 # ============================================================================
 async def main():
-    """전설적인 테스트 (IBKR 통합)"""
-    print("🏆 YEN-HUNTER 전설적인 테스트 시작! (IBKR 통합)")
-    print("="*60)
-    
-    # 설정 상태 출력
-    print(f"💡 거래 모드: {'🚀실거래' if Config.LIVE_TRADING else '💡가상거래'}")
-    print(f"🔗 IBKR 라이브러리: {'✅설치됨' if HAS_IBKR else '❌없음'}")
-    if Config.LIVE_TRADING and HAS_IBKR:
-        print(f"🌐 IBKR 서버: {Config.IBKR_HOST}:{Config.IBKR_PORT}")
+    """전설적인 테스트"""
+    print("🏆 YEN-HUNTER 전설적인 테스트 시작!")
+    print("="*50)
     
     # 전체 헌팅 + 분석
-    hunter = YenHunter()
-    await hunter.initialize()
-    
-    try:
-        signals = await hunter.hunt_and_analyze()
-        
-        if signals:
-            # 상위 매수 추천
-            top_buys = hunter.get_top_signals(signals, "BUY", 3)
-            
-            print(f"\n🎯 전설적인 매수 추천:")
-            for i, signal in enumerate(top_buys, 1):
-                print(f"{i}. {signal.symbol}: {signal.confidence:.1%} 신뢰도")
-                print(f"   💰 {signal.price:,.0f}엔 | 포지션: {signal.position_size:,}주")
-                print(f"   🛡️ 손절: {signal.stop_loss:,.0f}엔 (-{((signal.price-signal.stop_loss)/signal.price*100):.1f}%)")
-                print(f"   🎯 1차익절: {signal.take_profit1:,.0f}엔 (+{((signal.take_profit1-signal.price)/signal.price*100):.1f}%)")
-                print(f"   🚀 2차익절: {signal.take_profit2:,.0f}엔 (+{((signal.take_profit2-signal.price)/signal.price*100):.1f}%)")
-                print(f"   ⏰ 최대보유: {signal.max_hold_days}일")
-                print(f"   🏆 고급지표: RSI({signal.rsi:.0f}) MACD({signal.macd_signal}) BB({signal.bb_signal})")
-                print(f"   📊 스토캐스틱({signal.stoch_signal}) 모멘텀({signal.momentum_signal}) ATR({signal.atr:.1f})")
-                print(f"   📈 추세({signal.trend}) 거래량({signal.volume_signal}) 피보나치({signal.fibonacci_level})")
-                print(f"   💡 {signal.reason}")
-            
-            # 실제 포지션 관리 테스트
-            print(f"\n🛡️ 포지션 관리 시스템 테스트:")
-            
-            # 가상 매수 실행
-            if top_buys:
-                test_signal = top_buys[0]
-                print(f"   📝 {test_signal.symbol} 테스트 포지션:")
-                await hunter.position_mgr.open_position(test_signal)
-                
-                # 포트폴리오 현황
-                portfolio = hunter.position_mgr.get_portfolio_status()
-                print(f"   📊 포트폴리오: {portfolio['open_positions']}개 포지션")
-                print(f"   🔗 IBKR 연결: {'✅' if portfolio['ibkr_connected'] else '❌'}")
-                print(f"   💰 거래모드: {'🚀실거래' if portfolio['live_trading'] else '💡가상거래'}")
-                
-                # 포지션 체크 시뮬레이션
-                print(f"   🔍 포지션 체크 시뮬레이션:")
-                actions = await hunter.position_mgr.check_positions()
-                if actions:
-                    print(f"      ⚡ {len(actions)}개 액션 발생")
-                    for action in actions:
-                        trade_type = "🚀실거래" if action.get('ibkr_executed') else "💡가상"
-                        print(f"        {trade_type} {action['reason']}")
-                else:
-                    print(f"      ✅ 모든 포지션 정상")
-            
-            # 완전 매매 사이클 테스트
-            print(f"\n🚀 완전 매매 사이클 테스트:")
-            cycle_result = await hunter.full_trading_cycle()
-            print(f"   📊 새 신호: {cycle_result['new_signals']}개")
-            print(f"   💰 실행된 매수: {cycle_result['executed_buys']}개")
-            print(f"   🛡️포지션 액션: {len(cycle_result['position_actions'])}개")
-            print(f"   🔗 IBKR 상태: {'✅연결됨' if cycle_result['ibkr_connected'] else '❌끊어짐'}")
-            
-            # 백테스트 (첫 번째 종목)
-            if top_buys:
-                print(f"\n📈 {top_buys[0].symbol} 백테스트:")
-                backtest_result = await backtest_jp(top_buys[0].symbol)
-                if "error" not in backtest_result:
-                    print(f"   📊 총수익: {backtest_result['total_return']:.1f}%")
-                    print(f"   🎯 승률: {backtest_result['win_rate']:.1f}%")
-                    print(f"   💹 거래횟수: {backtest_result['trades']}회")
-        
-        print("\n✅ 전설적인 테스트 완료!")
-        print("\n🚀 YEN-HUNTER 특징 (IBKR 통합):")
-        print("  ⚡ 1000라인 IBKR 통합 완전체")
-        print("  🔗 IBKR 실거래 + 가상거래 스위치")
-        print("  💱 엔화 기반 수출/내수 매칭")
-        print("  🔍 닛케이225 실시간 헌팅")  
-        print("  🏆 전설의 고급 기술지표 (8개)")
-        print("    - RSI + MACD + 볼린저밴드")
-        print("    - 스토캐스틱 + ATR + 모멘텀")
-        print("    - 피보나치 + 고급거래량분석")
-        print("  🛡️ ATR 기반 동적 손절/익절")
-        print("  💰 분할 익절 (1차 50%, 2차 전량)")
-        print("  ⏰ 변동성 고려 보유기간 관리")
-        print("  🤖 완전 자동화 포지션 관리")
-        print("  📈 백테스트 내장")
-        print("\n💡 실전 사용법:")
-        print("  🚀 실거래: await start_live_trading()")
-        print("  💡 가상거래: await hunter.full_trading_cycle()")
-        print("  👁️ 모니터링: await hunter.monitor_positions()")
-        print("\n🎯 환경변수 설정:")
-        print("  LIVE_TRADING=true  # 실거래 활성화")
-        print("  IBKR_HOST=127.0.0.1")
-        print("  IBKR_PORT=7497     # 7497=live, 7496=paper")
-        print("  BASE_POSITION_SIZE=1000000  # 100만엔")
-        print("  MAX_POSITIONS=5    # 최대 5개 포지션")
-        
-        if Config.LIVE_TRADING and not HAS_IBKR:
-            print("\n⚠️ 실거래 활성화하려면: pip install ib_insync")
-        
-    finally:
-        await hunter.cleanup()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-        
-    finally:
-        await hunter.cleanup()
-
-if __name__ == "__main__":
-    asyncio.run(main()) await hunt_jp_legends()
+    signals = await hunt_jp_legends()
     
     if signals:
         # 상위 매수 추천
