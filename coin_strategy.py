@@ -116,9 +116,8 @@ class QuantumCycleMatrix:
             # BTC 데이터 수집
             btc_data = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=90)
             if btc_data is None or len(btc_data) < 60:
-            
-            with open(self.position_file, 'w', encoding='utf-8') as f:
-                json.dump(serializable_positions, f, ensure_ascii=False, indent=2)
+                with open(self.position_file, 'w', encoding='utf-8') as f:
+                    json.dump(serializable_positions, f, ensure_ascii=False, indent=2)
                 
         except Exception as e:
             logging.error(f"포지션 저장 실패: {e}")
