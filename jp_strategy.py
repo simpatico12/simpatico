@@ -1,232 +1,49 @@
 #!/usr/bin/env python3
 """
-🏆 YEN-HUNTER: 전설적인 일본 주식 퀸트 전략 + IBKR 실거래
-==========================================================
+🏆 YEN-HUNTER: 전설적인 일본 주식 퀸트 전략
+===============================================
 🎯 핵심: 엔화가 모든 것을 지배한다
 ⚡ 원칙: 단순함이 최고다  
 🚀 목표: 자동화가 승리한다
-💰 실거래: IBKR 연동 완료
 
-Version: LEGENDARY 2.0 (IBKR 통합)
+Version: LEGENDARY 1.0
 Author: 퀸트팀 & Claude
 """
 
 import asyncio
 import logging
 import time
-import os
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 import yfinance as yf
 import requests
 from bs4 import BeautifulSoup
 from dataclasses import dataclass
-from dotenv import load_dotenv
-
-# IBKR 연결 (선택적 import)
-try:
-    from ib_insync import *
-    import ib_insync as ib
-    HAS_IBKR = True
-    print("🔗 IBKR 라이브러리 로드 성공")
-except ImportError:
-    HAS_IBKR = False
-    print("⚠️ IBKR 라이브러리 없음 (가상거래만 가능)")
-
-# 환경변수 로드
-load_dotenv()
 
 # ============================================================================
-# 🔧 전설의 설정 (IBKR 통합)
+# 🔧 전설의 설정 (5개면 충분)
 # ============================================================================
 class Config:
-    """전설적인 설정 (IBKR + 환경변수 통합)"""
+    """전설적인 미니멀 설정"""
     # 엔화 임계값 (핵심)
-    YEN_STRONG = float(os.getenv('YEN_STRONG', 105.0))    # 이하면 내수주 폭탄
-    YEN_WEAK = float(os.getenv('YEN_WEAK', 110.0))        # 이상이면 수출주 전력
+    YEN_STRONG = 105.0    # 이하면 내수주 폭탄
+    YEN_WEAK = 110.0      # 이상이면 수출주 전력
     
     # 선별 기준
-    MIN_MARKET_CAP = float(os.getenv('MIN_MARKET_CAP', 5e11))   # 5000억엔 이상
-    TARGET_STOCKS = int(os.getenv('TARGET_STOCKS', 15))         # 탑15 선별
+    MIN_MARKET_CAP = 5e11   # 5000억엔 이상
+    TARGET_STOCKS = 15      # 탑15 선별
     
     # 매매 임계값
-    BUY_THRESHOLD = float(os.getenv('BUY_THRESHOLD', 0.7))      # 70% 이상이면 매수
-    
-    # 🚀 IBKR 실거래 설정
-    LIVE_TRADING = os.getenv('LIVE_TRADING', 'false').lower() == 'true'
-    IBKR_HOST = os.getenv('IBKR_HOST', '127.0.0.1')
-    IBKR_PORT = int(os.getenv('IBKR_PORT', 7497))  # 7497=live, 7496=paper
-    IBKR_CLIENT_ID = int(os.getenv('IBKR_CLIENT_ID', 1))
-    
-    # 💰 포지션 크기 설정
-    BASE_POSITION_SIZE = float(os.getenv('BASE_POSITION_SIZE', 1000000))  # 100만엔
-    MAX_POSITIONS = int(os.getenv('MAX_POSITIONS', 5))  # 최대 5개 포지션
-    
-    # 🛡️ 리스크 관리
-    BASE_STOP_LOSS = float(os.getenv('BASE_STOP_LOSS', 0.08))      # 8%
-    BASE_TAKE_PROFIT = float(os.getenv('BASE_TAKE_PROFIT', 0.15))  # 15%
-    MAX_HOLD_DAYS = int(os.getenv('MAX_HOLD_DAYS', 30))           # 30일
+    BUY_THRESHOLD = 0.7     # 70% 이상이면 매수
     
     # 백테스팅
     BACKTEST_PERIOD = "1y"  # 1년 백테스트
 
 # ============================================================================
-# 🔗 IBKR 연결 클래스
+# 📊 전설의 고급 기술지표 (ta-lib 없이 완전 자체 구현)
 # ============================================================================
-class IBKRConnector:
-    """🔗 IBKR 실거래 연결"""
-    
-    def __init__(self):
-        self.ib = None
-        self.connected = False
-        
-        if not HAS_IBKR:
-            print("⚠️ IBKR 라이브러리 없음: pip install ib_insync")
-            return
-            
-        if not Config.LIVE_TRADING:
-            print("💡 가상거래 모드 (실거래 원하면 LIVE_TRADING=true)")
-            return
-            
-        self.ib = IB()
-        
-    async def connect(self) -> bool:
-        """IBKR 연결"""
-        if not self.ib or not Config.LIVE_TRADING:
-            return False
-            
-        try:
-            await self.ib.connectAsync(
-                host=Config.IBKR_HOST,
-                port=Config.IBKR_PORT,
-                clientId=Config.IBKR_CLIENT_ID,
-                timeout=20
-            )
-            self.connected = True
-            print(f"✅ IBKR 연결 성공: {Config.IBKR_HOST}:{Config.IBKR_PORT}")
-            
-            # 계좌 정보 확인
-            accounts = self.ib.managedAccounts()
-            if accounts:
-                print(f"📊 연결된 계좌: {accounts[0]}")
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ IBKR 연결 실패: {e}")
-            print("💡 TWS나 IB Gateway가 실행중인지 확인하세요")
-            self.connected = False
-            return False
-    
-    async def disconnect(self):
-        """IBKR 연결 해제"""
-        if self.ib and self.connected:
-            self.ib.disconnect()
-            self.connected = False
-            print("🔌 IBKR 연결 해제")
-    
-    def create_jp_stock_contract(self, symbol: str) -> Contract:
-        """일본 주식 계약 생성"""
-        # 7203.T -> 7203
-        clean_symbol = symbol.replace('.T', '')
-        
-        contract = Stock(
-            symbol=clean_symbol,
-            exchange='TSE',  # Tokyo Stock Exchange
-            currency='JPY'
-        )
-        return contract
-    
-    async def place_buy_order(self, symbol: str, shares: int, order_type: str = 'MKT') -> bool:
-        """매수 주문"""
-        if not self.connected:
-            print(f"⚠️ IBKR 연결 안됨 - {symbol} 가상매수만")
-            return False
-            
-        try:
-            contract = self.create_jp_stock_contract(symbol)
-            
-            if order_type == 'MKT':
-                order = MarketOrder('BUY', shares)
-            else:
-                # 추후 지정가 주문 등 추가 가능
-                order = MarketOrder('BUY', shares)
-            
-            trade = self.ib.placeOrder(contract, order)
-            print(f"📈 IBKR 매수 주문: {symbol} {shares:,}주")
-            
-            # 주문 상태 확인 (간단히)
-            await asyncio.sleep(1)
-            if trade.orderStatus.status in ['Filled', 'Submitted']:
-                print(f"✅ {symbol} 매수 주문 성공")
-                return True
-            else:
-                print(f"⚠️ {symbol} 매수 주문 대기중")
-                return True
-                
-        except Exception as e:
-            print(f"❌ IBKR 매수 주문 실패 {symbol}: {e}")
-            return False
-    
-    async def place_sell_order(self, symbol: str, shares: int, order_type: str = 'MKT') -> bool:
-        """매도 주문"""
-        if not self.connected:
-            print(f"⚠️ IBKR 연결 안됨 - {symbol} 가상매도만")
-            return False
-            
-        try:
-            contract = self.create_jp_stock_contract(symbol)
-            
-            if order_type == 'MKT':
-                order = MarketOrder('SELL', shares)
-            else:
-                order = MarketOrder('SELL', shares)
-            
-            trade = self.ib.placeOrder(contract, order)
-            print(f"📉 IBKR 매도 주문: {symbol} {shares:,}주")
-            
-            await asyncio.sleep(1)
-            if trade.orderStatus.status in ['Filled', 'Submitted']:
-                print(f"✅ {symbol} 매도 주문 성공")
-                return True
-            else:
-                print(f"⚠️ {symbol} 매도 주문 대기중")
-                return True
-                
-        except Exception as e:
-            print(f"❌ IBKR 매도 주문 실패 {symbol}: {e}")
-            return False
-    
-    async def get_portfolio_summary(self) -> Dict:
-        """포트폴리오 요약"""
-        if not self.connected:
-            return {}
-            
-        try:
-            positions = self.ib.positions()
-            portfolio = []
-            
-            for pos in positions:
-                if pos.contract.exchange == 'TSE':  # 일본 주식만
-                    portfolio.append({
-                        'symbol': f"{pos.contract.symbol}.T",
-                        'shares': pos.position,
-                        'avg_cost': pos.avgCost,
-                        'market_value': pos.marketValue,
-                        'unrealized_pnl': pos.unrealizedPNL
-                    })
-            
-            return {
-                'positions': portfolio,
-                'total_positions': len(portfolio),
-                'total_value': sum([p['market_value'] for p in portfolio])
-            }
-            
-        except Exception as e:
-            print(f"❌ 포트폴리오 조회 실패: {e}")
-            return {}
 class LegendaryIndicators:
     """🏆 전설적인 고급 기술지표 (직접 계산)"""
     
@@ -671,13 +488,13 @@ class SignalGenerator:
         self.indicators = LegendaryIndicators()
     
     def calculate_risk_levels(self, price: float, confidence: float, stock_type: str, yen_signal: str, atr: float = 0) -> Tuple[float, float, float, int]:
-        """🛡️ 전설적인 리스크 관리 계산 (ATR + 환경변수 기반)"""
+        """🛡️ 전설적인 리스크 관리 계산 (ATR 기반 개선)"""
         
-        # 환경변수 기반 기본값
-        base_stop = Config.BASE_STOP_LOSS
-        base_profit1 = Config.BASE_TAKE_PROFIT
-        base_profit2 = Config.BASE_TAKE_PROFIT * 1.7  # 25%
-        base_days = Config.MAX_HOLD_DAYS
+        # 기본 손절/익절률
+        base_stop = 0.08    # 8% 손절
+        base_profit1 = 0.15 # 15% 1차 익절
+        base_profit2 = 0.25 # 25% 2차 익절
+        base_days = 30      # 30일 최대보유
         
         # ATR 기반 조정 (변동성 고려)
         if atr > 0:
@@ -975,8 +792,8 @@ class SignalGenerator:
                 stop_loss, take_profit1, take_profit2, max_hold_days = self.calculate_risk_levels(
                     current_price, confidence, stock_type, yen_signal, atr_value
                 )
-                # 포지션 크기 (환경변수 기반)
-                base_amount = Config.BASE_POSITION_SIZE
+                # 포지션 크기 (신뢰도에 따라)
+                base_amount = 1000000  # 100만엔
                 position_size = int((base_amount * confidence) / current_price / 100) * 100  # 100주 단위
             else:
                 stop_loss = take_profit1 = take_profit2 = 0.0
@@ -1032,81 +849,33 @@ class SignalGenerator:
             )
 
 # ============================================================================
-# 🛡️ 전설의 포지션 매니저 (IBKR 통합)
+# 🛡️ 전설의 포지션 매니저
 # ============================================================================
 class PositionManager:
-    """전설적인 포지션 관리 (IBKR 실거래 + 가상거래)"""
+    """전설적인 포지션 관리"""
     
     def __init__(self):
         self.positions: Dict[str, Position] = {}
         self.closed_positions = []
-        
-        # 🔗 IBKR 연결
-        self.ibkr = IBKRConnector()
-        self.ibkr_connected = False
-        
-    async def initialize_ibkr(self):
-        """IBKR 초기화"""
-        if Config.LIVE_TRADING and HAS_IBKR:
-            self.ibkr_connected = await self.ibkr.connect()
-            if self.ibkr_connected:
-                print("🚀 IBKR 실거래 모드 활성화")
-            else:
-                print("⚠️ IBKR 연결 실패, 가상거래로 전환")
-        else:
-            print("💡 가상거래 모드")
     
-    async def open_position(self, signal: LegendarySignal):
-        """포지션 오픈 (IBKR 실거래 + 가상거래)"""
-        if signal.action != "BUY" or signal.position_size <= 0:
-            return
-            
-        # 최대 포지션 수 체크
-        if len(self.positions) >= Config.MAX_POSITIONS:
-            print(f"⚠️ 최대 포지션 수({Config.MAX_POSITIONS}) 초과, {signal.symbol} 매수 취소")
-            return
-        
-        # 🔗 IBKR 실거래 시도
-        ibkr_success = False
-        if self.ibkr_connected:
-            try:
-                ibkr_success = await self.ibkr.place_buy_order(signal.symbol, signal.position_size)
-            except Exception as e:
-                print(f"❌ IBKR 매수 실패 {signal.symbol}: {e}")
-        
-        # 포지션 기록 (실거래 성공 여부와 관계없이)
-        position = Position(
-            symbol=signal.symbol,
-            buy_price=signal.price,
-            shares=signal.position_size,
-            buy_date=signal.timestamp,
-            stop_loss=signal.stop_loss,
-            take_profit1=signal.take_profit1,
-            take_profit2=signal.take_profit2,
-            max_hold_date=signal.timestamp + pd.Timedelta(days=signal.max_hold_days)
-        )
-        self.positions[signal.symbol] = position
-        
-        # 결과 출력
-        trade_type = "🚀 실거래" if ibkr_success else "💡 가상거래"
-        print(f"✅ {trade_type} {signal.symbol} 포지션 오픈: {signal.position_size:,}주 @ {signal.price:,.0f}엔")
-        print(f"   🛡️ 손절: {signal.stop_loss:,.0f}엔 (-{((signal.price-signal.stop_loss)/signal.price*100):.1f}%)")
-        print(f"   🎯 1차익절: {signal.take_profit1:,.0f}엔 (+{((signal.take_profit1-signal.price)/signal.price*100):.1f}%)")
-        print(f"   🚀 2차익절: {signal.take_profit2:,.0f}엔 (+{((signal.take_profit2-signal.price)/signal.price*100):.1f}%)")
-    
-    async def close_position_with_ibkr(self, symbol: str, shares: int, reason: str) -> bool:
-        """IBKR 매도 실행"""
-        if not self.ibkr_connected:
-            return False
-            
-        try:
-            success = await self.ibkr.place_sell_order(symbol, shares)
-            if success:
-                print(f"🚀 IBKR 실거래 매도: {symbol} {shares:,}주 ({reason})")
-            return success
-        except Exception as e:
-            print(f"❌ IBKR 매도 실패 {symbol}: {e}")
-            return False
+    def open_position(self, signal: LegendarySignal):
+        """포지션 오픈"""
+        if signal.action == "BUY" and signal.position_size > 0:
+            position = Position(
+                symbol=signal.symbol,
+                buy_price=signal.price,
+                shares=signal.position_size,
+                buy_date=signal.timestamp,
+                stop_loss=signal.stop_loss,
+                take_profit1=signal.take_profit1,
+                take_profit2=signal.take_profit2,
+                max_hold_date=signal.timestamp + pd.Timedelta(days=signal.max_hold_days)
+            )
+            self.positions[signal.symbol] = position
+            print(f"✅ {signal.symbol} 포지션 오픈: {signal.position_size:,}주 @ {signal.price:,.0f}엔")
+            print(f"   🛡️ 손절: {signal.stop_loss:,.0f}엔 (-{((signal.price-signal.stop_loss)/signal.price*100):.1f}%)")
+            print(f"   🎯 1차익절: {signal.take_profit1:,.0f}엔 (+{((signal.take_profit1-signal.price)/signal.price*100):.1f}%)")
+            print(f"   🚀 2차익절: {signal.take_profit2:,.0f}엔 (+{((signal.take_profit2-signal.price)/signal.price*100):.1f}%)")
     
     async def check_positions(self) -> List[Dict]:
         """포지션 체크 및 매도 신호"""
@@ -1126,19 +895,13 @@ class PositionManager:
                 # 손절 체크
                 if current_price <= position.stop_loss:
                     pnl = (current_price - position.buy_price) / position.buy_price * 100
-                    shares_to_sell = position.shares - position.shares_sold_1st
-                    
-                    # IBKR 실거래 매도 시도
-                    ibkr_success = await self.close_position_with_ibkr(symbol, shares_to_sell, "손절")
-                    
                     actions.append({
                         'action': 'STOP_LOSS',
                         'symbol': symbol,
-                        'shares': shares_to_sell,
+                        'shares': position.shares - position.shares_sold_1st,
                         'price': current_price,
                         'pnl': pnl,
-                        'reason': f'손절 실행 ({pnl:.1f}%)',
-                        'ibkr_executed': ibkr_success
+                        'reason': f'손절 실행 ({pnl:.1f}%)'
                     })
                     self._close_position(symbol, current_price, 'STOP_LOSS')
                     
@@ -1146,18 +909,13 @@ class PositionManager:
                 elif current_price >= position.take_profit1 and position.shares_sold_1st == 0:
                     shares_to_sell = position.shares // 2
                     pnl = (current_price - position.buy_price) / position.buy_price * 100
-                    
-                    # IBKR 실거래 매도 시도
-                    ibkr_success = await self.close_position_with_ibkr(symbol, shares_to_sell, "1차익절")
-                    
                     actions.append({
                         'action': 'TAKE_PROFIT_1',
                         'symbol': symbol,
                         'shares': shares_to_sell,
                         'price': current_price,
                         'pnl': pnl,
-                        'reason': f'1차 익절 ({pnl:.1f}%) - 50% 매도',
-                        'ibkr_executed': ibkr_success
+                        'reason': f'1차 익절 ({pnl:.1f}%) - 50% 매도'
                     })
                     position.shares_sold_1st = shares_to_sell
                     
@@ -1165,18 +923,13 @@ class PositionManager:
                 elif current_price >= position.take_profit2:
                     remaining_shares = position.shares - position.shares_sold_1st
                     pnl = (current_price - position.buy_price) / position.buy_price * 100
-                    
-                    # IBKR 실거래 매도 시도
-                    ibkr_success = await self.close_position_with_ibkr(symbol, remaining_shares, "2차익절")
-                    
                     actions.append({
                         'action': 'TAKE_PROFIT_2',
                         'symbol': symbol,
                         'shares': remaining_shares,
                         'price': current_price,
                         'pnl': pnl,
-                        'reason': f'2차 익절 ({pnl:.1f}%) - 전량 매도',
-                        'ibkr_executed': ibkr_success
+                        'reason': f'2차 익절 ({pnl:.1f}%) - 전량 매도'
                     })
                     self._close_position(symbol, current_price, 'TAKE_PROFIT_2')
                     
@@ -1184,18 +937,13 @@ class PositionManager:
                 elif current_time >= position.max_hold_date:
                     remaining_shares = position.shares - position.shares_sold_1st
                     pnl = (current_price - position.buy_price) / position.buy_price * 100
-                    
-                    # IBKR 실거래 매도 시도
-                    ibkr_success = await self.close_position_with_ibkr(symbol, remaining_shares, "시간만료")
-                    
                     actions.append({
                         'action': 'TIME_EXIT',
                         'symbol': symbol,
                         'shares': remaining_shares,
                         'price': current_price,
                         'pnl': pnl,
-                        'reason': f'보유기간 만료 ({pnl:.1f}%)',
-                        'ibkr_executed': ibkr_success
+                        'reason': f'보유기간 만료 ({pnl:.1f}%)'
                     })
                     self._close_position(symbol, current_price, 'TIME_EXIT')
                 
