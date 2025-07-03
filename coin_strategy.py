@@ -969,7 +969,7 @@ if __name__ == "__main__":
             print("  python script.py analyze:BTC  # 단일 코인 분석")
     else:
         # 기본 실행: 전체 전략
-        asyncio.run(main()) or len(btc_data) < 60:
+        asyncio.run(main()) or len(btc_data) < 60
                 return self._default_cycle_state()
             
             # 3차원 상태 분석
