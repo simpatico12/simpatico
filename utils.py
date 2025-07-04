@@ -1,761 +1,844 @@
+"""#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-🛠️ 최고퀸트프로젝트 - 공통 유틸리티 모듈 (Enhanced Edition)
-========================================================================
+🏆 퀸트프로젝트 - 4대 시장 통합 유틸리티 UTILS.PY
+================================================================
 
-전체 프로젝트에서 사용하는 공통 기능들:
-- 📊 데이터 처리 및 변환
-- 💰 금융 계산 함수
-- 📁 파일 I/O 관리
-- 🔄 API 재시도 로직
-- 📈 기술적 지표 계산
-- 📋 포맷팅 및 검증
-- 💾 캐싱 시스템
-- 📊 백테스트 유틸리티
-- 🌍 시간대 관리
-- 🔔 알림 시스템
-- 🔒 보안 유틸리티
-- 📱 텔레그램 통합
+🌟 핵심 기능:
+- 🔧 설정 관리 및 검증 시스템
+- 📊 데이터 처리 및 변환 유틸리티
+- 🛡️ 보안 및 암호화 시스템
+- 📈 기술지표 계산 라이브러리
+- 🌐 네트워크 및 API 헬퍼
+- 📱 알림 및 로깅 시스템
+- 🔄 백업 및 복구 시스템
+- 📊 성과 분석 도구
 
-Author: 최고퀸트팀
-Version: 2.0.0 (Enhanced Edition)
-Project: 최고퀸트프로젝트
-File: utils.py (프로젝트 루트)
+⚡ 혼자 보수유지 가능한 완전 자동화 유틸리티
+💎 모듈화된 헬퍼 함수들
+🛡️ 에러 핸들링 및 복구 시스템
+
+Author: 퀸트팀 | Version: ULTIMATE
+Date: 2024.12
 """
 
-import asyncio
-import logging
-import json
-import csv
 import os
+import sys
+import json
+import yaml
 import pickle
 import hashlib
-import time
-import secrets
-import sys
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Union, Callable, Tuple
-import yaml
-import pandas as pd
-import numpy as np
-from functools import wraps
+import sqlite3
+import logging
+import asyncio
+import aiohttp
+import smtplib
+import zipfile
+import shutil
+import psutil
+import threading
+import functools
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import requests
+from typing import Dict, List, Optional, Union, Any, Tuple, Callable
 from dataclasses import dataclass, asdict
+from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from email.mime.text import MimeText
+from email.mime.multipart import MimeMultipart
+from urllib.parse import urlparse
 import traceback
-import pytz
-from decimal import Decimal, ROUND_HALF_UP
+import warnings
+warnings.filterwarnings('ignore')
 
-# 설정 파일과 연동
+import numpy as np
+import pandas as pd
+import requests
+from cryptography.fernet import Fernet
+from dotenv import load_dotenv
+
+# 선택적 import (없어도 기본 기능 동작)
 try:
-    from dotenv import load_dotenv
-    load_dotenv()  # .env 파일 로드
+    import telegram
+    TELEGRAM_AVAILABLE = True
 except ImportError:
-    pass
+    TELEGRAM_AVAILABLE = False
 
-# 로거 설정
-logger = logging.getLogger(__name__)
+try:
+    import discord
+    DISCORD_AVAILABLE = True
+except ImportError:
+    DISCORD_AVAILABLE = False
 
-# ================================
-# 🌐 프로젝트 설정 통합 로더
-# ================================
+try:
+    import slack_sdk
+    SLACK_AVAILABLE = True
+except ImportError:
+    SLACK_AVAILABLE = False
 
-class ConfigManager:
-    """설정 파일 통합 관리자 (settings.yaml + .env 연동)"""
+try:
+    import talib
+    TALIB_AVAILABLE = True
+except ImportError:
+    TALIB_AVAILABLE = False
+
+# ============================================================================
+# 🔐 보안 및 암호화 시스템
+# ============================================================================
+class QuintSecurity:
+    """퀸트프로젝트 보안 관리자"""
     
-    def __init__(self, config_path: str = "settings.yaml"):
-        self.config_path = config_path
-        self.config = None
-        self.load_config()
+    def __init__(self):
+        self.key_file = ".quint_key"
+        self.encrypted_file = ".quint_secrets.enc"
+        self._cipher = None
+        self._initialize_security()
     
-    def load_config(self) -> Dict[str, Any]:
-        """설정 파일 로드 (환경변수 치환 포함)"""
+    def _initialize_security(self):
+        """보안 시스템 초기화"""
+        if not Path(self.key_file).exists():
+            self._generate_key()
+        self._load_key()
+    
+    def _generate_key(self):
+        """암호화 키 생성"""
+        key = Fernet.generate_key()
+        with open(self.key_file, 'wb') as f:
+            f.write(key)
+        os.chmod(self.key_file, 0o600)  # 소유자만 읽기 가능
+    
+    def _load_key(self):
+        """암호화 키 로드"""
         try:
-            if not os.path.exists(self.config_path):
-                logger.warning(f"설정 파일 없음: {self.config_path}, 기본 설정 사용")
-                self.config = self._get_default_config()
-                return self.config
-            
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                raw_config = yaml.safe_load(f)
-            
-            # 환경변수 치환
-            self.config = self._substitute_env_vars(raw_config)
-            logger.info(f"설정 파일 로드 완료: {self.config_path}")
-            return self.config
-            
+            with open(self.key_file, 'rb') as f:
+                key = f.read()
+            self._cipher = Fernet(key)
         except Exception as e:
-            logger.error(f"설정 파일 로드 실패: {e}")
-            self.config = self._get_default_config()
-            return self.config
+            QuintLogger.error(f"암호화 키 로드 실패: {e}")
+            self._generate_key()
+            self._load_key()
     
-    def _substitute_env_vars(self, obj: Any) -> Any:
-        """환경변수 치환 (${VAR_NAME:-default} 형식 지원)"""
-        if isinstance(obj, str):
-            # ${VAR_NAME:-default_value} 형식 처리
-            import re
-            pattern = r'\$\{([^}]+)\}'
+    def encrypt_data(self, data: Union[str, dict]) -> bytes:
+        """데이터 암호화"""
+        try:
+            if isinstance(data, dict):
+                data = json.dumps(data)
+            if isinstance(data, str):
+                data = data.encode()
+            return self._cipher.encrypt(data)
+        except Exception as e:
+            QuintLogger.error(f"데이터 암호화 실패: {e}")
+            return b""
+    
+    def decrypt_data(self, encrypted_data: bytes) -> Union[str, dict]:
+        """데이터 복호화"""
+        try:
+            decrypted = self._cipher.decrypt(encrypted_data)
+            data_str = decrypted.decode()
+            try:
+                return json.loads(data_str)
+            except:
+                return data_str
+        except Exception as e:
+            QuintLogger.error(f"데이터 복호화 실패: {e}")
+            return {}
+    
+    def save_secrets(self, secrets: Dict[str, Any]):
+        """비밀 정보 암호화 저장"""
+        try:
+            encrypted = self.encrypt_data(secrets)
+            with open(self.encrypted_file, 'wb') as f:
+                f.write(encrypted)
+            os.chmod(self.encrypted_file, 0o600)
+            QuintLogger.info("비밀 정보 저장 완료")
+        except Exception as e:
+            QuintLogger.error(f"비밀 정보 저장 실패: {e}")
+    
+    def load_secrets(self) -> Dict[str, Any]:
+        """비밀 정보 복호화 로드"""
+        try:
+            if not Path(self.encrypted_file).exists():
+                return {}
             
-            def replace_var(match):
-                var_expr = match.group(1)
-                if ':-' in var_expr:
-                    var_name, default_value = var_expr.split(':-', 1)
-                    return os.getenv(var_name, default_value)
-                else:
-                    return os.getenv(var_expr, match.group(0))
+            with open(self.encrypted_file, 'rb') as f:
+                encrypted = f.read()
             
-            return re.sub(pattern, replace_var, obj)
+            return self.decrypt_data(encrypted)
+        except Exception as e:
+            QuintLogger.error(f"비밀 정보 로드 실패: {e}")
+            return {}
+    
+    def hash_string(self, text: str) -> str:
+        """문자열 해시화"""
+        return hashlib.sha256(text.encode()).hexdigest()
+    
+    def validate_api_key(self, api_key: str, service: str) -> bool:
+        """API 키 유효성 검증"""
+        if not api_key or len(api_key) < 10:
+            return False
         
-        elif isinstance(obj, dict):
-            return {key: self._substitute_env_vars(value) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [self._substitute_env_vars(item) for item in obj]
-        else:
-            return obj
+        # 서비스별 기본 검증
+        validators = {
+            'upbit': lambda k: k.startswith('UPBIT') and len(k) >= 32,
+            'telegram': lambda k: ':' in k and len(k.split(':')[1]) >= 32,
+            'ibkr': lambda k: k.isalnum() and 6 <= len(k) <= 20,
+            'openai': lambda k: k.startswith('sk-') and len(k) >= 40
+        }
+        
+        validator = validators.get(service.lower())
+        return validator(api_key) if validator else True
+
+# 전역 보안 관리자
+security = QuintSecurity()
+
+# ============================================================================
+# 📝 로깅 시스템
+# ============================================================================
+class QuintLogger:
+    """퀸트프로젝트 통합 로깅 시스템"""
     
-    def _get_default_config(self) -> Dict[str, Any]:
-        """기본 설정값"""
-        return {
-            'project': {
-                'name': '최고퀸트프로젝트',
-                'version': '2.0.0',
+    _loggers = {}
+    _handlers_added = False
+    
+    @classmethod
+    def setup(cls, log_level: str = 'INFO', log_file: str = 'quint.log'):
+        """로깅 시스템 설정"""
+        if cls._handlers_added:
+            return
+        
+        # 로그 디렉토리 생성
+        log_dir = Path('logs')
+        log_dir.mkdir(exist_ok=True)
+        
+        # 로그 파일 경로
+        log_path = log_dir / log_file
+        
+        # 포매터 설정
+        formatter = logging.Formatter(
+            '%(asctime)s | %(name)s | %(levelname)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        
+        # 루트 로거 설정
+        root_logger = logging.getLogger()
+        root_logger.setLevel(getattr(logging, log_level.upper()))
+        
+        # 콘솔 핸들러
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(formatter)
+        console_handler.setLevel(getattr(logging, log_level.upper()))
+        
+        # 파일 핸들러 (로테이션 지원)
+        from logging.handlers import RotatingFileHandler
+        file_handler = RotatingFileHandler(
+            log_path, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8'
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(logging.DEBUG)
+        
+        # 핸들러 추가
+        root_logger.addHandler(console_handler)
+        root_logger.addHandler(file_handler)
+        
+        cls._handlers_added = True
+        cls.info("퀸트프로젝트 로깅 시스템 초기화 완료")
+    
+    @classmethod
+    def get_logger(cls, name: str) -> logging.Logger:
+        """로거 인스턴스 반환"""
+        if name not in cls._loggers:
+            cls._loggers[name] = logging.getLogger(name)
+        return cls._loggers[name]
+    
+    @classmethod
+    def debug(cls, message: str, name: str = 'quint'):
+        """디버그 로그"""
+        cls.get_logger(name).debug(message)
+    
+    @classmethod
+    def info(cls, message: str, name: str = 'quint'):
+        """정보 로그"""
+        cls.get_logger(name).info(message)
+    
+    @classmethod
+    def warning(cls, message: str, name: str = 'quint'):
+        """경고 로그"""
+        cls.get_logger(name).warning(message)
+    
+    @classmethod
+    def error(cls, message: str, name: str = 'quint'):
+        """에러 로그"""
+        cls.get_logger(name).error(message)
+    
+    @classmethod
+    def critical(cls, message: str, name: str = 'quint'):
+        """치명적 오류 로그"""
+        cls.get_logger(name).critical(message)
+    
+    @classmethod
+    def log_exception(cls, exception: Exception, context: str = "", name: str = 'quint'):
+        """예외 로그"""
+        error_msg = f"{context}: {str(exception)}\n{traceback.format_exc()}"
+        cls.get_logger(name).error(error_msg)
+    
+    @classmethod
+    def log_performance(cls, func_name: str, execution_time: float, name: str = 'performance'):
+        """성능 로그"""
+        cls.get_logger(name).info(f"{func_name} 실행시간: {execution_time:.4f}초")
+
+# 로깅 시스템 초기화
+QuintLogger.setup()
+
+# ============================================================================
+# 📊 설정 관리자
+# ============================================================================
+class QuintConfig:
+    """퀸트프로젝트 통합 설정 관리자"""
+    
+    def __init__(self, config_file: str = "quint_config.yaml"):
+        self.config_file = Path(config_file)
+        self.config = {}
+        self.schema = {}
+        self._watchers = []
+        self._load_config()
+        self._load_schema()
+    
+    def _load_config(self):
+        """설정 파일 로드"""
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    self.config = yaml.safe_load(f) or {}
+                QuintLogger.info(f"설정 파일 로드 완료: {self.config_file}")
+            else:
+                self._create_default_config()
+                QuintLogger.info("기본 설정 파일 생성 완료")
+        except Exception as e:
+            QuintLogger.error(f"설정 파일 로드 실패: {e}")
+            self.config = {}
+    
+    def _create_default_config(self):
+        """기본 설정 생성"""
+        self.config = {
+            'system': {
                 'environment': 'development',
-                'mode': 'safe'
+                'project_mode': 'simulation',
+                'debug_mode': False,
+                'log_level': 'INFO',
+                'timezone': 'UTC',
+                'language': 'ko'
             },
-            'trading': {
-                'paper_trading': True,
-                'max_positions': 10,
-                'risk_limit': 0.02
+            'markets': {
+                'us_stocks': {'enabled': True, 'allocation': 40.0},
+                'upbit_crypto': {'enabled': True, 'allocation': 30.0},
+                'japan_stocks': {'enabled': True, 'allocation': 20.0},
+                'india_stocks': {'enabled': True, 'allocation': 10.0}
             },
-            'api': {
-                'upbit': {'enabled': True, 'paper_trading': True},
-                'ibkr': {'enabled': True, 'paper_trading': True}
+            'risk_management': {
+                'max_total_risk': 20.0,
+                'max_daily_loss': 5.0,
+                'max_correlation': 0.7,
+                'circuit_breaker': True
             },
             'notifications': {
-                'telegram': {'enabled': False}
-            },
-            'us_strategy': {'enabled': True, 'confidence_threshold': 0.75},
-            'jp_strategy': {'enabled': True, 'confidence_threshold': 0.60},
-            'coin_strategy': {
-                'enabled': True,
-                'confidence_threshold': 0.65,
-                'symbols': {
-                    'MAJOR': ['KRW-BTC', 'KRW-ETH'],
-                    'ALTCOIN': ['KRW-ADA', 'KRW-DOT']
-                }
+                'telegram': {'enabled': False},
+                'discord': {'enabled': False},
+                'email': {'enabled': False}
             }
         }
+        self.save()
     
-    def get(self, key_path: str, default: Any = None) -> Any:
-        """점 표기법으로 설정값 가져오기 (예: 'trading.max_positions')"""
+    def _load_schema(self):
+        """설정 스키마 로드"""
+        schema_file = Path("config_schema.yaml")
+        if schema_file.exists():
+            try:
+                with open(schema_file, 'r', encoding='utf-8') as f:
+                    self.schema = yaml.safe_load(f) or {}
+            except Exception as e:
+                QuintLogger.error(f"스키마 로드 실패: {e}")
+    
+    def get(self, key_path: str, default=None):
+        """설정값 조회 (점 표기법)"""
         keys = key_path.split('.')
         value = self.config
         
-        try:
-            for key in keys:
+        for key in keys:
+            if isinstance(value, dict) and key in value:
                 value = value[key]
-            return value
-        except (KeyError, TypeError):
-            return default
+            else:
+                return default
+        
+        # 환경변수 치환
+        if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+            env_var = value[2:-1]
+            return os.getenv(env_var, default)
+        
+        return value
     
-    def get_trading_config(self) -> Dict[str, Any]:
-        """거래 관련 설정"""
-        return self.get('trading', {})
+    def set(self, key_path: str, value: Any, save: bool = True):
+        """설정값 설정"""
+        keys = key_path.split('.')
+        config = self.config
+        
+        # 중간 딕셔너리 생성
+        for key in keys[:-1]:
+            if key not in config:
+                config[key] = {}
+            config = config[key]
+        
+        # 값 설정
+        old_value = config.get(keys[-1])
+        config[keys[-1]] = value
+        
+        # 변경 감지 및 알림
+        if old_value != value:
+            self._notify_watchers(key_path, old_value, value)
+        
+        if save:
+            self.save()
     
-    def get_strategy_config(self, strategy: str) -> Dict[str, Any]:
-        """전략별 설정"""
-        return self.get(f'{strategy}_strategy', {})
+    def save(self):
+        """설정 파일 저장"""
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                yaml.dump(self.config, f, default_flow_style=False, 
+                         allow_unicode=True, indent=2)
+            QuintLogger.info("설정 파일 저장 완료")
+        except Exception as e:
+            QuintLogger.error(f"설정 파일 저장 실패: {e}")
     
-    def get_api_config(self, api_name: str) -> Dict[str, Any]:
-        """API 설정"""
-        return self.get(f'api.{api_name}', {})
-    
-    def is_paper_trading(self) -> bool:
-        """모의거래 모드 여부"""
-        return self.get('trading.paper_trading', True)
-    
-    def get_risk_limits(self) -> Dict[str, float]:
-        """리스크 제한 설정"""
-        return {
-            'max_position_size': self.get('trading.max_position_size', 0.05),
-            'max_daily_loss': self.get('trading.max_daily_loss', 0.01),
-            'max_drawdown': self.get('trading.max_drawdown', 0.1),
-            'portfolio_risk': self.get('risk_management.max_portfolio_risk', 0.02)
-        }
-
-# 전역 설정 매니저
-config_manager = ConfigManager()
-
-# ================================
-# 🕐 시간대 관리 유틸리티 (강화)
-# ================================
-
-class TimeZoneManager:
-    """시간대 관리 전용 클래스 (강화)"""
-    
-    def __init__(self):
-        """시간대 초기화"""
-        self.timezones = {
-            'KOR': pytz.timezone('Asia/Seoul'),      # 한국 시간 (KST)
-            'US': pytz.timezone('US/Eastern'),       # 미국 동부 (EST/EDT 자동)
-            'JP': pytz.timezone('Asia/Tokyo'),       # 일본 시간 (JST)
-            'UTC': pytz.UTC,                         # 협정 시간
-            'EU': pytz.timezone('Europe/London'),    # 유럽 (GMT/BST)
-            'CN': pytz.timezone('Asia/Shanghai')     # 중국 (CST)
-        }
+    def validate(self) -> List[str]:
+        """설정 유효성 검증"""
+        errors = []
         
-        # 시장 운영 시간 (현지 시간 기준)
-        self.market_hours = {
-            'US': {
-                'premarket_start': '04:00',
-                'premarket_end': '09:30',
-                'regular_start': '09:30',
-                'regular_end': '16:00',
-                'aftermarket_start': '16:00',
-                'aftermarket_end': '20:00'
-            },
-            'JP': {
-                'morning_start': '09:00',
-                'morning_end': '11:30',
-                'afternoon_start': '12:30',
-                'afternoon_end': '15:00'
-            },
-            'EU': {
-                'regular_start': '08:00',
-                'regular_end': '16:30'
-            },
-            'COIN': {
-                'start': '00:00',
-                'end': '23:59'
-            }
-        }
-        
-        # 공휴일 캐시
-        self.holidays_cache = {}
-
-    def get_current_time(self, timezone: str = 'KOR') -> datetime:
-        """특정 시간대의 현재 시간"""
-        if timezone not in self.timezones:
-            timezone = 'KOR'
-        
-        utc_now = datetime.now(pytz.UTC)
-        local_time = utc_now.astimezone(self.timezones[timezone])
-        return local_time
-
-    def convert_time(self, dt: datetime, from_tz: str, to_tz: str) -> datetime:
-        """시간대 변환"""
-        if from_tz not in self.timezones or to_tz not in self.timezones:
-            return dt
-        
-        # 입력 시간이 naive하면 from_tz를 적용
-        if dt.tzinfo is None:
-            dt = self.timezones[from_tz].localize(dt)
-        
-        # 목표 시간대로 변환
-        converted = dt.astimezone(self.timezones[to_tz])
-        return converted
-
-    def get_all_market_times(self) -> Dict[str, str]:
-        """전체 시장 현재 시간"""
-        current_times = {}
-        
-        for market in ['KOR', 'US', 'JP', 'EU']:
-            current = self.get_current_time(market)
-            current_times[market] = {
-                'datetime': current.strftime('%Y-%m-%d %H:%M:%S'),
-                'time_only': current.strftime('%H:%M:%S'),
-                'date': current.strftime('%Y-%m-%d'),
-                'weekday': current.strftime('%A'),
-                'timezone_name': str(current.tzinfo),
-                'timestamp': current.timestamp()
-            }
-        
-        return current_times
-
-    def is_weekend(self, timezone: str = 'KOR') -> bool:
-        """주말 여부 확인"""
-        current = self.get_current_time(timezone)
-        return current.weekday() >= 5  # 5=토요일, 6=일요일
-
-    def is_holiday(self, market: str, date: datetime = None) -> bool:
-        """공휴일 여부 확인 (간단한 구현)"""
-        if date is None:
-            date = self.get_current_time(market.upper())
-        
-        # 주말은 기본적으로 휴일
-        if date.weekday() >= 5:
-            return True
-        
-        # 주요 공휴일 체크 (간단한 버전)
-        month_day = (date.month, date.day)
-        
-        common_holidays = [
-            (1, 1),   # 신정
-            (12, 25), # 크리스마스
+        # 필수 필드 검사
+        required_fields = [
+            'system.environment',
+            'system.project_mode',
+            'markets.us_stocks.enabled',
+            'markets.upbit_crypto.enabled'
         ]
         
-        us_holidays = [
-            (7, 4),   # 독립기념일
-            (11, 11), # 현충일
-        ] + common_holidays
+        for field in required_fields:
+            if self.get(field) is None:
+                errors.append(f"필수 설정 누락: {field}")
         
-        jp_holidays = [
-            (2, 11),  # 건국기념일
-            (4, 29),  # 쇼와의 날
-            (5, 3),   # 헌법기념일
-            (5, 4),   # 미도리의 날
-            (5, 5),   # 어린이날
-        ] + common_holidays
+        # 범위 검사
+        range_checks = {
+            'markets.us_stocks.allocation': (0, 100),
+            'markets.upbit_crypto.allocation': (0, 100),
+            'risk_management.max_total_risk': (0, 100),
+            'risk_management.max_daily_loss': (0, 50)
+        }
         
-        if market == 'US' and month_day in us_holidays:
-            return True
-        elif market == 'JP' and month_day in jp_holidays:
-            return True
-        elif month_day in common_holidays:
-            return True
+        for field, (min_val, max_val) in range_checks.items():
+            value = self.get(field)
+            if value is not None and not (min_val <= value <= max_val):
+                errors.append(f"범위 오류 {field}: {value} (범위: {min_val}-{max_val})")
         
-        return False
+        # 할당 비율 합계 검사
+        total_allocation = sum([
+            self.get('markets.us_stocks.allocation', 0),
+            self.get('markets.upbit_crypto.allocation', 0),
+            self.get('markets.japan_stocks.allocation', 0),
+            self.get('markets.india_stocks.allocation', 0)
+        ])
+        
+        if abs(total_allocation - 100.0) > 0.1:
+            errors.append(f"시장 할당 비율 합계 오류: {total_allocation}% (100%여야 함)")
+        
+        return errors
+    
+    def add_watcher(self, callback: Callable[[str, Any, Any], None]):
+        """설정 변경 감시자 추가"""
+        self._watchers.append(callback)
+    
+    def _notify_watchers(self, key_path: str, old_value: Any, new_value: Any):
+        """설정 변경 알림"""
+        for watcher in self._watchers:
+            try:
+                watcher(key_path, old_value, new_value)
+            except Exception as e:
+                QuintLogger.error(f"설정 변경 감시자 오류: {e}")
+    
+    def backup(self, backup_dir: str = "backups"):
+        """설정 백업"""
+        try:
+            backup_path = Path(backup_dir)
+            backup_path.mkdir(exist_ok=True)
+            
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_file = backup_path / f"config_backup_{timestamp}.yaml"
+            
+            shutil.copy2(self.config_file, backup_file)
+            QuintLogger.info(f"설정 백업 완료: {backup_file}")
+            return backup_file
+        except Exception as e:
+            QuintLogger.error(f"설정 백업 실패: {e}")
+            return None
+    
+    def restore(self, backup_file: Path):
+        """설정 복원"""
+        try:
+            if not backup_file.exists():
+                raise FileNotFoundError(f"백업 파일 없음: {backup_file}")
+            
+            shutil.copy2(backup_file, self.config_file)
+            self._load_config()
+            QuintLogger.info(f"설정 복원 완료: {backup_file}")
+        except Exception as e:
+            QuintLogger.error(f"설정 복원 실패: {e}")
 
-    def is_market_open_detailed(self, market: str) -> Dict[str, Any]:
-        """상세 시장 개장 정보 (강화)"""
-        market = market.upper()
-        
-        if market == 'COIN':
-            return {
-                'is_open': True,
-                'session_type': '24시간',
-                'status': 'open',
-                'next_event': None,
-                'current_time': self.get_current_time('UTC').strftime('%H:%M:%S UTC'),
-                'market_phase': 'continuous'
-            }
-        
-        # 시간대 매핑
-        tz_map = {'US': 'US', 'JP': 'JP', 'KOR': 'KOR', 'EU': 'EU'}
-        tz = tz_map.get(market, 'KOR')
-        
-        current = self.get_current_time(tz)
-        current_time_str = current.strftime('%H:%M')
-        
-        # 공휴일 체크
-        if self.is_holiday(market, current):
-            return {
-                'is_open': False,
-                'session_type': '공휴일',
-                'status': 'holiday',
-                'next_event': '다음 거래일까지 대기',
-                'current_time': current.strftime('%H:%M:%S'),
-                'market_phase': 'closed'
-            }
-        
-        # 주말 체크
-        if self.is_weekend(tz):
-            next_monday = current + timedelta(days=(7 - current.weekday()))
-            return {
-                'is_open': False,
-                'session_type': '주말 휴장',
-                'status': 'weekend',
-                'next_event': f"월요일 개장까지 {self._get_time_diff(current, next_monday)}",
-                'current_time': current.strftime('%H:%M:%S'),
-                'market_phase': 'closed'
-            }
-        
-        # 시장별 개장 시간 체크
-        return self._check_market_session(market, current, current_time_str)
+# 전역 설정 관리자
+config = QuintConfig()
 
-    def _check_market_session(self, market: str, current: datetime, current_time: str) -> Dict[str, Any]:
-        """시장별 세션 체크"""
-        hours = self.market_hours.get(market, {})
-        
-        if market == 'US':
-            if self._time_in_range(current_time, hours.get('premarket_start'), hours.get('premarket_end')):
-                return self._create_market_status(True, '프리마켓', 'premarket', current, 
-                                                hours.get('regular_start'), 'EST/EDT')
-            elif self._time_in_range(current_time, hours.get('regular_start'), hours.get('regular_end')):
-                return self._create_market_status(True, '정규장', 'regular', current, 
-                                                hours.get('regular_end'), 'EST/EDT')
-            elif self._time_in_range(current_time, hours.get('aftermarket_start'), hours.get('aftermarket_end')):
-                return self._create_market_status(True, '애프터마켓', 'aftermarket', current, 
-                                                hours.get('aftermarket_end'), 'EST/EDT')
-            else:
-                return self._create_market_status(False, '휴장', 'closed', current, 
-                                                hours.get('premarket_start'), 'EST/EDT')
-        
-        elif market == 'JP':
-            if self._time_in_range(current_time, hours.get('morning_start'), hours.get('morning_end')):
-                return self._create_market_status(True, '오전장', 'morning', current, 
-                                                hours.get('morning_end'), 'JST')
-            elif self._time_in_range(current_time, hours.get('morning_end'), hours.get('afternoon_start')):
-                return self._create_market_status(False, '점심시간', 'lunch', current, 
-                                                hours.get('afternoon_start'), 'JST')
-            elif self._time_in_range(current_time, hours.get('afternoon_start'), hours.get('afternoon_end')):
-                return self._create_market_status(True, '오후장', 'afternoon', current, 
-                                                hours.get('afternoon_end'), 'JST')
-            else:
-                return self._create_market_status(False, '휴장', 'closed', current, 
-                                                hours.get('morning_start'), 'JST')
-        
-        elif market == 'EU':
-            if self._time_in_range(current_time, hours.get('regular_start'), hours.get('regular_end')):
-                return self._create_market_status(True, '정규장', 'regular', current, 
-                                                hours.get('regular_end'), 'GMT/BST')
-            else:
-                return self._create_market_status(False, '휴장', 'closed', current, 
-                                                hours.get('regular_start'), 'GMT/BST')
-        
-        else:
-            return {
-                'is_open': False,
-                'session_type': '알 수 없음',
-                'status': 'unknown',
-                'next_event': None,
-                'current_time': current.strftime('%H:%M:%S'),
-                'market_phase': 'unknown'
+# ============================================================================
+# 🌐 네트워크 및 API 헬퍼
+# ============================================================================
+class QuintNetwork:
+    """퀸트프로젝트 네트워크 유틸리티"""
+    
+    def __init__(self):
+        self.session = None
+        self.rate_limiters = defaultdict(lambda: {'count': 0, 'reset_time': datetime.now()})
+        self.retry_delays = [1, 2, 4, 8, 16]  # 지수 백오프
+    
+    async def get_session(self) -> aiohttp.ClientSession:
+        """비동기 HTTP 세션 반환"""
+        if self.session is None or self.session.closed:
+            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+            headers = {
+                'User-Agent': 'QuintProject/1.0 (Investment Analysis Bot)',
+                'Accept': 'application/json',
+                'Accept-Encoding': 'gzip, deflate'
             }
-
-    def _time_in_range(self, current_time: str, start_time: str, end_time: str) -> bool:
-        """시간 범위 체크"""
-        if not start_time or not end_time:
+            self.session = aiohttp.ClientSession(
+                timeout=timeout,
+                headers=headers,
+                connector=aiohttp.TCPConnector(limit=100, ttl_dns_cache=300)
+            )
+        return self.session
+    
+    async def close_session(self):
+        """세션 종료"""
+        if self.session and not self.session.closed:
+            await self.session.close()
+    
+    def check_rate_limit(self, endpoint: str, limit: int, window_seconds: int = 60) -> bool:
+        """API 요청 제한 확인"""
+        now = datetime.now()
+        limiter = self.rate_limiters[endpoint]
+        
+        # 윈도우 리셋 확인
+        if now - limiter['reset_time'] > timedelta(seconds=window_seconds):
+            limiter['count'] = 0
+            limiter['reset_time'] = now
+        
+        # 제한 확인
+        if limiter['count'] >= limit:
             return False
         
-        current = datetime.strptime(current_time, '%H:%M').time()
-        start = datetime.strptime(start_time, '%H:%M').time()
-        end = datetime.strptime(end_time, '%H:%M').time()
+        limiter['count'] += 1
+        return True
+    
+    async def request_with_retry(self, method: str, url: str, 
+                               max_retries: int = 3, **kwargs) -> Optional[Dict]:
+        """재시도가 포함된 HTTP 요청"""
+        session = await self.get_session()
         
-        if start <= end:
-            return start <= current < end
-        else:  # 자정을 넘어가는 경우
-            return current >= start or current < end
-
-    def _create_market_status(self, is_open: bool, session_type: str, status: str, 
-                            current: datetime, next_time: str, timezone: str) -> Dict[str, Any]:
-        """시장 상태 객체 생성"""
-        if next_time:
-            next_event = f"{session_type} {'마감' if is_open else '시작'}까지 {self._get_time_until(current, next_time)}"
-        else:
-            next_event = None
+        for attempt in range(max_retries + 1):
+            try:
+                # Rate limiting
+                endpoint = urlparse(url).netloc
+                if not self.check_rate_limit(endpoint, 60):  # 분당 60회 제한
+                    await asyncio.sleep(1)
+                    continue
+                
+                async with session.request(method, url, **kwargs) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data
+                    elif response.status == 429:  # Too Many Requests
+                        retry_after = int(response.headers.get('Retry-After', 60))
+                        QuintLogger.warning(f"Rate limited, waiting {retry_after}s")
+                        await asyncio.sleep(retry_after)
+                    elif response.status >= 500:  # Server errors
+                        if attempt < max_retries:
+                            delay = self.retry_delays[min(attempt, len(self.retry_delays)-1)]
+                            QuintLogger.warning(f"Server error {response.status}, retrying in {delay}s")
+                            await asyncio.sleep(delay)
+                        else:
+                            QuintLogger.error(f"Server error {response.status} after {max_retries} retries")
+                    else:
+                        QuintLogger.error(f"HTTP error {response.status}: {await response.text()}")
+                        break
+                        
+            except asyncio.TimeoutError:
+                if attempt < max_retries:
+                    delay = self.retry_delays[min(attempt, len(self.retry_delays)-1)]
+                    QuintLogger.warning(f"Timeout, retrying in {delay}s")
+                    await asyncio.sleep(delay)
+                else:
+                    QuintLogger.error(f"Timeout after {max_retries} retries")
+            except Exception as e:
+                if attempt < max_retries:
+                    delay = self.retry_delays[min(attempt, len(self.retry_delays)-1)]
+                    QuintLogger.warning(f"Request error: {e}, retrying in {delay}s")
+                    await asyncio.sleep(delay)
+                else:
+                    QuintLogger.error(f"Request failed after {max_retries} retries: {e}")
         
-        return {
-            'is_open': is_open,
-            'session_type': session_type,
-            'status': status,
-            'next_event': next_event,
-            'current_time': current.strftime(f'%H:%M:%S {timezone}'),
-            'market_phase': 'open' if is_open else 'closed'
-        }
-
-    def _get_time_until(self, current: datetime, target_time_str: str) -> str:
-        """현재 시간부터 목표 시간까지 남은 시간"""
+        return None
+    
+    async def get(self, url: str, **kwargs) -> Optional[Dict]:
+        """GET 요청"""
+        return await self.request_with_retry('GET', url, **kwargs)
+    
+    async def post(self, url: str, **kwargs) -> Optional[Dict]:
+        """POST 요청"""
+        return await self.request_with_retry('POST', url, **kwargs)
+    
+    def check_internet_connection(self) -> bool:
+        """인터넷 연결 확인"""
         try:
-            target_hour, target_min = map(int, target_time_str.split(':'))
-            target = current.replace(hour=target_hour, minute=target_min, second=0, microsecond=0)
-            
-            if target <= current:
-                target += timedelta(days=1)
-            
-            diff = target - current
-            return self._format_timedelta(diff)
+            response = requests.get('https://www.google.com', timeout=5)
+            return response.status_code == 200
         except:
-            return "계산 불가"
-
-    def _get_time_diff(self, from_time: datetime, to_time: datetime) -> str:
-        """두 시간 사이의 차이"""
-        diff = to_time - from_time
-        return self._format_timedelta(diff)
-
-    def _format_timedelta(self, td: timedelta) -> str:
-        """timedelta 포맷팅"""
-        total_seconds = int(td.total_seconds())
-        days = total_seconds // 86400
-        hours = (total_seconds % 86400) // 3600
-        minutes = (total_seconds % 3600) // 60
+            return False
+    
+    def get_external_ip(self) -> Optional[str]:
+        """외부 IP 주소 조회"""
+        try:
+            response = requests.get('https://httpbin.org/ip', timeout=10)
+            return response.json().get('origin')
+        except:
+            return None
+    
+    def ping_host(self, host: str, timeout: int = 5) -> bool:
+        """호스트 연결 확인"""
+        import subprocess
+        import platform
         
-        if days > 0:
-            return f"{days}일 {hours}시간"
-        elif hours > 0:
-            return f"{hours}시간 {minutes}분"
-        else:
-            return f"{minutes}분"
-
-    def get_trading_calendar(self, market: str, days: int = 7) -> List[Dict]:
-        """향후 거래 일정"""
-        calendar = []
-        current_date = self.get_current_time(market.upper()).date()
+        param = '-n' if platform.system().lower() == 'windows' else '-c'
+        command = ['ping', param, '1', host]
         
-        for i in range(days):
-            date = current_date + timedelta(days=i)
-            date_dt = datetime.combine(date, datetime.min.time())
-            
-            is_trading = not self.is_holiday(market, date_dt)
-            
-            calendar.append({
-                'date': date.strftime('%Y-%m-%d'),
-                'weekday': date.strftime('%A'),
-                'is_trading_day': is_trading,
-                'market': market.upper(),
-                'note': '거래일' if is_trading else '휴장일'
-            })
-        
-        return calendar
+        try:
+            result = subprocess.run(command, capture_output=True, timeout=timeout)
+            return result.returncode == 0
+        except:
+            return False
 
-# ================================
-# 📊 데이터 처리 유틸리티 (강화)
-# ================================
+# 전역 네트워크 헬퍼
+network = QuintNetwork()
 
-class DataProcessor:
-    """데이터 처리 전용 클래스 (강화)"""
+# ============================================================================
+# 📊 데이터 처리 유틸리티
+# ============================================================================
+class QuintDataProcessor:
+    """퀸트프로젝트 데이터 처리 유틸리티"""
     
     @staticmethod
-    def normalize_symbol(symbol: str) -> str:
-        """심볼 정규화 (강화)"""
-        if not symbol:
-            return ""
+    def clean_dataframe(df: pd.DataFrame, remove_duplicates: bool = True) -> pd.DataFrame:
+        """데이터프레임 정리"""
+        if df.empty:
+            return df
         
-        symbol = symbol.upper().strip()
+        # 복사본 생성
+        cleaned_df = df.copy()
         
-        # 공백 및 특수문자 정리
-        symbol = ''.join(c for c in symbol if c.isalnum() or c in '-.')
+        # 중복 제거
+        if remove_duplicates:
+            cleaned_df = cleaned_df.drop_duplicates()
         
-        # 암호화폐 처리
-        if '-' in symbol and not symbol.endswith('.T'):
-            parts = symbol.split('-')
-            if len(parts) == 2:
-                base, quote = parts
-                # 일반적인 암호화폐 페어 검증
-                if base in ['BTC', 'ETH', 'XRP', 'ADA', 'DOT', 'LINK', 'UNI', 'AAVE'] and \
-                   quote in ['KRW', 'USDT', 'USD', 'BTC', 'ETH']:
-                    return symbol
+        # 무한값 제거
+        cleaned_df = cleaned_df.replace([np.inf, -np.inf], np.nan)
         
-        # 일본 주식 처리
-        if symbol.endswith('.T') and len(symbol) >= 6:
-            code_part = symbol[:-2]
-            if code_part.isdigit() and len(code_part) == 4:
-                return symbol
-            
-        # 미국 주식 처리 (기본)
-        if symbol.replace('.', '').isalpha() and 1 <= len(symbol) <= 6:
-            return symbol
-        
-        return symbol
-
-    @staticmethod
-    def detect_market(symbol: str) -> str:
-        """심볼로 시장 판별 (강화)"""
-        symbol = DataProcessor.normalize_symbol(symbol)
-        
-        if not symbol:
-            return 'UNKNOWN'
-        
-        # 일본 주식
-        if symbol.endswith('.T'):
-            return 'JP'
-        
-        # 암호화폐
-        if '-' in symbol:
-            parts = symbol.split('-')
-            if len(parts) == 2:
-                base, quote = parts
-                crypto_bases = ['BTC', 'ETH', 'XRP', 'ADA', 'DOT', 'LINK', 'UNI', 'AAVE', 
-                              'SOL', 'MATIC', 'AVAX', 'ATOM', 'NEAR', 'DOGE', 'SHIB', 'LTC']
-                crypto_quotes = ['KRW', 'USDT', 'USD', 'BTC', 'ETH']
-                if base in crypto_bases and quote in crypto_quotes:
-                    return 'COIN'
-        
-        # 미국 주식 (기본)
-        if symbol.isalpha() and 1 <= len(symbol) <= 6:
-            return 'US'
-        
-        return 'UNKNOWN'
-
-    @staticmethod
-    def clean_price_data(data: pd.DataFrame, remove_outliers: bool = True) -> pd.DataFrame:
-        """가격 데이터 정리 (강화)"""
-        if data.empty:
-            return data
-        
-        original_length = len(data)
-        
-        # 1. 결측값 처리
-        data = data.dropna()
-        
-        # 2. 중복 제거 (인덱스 기준)
-        if isinstance(data.index, pd.DatetimeIndex):
-            data = data[~data.index.duplicated(keep='first')]
-        
-        # 3. 음수 가격 제거
-        numeric_columns = data.select_dtypes(include=[np.number]).columns
-        price_columns = [col for col in numeric_columns if any(price_col in col.lower() 
-                        for price_col in ['price', 'open', 'high', 'low', 'close', 'volume'])]
-        
-        for col in price_columns:
-            if 'volume' not in col.lower():  # 거래량은 음수 가능
-                data = data[data[col] > 0]
-        
-        # 4. 이상값 제거 (선택사항)
-        if remove_outliers:
-            for col in price_columns:
-                if 'volume' not in col.lower():
-                    Q1 = data[col].quantile(0.25)
-                    Q3 = data[col].quantile(0.75)
-                    IQR = Q3 - Q1
-                    lower_bound = Q1 - 1.5 * IQR
-                    upper_bound = Q3 + 1.5 * IQR
-                    data = data[(data[col] >= lower_bound) & (data[col] <= upper_bound)]
-        
-        # 5. 인덱스 정렬
-        if isinstance(data.index, pd.DatetimeIndex):
-            data = data.sort_index()
-        
-        cleaned_length = len(data)
-        if original_length > 0:
-            retention_rate = cleaned_length / original_length
-            logger.info(f"데이터 정리 완료: {original_length} → {cleaned_length} ({retention_rate:.1%} 유지)")
-        
-        return data
-
-    @staticmethod
-    def calculate_returns(prices: pd.Series, periods: int = 1, method: str = 'simple') -> pd.Series:
-        """수익률 계산 (강화)"""
-        if method == 'simple':
-            returns = prices.pct_change(periods=periods)
-        elif method == 'log':
-            returns = np.log(prices / prices.shift(periods))
-        else:
-            raise ValueError("method는 'simple' 또는 'log'여야 합니다")
-        
-        return returns.fillna(0)
-
-    @staticmethod
-    def calculate_volatility(returns: pd.Series, window: int = 20, annualize: bool = True) -> pd.Series:
-        """변동성 계산 (강화)"""
-        vol = returns.rolling(window=window).std()
-        
-        if annualize:
-            # 252 거래일 기준 연환산
-            vol = vol * np.sqrt(252)
-        
-        return vol.fillna(0)
-
-    @staticmethod
-    def calculate_correlation_matrix(data: pd.DataFrame, method: str = 'pearson') -> pd.DataFrame:
-        """상관관계 매트릭스 계산"""
-        return data.corr(method=method)
-
-    @staticmethod
-    def detect_outliers(data: pd.Series, method: str = 'iqr', threshold: float = 1.5) -> pd.Series:
-        """이상값 탐지"""
-        if method == 'iqr':
-            Q1 = data.quantile(0.25)
-            Q3 = data.quantile(0.75)
+        # 수치형 컬럼의 이상치 처리
+        numeric_columns = cleaned_df.select_dtypes(include=[np.number]).columns
+        for col in numeric_columns:
+            Q1 = cleaned_df[col].quantile(0.25)
+            Q3 = cleaned_df[col].quantile(0.75)
             IQR = Q3 - Q1
-            lower_bound = Q1 - threshold * IQR
-            upper_bound = Q3 + threshold * IQR
-            return (data < lower_bound) | (data > upper_bound)
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            
+            # 이상치를 NaN으로 처리
+            cleaned_df.loc[(cleaned_df[col] < lower_bound) | 
+                          (cleaned_df[col] > upper_bound), col] = np.nan
         
-        elif method == 'zscore':
-            z_scores = np.abs((data - data.mean()) / data.std())
-            return z_scores > threshold
-        
-        else:
-            raise ValueError("method는 'iqr' 또는 'zscore'여야 합니다")
-
-    @staticmethod
-    def resample_data(data: pd.DataFrame, freq: str) -> pd.DataFrame:
-        """데이터 리샘플링"""
-        if not isinstance(data.index, pd.DatetimeIndex):
-            raise ValueError("데이터 인덱스가 DatetimeIndex여야 합니다")
-        
-        # OHLCV 데이터 처리
-        agg_dict = {}
-        for col in data.columns:
-            col_lower = col.lower()
-            if 'open' in col_lower:
-                agg_dict[col] = 'first'
-            elif 'high' in col_lower:
-                agg_dict[col] = 'max'
-            elif 'low' in col_lower:
-                agg_dict[col] = 'min'
-            elif 'close' in col_lower or 'price' in col_lower:
-                agg_dict[col] = 'last'
-            elif 'volume' in col_lower:
-                agg_dict[col] = 'sum'
-            else:
-                agg_dict[col] = 'last'
-        
-        return data.resample(freq).agg(agg_dict).dropna()
-
-# ================================
-# 💰 금융 계산 함수 (강화)
-# ================================
-
-class FinanceUtils:
-    """금융 계산 전용 클래스 (강화)"""
+        return cleaned_df
     
     @staticmethod
-    def calculate_rsi(prices: pd.Series, period: int = 14, method: str = 'wilder') -> pd.Series:
-        """RSI 계산 (강화)"""
-        delta = prices.diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
+    def handle_missing_data(df: pd.DataFrame, method: str = 'forward_fill') -> pd.DataFrame:
+        """결측치 처리"""
+        if df.empty:
+            return df
         
-        if method == 'wilder':
-            # Wilder's smoothing (원래 RSI 공식)
-            avg_gain = gain.ewm(alpha=1/period, adjust=False).mean()
-            avg_loss = loss.ewm(alpha=1/period, adjust=False).mean()
+        if method == 'forward_fill':
+            return df.fillna(method='ffill').fillna(method='bfill')
+        elif method == 'interpolate':
+            return df.interpolate(method='linear')
+        elif method == 'drop':
+            return df.dropna()
+        elif method == 'mean':
+            numeric_columns = df.select_dtypes(include=[np.number]).columns
+            df[numeric_columns] = df[numeric_columns].fillna(df[numeric_columns].mean())
+            return df
         else:
-            # Simple Moving Average
-            avg_gain = gain.rolling(window=period).mean()
-            avg_loss = loss.rolling(window=period).mean()
-        
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        return rsi.fillna(50)
-
+            return df
+    
     @staticmethod
-    def calculate_macd(prices: pd.Series, fast: int = 12, slow: int = 26, 
-                      signal: int = 9) -> Dict[str, pd.Series]:
-        """MACD 계산 (강화)"""
-        ema_fast = prices.ewm(span=fast).mean()
-        ema_slow = prices.ewm(span=slow).mean()
+    def normalize_data(data: Union[np.ndarray, pd.Series], method: str = 'minmax') -> np.ndarray:
+        """데이터 정규화"""
+        if isinstance(data, pd.Series):
+            data = data.values
         
-        macd = ema_fast - ema_slow
-        signal_line = macd.ewm(span=signal).mean()
-        histogram = macd - signal_line
+        if method == 'minmax':
+            from sklearn.preprocessing import MinMaxScaler
+            scaler = MinMaxScaler()
+            return scaler.fit_transform(data.reshape(-1, 1)).flatten()
+        elif method == 'zscore':
+            return (data - np.mean(data)) / np.std(data)
+        elif method == 'robust':
+            from sklearn.preprocessing import RobustScaler
+            scaler = RobustScaler()
+            return scaler.fit_transform(data.reshape(-1, 1)).flatten()
+        else:
+            return data
+    
+    @staticmethod
+    def calculate_correlation_matrix(df: pd.DataFrame, method: str = 'pearson') -> pd.DataFrame:
+        """상관관계 매트릭스 계산"""
+        numeric_df = df.select_dtypes(include=[np.number])
+        return numeric_df.corr(method=method)
+    
+    @staticmethod
+    def detect_outliers(data: Union[np.ndarray, pd.Series], method: str = 'iqr') -> np.ndarray:
+        """이상치 탐지"""
+        if isinstance(data, pd.Series):
+            data = data.values
+        
+        if method == 'iqr':
+            Q1 = np.percentile(data, 25)
+            Q3 = np.percentile(data, 75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            return (data < lower_bound) | (data > upper_bound)
+        elif method == 'zscore':
+            z_scores = np.abs((data - np.mean(data)) / np.std(data))
+            return z_scores > 3
+        else:
+            return np.zeros(len(data), dtype=bool)
+    
+    @staticmethod
+    def resample_timeseries(df: pd.DataFrame, freq: str, agg_func: str = 'mean') -> pd.DataFrame:
+        """시계열 데이터 리샘플링"""
+        if df.empty or not isinstance(df.index, pd.DatetimeIndex):
+            return df
+        
+        if agg_func == 'ohlc':
+            # OHLC 데이터 처리
+            return df.resample(freq).agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min',
+                'close': 'last',
+                'volume': 'sum'
+            })
+        else:
+            return df.resample(freq).agg(agg_func)
+    
+    @staticmethod
+    def calculate_rolling_stats(data: pd.Series, window: int) -> Dict[str, pd.Series]:
+        """롤링 통계 계산"""
+        return {
+            'mean': data.rolling(window).mean(),
+            'std': data.rolling(window).std(),
+            'min': data.rolling(window).min(),
+            'max': data.rolling(window).max(),
+            'median': data.rolling(window).median()
+        }
+    
+    @staticmethod
+    def create_lag_features(df: pd.DataFrame, columns: List[str], lags: List[int]) -> pd.DataFrame:
+        """래그 피처 생성"""
+        result_df = df.copy()
+        
+        for col in columns:
+            if col in df.columns:
+                for lag in lags:
+                    result_df[f"{col}_lag_{lag}"] = df[col].shift(lag)
+        
+        return result_df
+    
+    @staticmethod
+    def binning_data(data: pd.Series, bins: int = 10, method: str = 'equal_width') -> pd.Series:
+        """데이터 구간화"""
+        if method == 'equal_width':
+            return pd.cut(data, bins=bins)
+        elif method == 'equal_freq':
+            return pd.qcut(data, q=bins)
+        else:
+            return data
+
+# ============================================================================
+# 📈 기술지표 계산 라이브러리
+# ============================================================================
+class QuintTechnicalIndicators:
+    """퀸트프로젝트 기술지표 계산 라이브러리"""
+    
+    @staticmethod
+    def sma(data: pd.Series, period: int) -> pd.Series:
+        """단순이동평균 (Simple Moving Average)"""
+        return data.rolling(window=period).mean()
+    
+    @staticmethod
+    def ema(data: pd.Series, period: int) -> pd.Series:
+        """지수이동평균 (Exponential Moving Average)"""
+        return data.ewm(span=period).mean()
+    
+    @staticmethod
+    def rsi(data: pd.Series, period: int = 14) -> pd.Series:
+        """상대강도지수 (Relative Strength Index)"""
+        delta = data.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+    
+    @staticmethod
+    def macd(data: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, pd.Series]:
+        """MACD (Moving Average Convergence Divergence)"""
+        ema_fast = QuintTechnicalIndicators.ema(data, fast)
+        ema_slow = QuintTechnicalIndicators.ema(data, slow)
+        macd_line = ema_fast - ema_slow
+        signal_line = QuintTechnicalIndicators.ema(macd_line, signal)
+        histogram = macd_line - signal_line
         
         return {
-            'macd': macd,
+            'macd': macd_line,
             'signal': signal_line,
-            'histogram': histogram,
-            'crossover': (macd > signal_line).astype(int).diff() == 1,
-            'crossunder': (macd < signal_line).astype(int).diff() == 1
+            'histogram': histogram
         }
-
+    
     @staticmethod
-    def calculate_bollinger_bands(prices: pd.Series, period: int = 20, 
-                                 std_dev: float = 2) -> Dict[str, pd.Series]:
-        """볼린저 밴드 계산 (강화)"""
-        sma = prices.rolling(window=period).mean()
-        std = prices.rolling(window=period).std()
-        
-        upper = sma + (std * std_dev)
-        lower = sma - (std * std_dev)
-        
-        # 추가 지표
-        bb_width = (upper - lower) / sma
-        bb_position = (prices - lower) / (upper - lower)
+    def bollinger_bands(data: pd.Series, period: int = 20, std_dev: float = 2.0) -> Dict[str, pd.Series]:
+        """볼린저 밴드 (Bollinger Bands)"""
+        sma = QuintTechnicalIndicators.sma(data, period)
+        std = data.rolling(window=period).std()
         
         return {
-            'upper': upper,
+            'upper': sma + (std * std_dev),
             'middle': sma,
-            'lower': lower,
-            'width': bb_width,
-            'position': bb_position,
-            'squeeze': bb_width < bb_width.rolling(20).quantile(0.1)
+            'lower': sma - (std * std_dev)
         }
-
+    
     @staticmethod
-    def calculate_stochastic(high: pd.Series, low: pd.Series, close: pd.Series,
-                           k_period: int = 14, d_period: int = 3) -> Dict[str, pd.Series]:
-        """스토캐스틱 계산"""
+    def stochastic(high: pd.Series, low: pd.Series, close: pd.Series, 
+                   k_period: int = 14, d_period: int = 3) -> Dict[str, pd.Series]:
+        """스토캐스틱 (Stochastic Oscillator)"""
         lowest_low = low.rolling(window=k_period).min()
         highest_high = high.rolling(window=k_period).max()
         
@@ -764,50 +847,67 @@ class FinanceUtils:
         
         return {
             'k': k_percent,
-            'd': d_percent,
-            'oversold': k_percent < 20,
-            'overbought': k_percent > 80
+            'd': d_percent
         }
-
+    
     @staticmethod
-    def calculate_williams_r(high: pd.Series, low: pd.Series, close: pd.Series,
-                           period: int = 14) -> pd.Series:
-        """Williams %R 계산"""
+    def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+        """평균 참값 범위 (Average True Range)"""
+        tr1 = high - low
+        tr2 = abs(high - close.shift(1))
+        tr3 = abs(low - close.shift(1))
+        
+        true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        return true_range.rolling(window=period).mean()
+    
+    @staticmethod
+    def fibonacci_retracement(high: float, low: float) -> Dict[str, float]:
+        """피보나치 되돌림 (Fibonacci Retracement)"""
+        diff = high - low
+        return {
+            '0%': high,
+            '23.6%': high - 0.236 * diff,
+            '38.2%': high - 0.382 * diff,
+            '50%': high - 0.5 * diff,
+            '61.8%': high - 0.618 * diff,
+            '78.6%': high - 0.786 * diff,
+            '100%': low
+        }
+    
+    @staticmethod
+    def williams_r(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+        """윌리엄스 %R (Williams %R)"""
         highest_high = high.rolling(window=period).max()
         lowest_low = low.rolling(window=period).min()
         
-        williams_r = -100 * ((highest_high - close) / (highest_high - lowest_low))
-        return williams_r
-
+        return -100 * ((highest_high - close) / (highest_high - lowest_low))
+    
     @staticmethod
-    def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series,
-                     period: int = 14) -> pd.Series:
-        """Average True Range 계산"""
-        tr1 = high - low
-        tr2 = np.abs(high - close.shift())
-        tr3 = np.abs(low - close.shift())
-        
-        true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = true_range.rolling(window=period).mean()
-        return atr
-
+    def adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+        """평균 방향 지수 (Average Directional Index)"""
+        if TALIB_AVAILABLE:
+            import talib
+            return pd.Series(talib.ADX(high.values, low.values, close.values, timeperiod=period), index=close.index)
+        else:
+            # 간단한 ADX 계산
+            tr = QuintTechnicalIndicators.atr(high, low, close, 1)
+            dm_plus = (high.diff()).where((high.diff() > low.diff().abs()) & (high.diff() > 0), 0)
+            dm_minus = (low.diff().abs()).where((low.diff().abs() > high.diff()) & (low.diff() < 0), 0)
+            
+            di_plus = 100 * (dm_plus.rolling(period).mean() / tr.rolling(period).mean())
+            di_minus = 100 * (dm_minus.rolling(period).mean() / tr.rolling(period).mean())
+            
+            dx = 100 * abs(di_plus - di_minus) / (di_plus + di_minus)
+            return dx.rolling(period).mean()
+    
     @staticmethod
-    def calculate_ichimoku(high: pd.Series, low: pd.Series, close: pd.Series,
-                         tenkan: int = 9, kijun: int = 26, senkou_b: int = 52) -> Dict[str, pd.Series]:
-        """일목균형표 계산"""
-        # 전환선 (Tenkan-sen)
+    def ichimoku_cloud(high: pd.Series, low: pd.Series, close: pd.Series,
+                       tenkan: int = 9, kijun: int = 26, senkou_b: int = 52) -> Dict[str, pd.Series]:
+        """일목균형표 (Ichimoku Cloud)"""
         tenkan_sen = (high.rolling(tenkan).max() + low.rolling(tenkan).min()) / 2
-        
-        # 기준선 (Kijun-sen)
         kijun_sen = (high.rolling(kijun).max() + low.rolling(kijun).min()) / 2
-        
-        # 선행스팬A (Senkou Span A)
         senkou_span_a = ((tenkan_sen + kijun_sen) / 2).shift(kijun)
-        
-        # 선행스팬B (Senkou Span B)
         senkou_span_b = ((high.rolling(senkou_b).max() + low.rolling(senkou_b).min()) / 2).shift(kijun)
-        
-        # 후행스팬 (Chikou Span)
         chikou_span = close.shift(-kijun)
         
         return {
@@ -815,1634 +915,1838 @@ class FinanceUtils:
             'kijun_sen': kijun_sen,
             'senkou_span_a': senkou_span_a,
             'senkou_span_b': senkou_span_b,
-            'chikou_span': chikou_span,
-            'cloud_top': pd.concat([senkou_span_a, senkou_span_b], axis=1).max(axis=1),
-            'cloud_bottom': pd.concat([senkou_span_a, senkou_span_b], axis=1).min(axis=1)
+            'chikou_span': chikou_span
         }
-
+    
     @staticmethod
-    def calculate_fibonacci_retracement(high_price: float, low_price: float) -> Dict[str, float]:
-        """피보나치 되돌림 계산"""
-        diff = high_price - low_price
+    def vwap(price: pd.Series, volume: pd.Series) -> pd.Series:
+        """거래량 가중 평균가격 (Volume Weighted Average Price)"""
+        return (price * volume).cumsum() / volume.cumsum()
+    
+    @staticmethod
+    def momentum(data: pd.Series, period: int = 10) -> pd.Series:
+        """모멘텀 (Momentum)"""
+        return data / data.shift(period) - 1
+    
+    @staticmethod
+    def rate_of_change(data: pd.Series, period: int = 10) -> pd.Series:
+        """변화율 (Rate of Change)"""
+        return ((data - data.shift(period)) / data.shift(period)) * 100
+
+# ============================================================================
+# 📱 알림 시스템
+# ============================================================================
+class QuintNotification:
+    """퀸트프로젝트 통합 알림 시스템"""
+    
+    def __init__(self):
+        self.telegram_bot = None
+        self.discord_webhook = None
+        self.slack_client = None
+        self._initialize_services()
+    
+    def _initialize_services(self):
+        """알림 서비스 초기화"""
+        # 텔레그램 초기화
+        if config.get('notifications.telegram.enabled') and TELEGRAM_AVAILABLE:
+            bot_token = config.get('notifications.telegram.bot_token')
+            if bot_token and not bot_token.startswith('${'):
+                try:
+                    self.telegram_bot = telegram.Bot(token=bot_token)
+                    QuintLogger.info("텔레그램 봇 초기화 완료")
+                except Exception as e:
+                    QuintLogger.error(f"텔레그램 봇 초기화 실패: {e}")
+        
+        # 디스코드 초기화
+        if config.get('notifications.discord.enabled'):
+            webhook_url = config.get('notifications.discord.webhook_url')
+            if webhook_url:
+                self.discord_webhook = webhook_url
+                QuintLogger.info("디스코드 웹훅 초기화 완료")
+        
+        # 슬랙 초기화
+        if config.get('notifications.slack.enabled') and SLACK_AVAILABLE:
+            token = config.get('notifications.slack.token')
+            if token:
+                try:
+                    self.slack_client = slack_sdk.WebClient(token=token)
+                    QuintLogger.info("슬랙 클라이언트 초기화 완료")
+                except Exception as e:
+                    QuintLogger.error(f"슬랙 클라이언트 초기화 실패: {e}")
+    
+    async def send_telegram_message(self, message: str, parse_mode: str = 'HTML') -> bool:
+        """텔레그램 메시지 전송"""
+        if not self.telegram_bot:
+            return False
+        
+        try:
+            chat_id = config.get('notifications.telegram.chat_id')
+            if not chat_id:
+                QuintLogger.error("텔레그램 채팅 ID가 설정되지 않았습니다")
+                return False
+            
+            await self.telegram_bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                parse_mode=parse_mode
+            )
+            QuintLogger.debug("텔레그램 메시지 전송 완료")
+            return True
+        except Exception as e:
+            QuintLogger.error(f"텔레그램 메시지 전송 실패: {e}")
+            return False
+    
+    async def send_discord_message(self, message: str, embed: Dict = None) -> bool:
+        """디스코드 메시지 전송"""
+        if not self.discord_webhook:
+            return False
+        
+        try:
+            data = {'content': message}
+            if embed:
+                data['embeds'] = [embed]
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.discord_webhook, json=data) as response:
+                    if response.status == 204:
+                        QuintLogger.debug("디스코드 메시지 전송 완료")
+                        return True
+                    else:
+                        QuintLogger.error(f"디스코드 메시지 전송 실패: {response.status}")
+                        return False
+        except Exception as e:
+            QuintLogger.error(f"디스코드 메시지 전송 실패: {e}")
+            return False
+    
+    def send_slack_message(self, channel: str, message: str) -> bool:
+        """슬랙 메시지 전송"""
+        if not self.slack_client:
+            return False
+        
+        try:
+            response = self.slack_client.chat_postMessage(
+                channel=channel,
+                text=message
+            )
+            if response['ok']:
+                QuintLogger.debug("슬랙 메시지 전송 완료")
+                return True
+            else:
+                QuintLogger.error(f"슬랙 메시지 전송 실패: {response['error']}")
+                return False
+        except Exception as e:
+            QuintLogger.error(f"슬랙 메시지 전송 실패: {e}")
+            return False
+    
+    def send_email(self, to_email: str, subject: str, body: str, html: bool = False) -> bool:
+        """이메일 전송"""
+        try:
+            smtp_server = config.get('notifications.email.smtp_server')
+            smtp_port = config.get('notifications.email.smtp_port', 587)
+            from_email = config.get('notifications.email.from_email')
+            password = config.get('notifications.email.password')
+            
+            if not all([smtp_server, from_email, password]):
+                QuintLogger.error("이메일 설정이 누락되었습니다")
+                return False
+            
+            msg = MimeMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = from_email
+            msg['To'] = to_email
+            
+            if html:
+                msg.attach(MimeText(body, 'html'))
+            else:
+                msg.attach(MimeText(body, 'plain'))
+            
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(from_email, password)
+            server.send_message(msg)
+            server.quit()
+            
+            QuintLogger.debug("이메일 전송 완료")
+            return True
+        except Exception as e:
+            QuintLogger.error(f"이메일 전송 실패: {e}")
+            return False
+    
+    async def send_alert(self, alert_type: str, title: str, message: str, 
+                        priority: str = 'normal') -> Dict[str, bool]:
+        """통합 알림 전송"""
+        results = {}
+        
+        # 조용한 시간 체크
+        if self._is_quiet_time():
+            if priority != 'critical':
+                QuintLogger.info("조용한 시간으로 인해 알림이 연기됩니다")
+                return {'delayed': True}
+        
+        # 알림 타입별 메시지 포맷팅
+        formatted_message = self._format_message(alert_type, title, message)
+        
+        # 텔레그램 전송
+        if config.get('notifications.telegram.enabled'):
+            results['telegram'] = await self.send_telegram_message(formatted_message)
+        
+        # 디스코드 전송
+        if config.get('notifications.discord.enabled'):
+            embed = self._create_discord_embed(alert_type, title, message, priority)
+            results['discord'] = await self.send_discord_message(formatted_message, embed)
+        
+        # 슬랙 전송
+        if config.get('notifications.slack.enabled'):
+            channel = config.get('notifications.slack.channel', '#general')
+            results['slack'] = self.send_slack_message(channel, formatted_message)
+        
+        # 이메일 전송 (중요한 알림만)
+        if config.get('notifications.email.enabled') and priority in ['high', 'critical']:
+            to_email = config.get('notifications.email.to_email')
+            if to_email:
+                results['email'] = self.send_email(to_email, title, message, html=True)
+        
+        return results
+    
+    def _is_quiet_time(self) -> bool:
+        """조용한 시간 확인"""
+        quiet_start = config.get('notifications.quiet_hours.start', '22:00')
+        quiet_end = config.get('notifications.quiet_hours.end', '07:00')
+        
+        if not quiet_start or not quiet_end:
+            return False
+        
+        now = datetime.now().time()
+        start_time = datetime.strptime(quiet_start, '%H:%M').time()
+        end_time = datetime.strptime(quiet_end, '%H:%M').time()
+        
+        if start_time <= end_time:
+            return start_time <= now <= end_time
+        else:  # 자정을 넘나드는 경우
+            return now >= start_time or now <= end_time
+    
+    def _format_message(self, alert_type: str, title: str, message: str) -> str:
+        """메시지 포맷팅"""
+        emoji_map = {
+            'signal': '📊',
+            'trade': '💰',
+            'error': '❌',
+            'warning': '⚠️',
+            'info': 'ℹ️',
+            'success': '✅'
+        }
+        
+        emoji = emoji_map.get(alert_type, '📢')
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        return f"{emoji} <b>{title}</b>\n\n{message}\n\n<i>{timestamp}</i>"
+    
+    def _create_discord_embed(self, alert_type: str, title: str, message: str, priority: str) -> Dict:
+        """디스코드 임베드 생성"""
+        color_map = {
+            'signal': 0x3498db,    # 파랑
+            'trade': 0x2ecc71,     # 초록
+            'error': 0xe74c3c,     # 빨강
+            'warning': 0xf39c12,   # 주황
+            'info': 0x9b59b6,      # 보라
+            'success': 0x27ae60    # 진한 초록
+        }
         
         return {
-            'level_0': high_price,
-            'level_23.6': high_price - 0.236 * diff,
-            'level_38.2': high_price - 0.382 * diff,
-            'level_50.0': high_price - 0.500 * diff,
-            'level_61.8': high_price - 0.618 * diff,
-            'level_78.6': high_price - 0.786 * diff,
-            'level_100': low_price
+            'title': title,
+            'description': message,
+            'color': color_map.get(alert_type, 0x95a5a6),
+            'timestamp': datetime.now().isoformat(),
+            'footer': {
+                'text': f'퀸트프로젝트 | 우선순위: {priority.upper()}'
+            }
         }
 
-    @staticmethod
-    def calculate_position_size(capital: float, risk_per_trade: float, 
-                              entry_price: float, stop_loss_price: float,
-                              method: str = 'fixed_risk') -> Dict[str, float]:
-        """포지션 크기 계산 (강화)"""
-        if entry_price <= 0 or stop_loss_price <= 0:
-            return {'shares': 0, 'position_value': 0, 'risk_amount': 0}
-        
-        risk_amount = capital * risk_per_trade
-        price_risk = abs(entry_price - stop_loss_price)
-        
-        if price_risk == 0:
-            return {'shares': 0, 'position_value': 0, 'risk_amount': 0}
-        
-        if method == 'fixed_risk':
-            shares = risk_amount / price_risk
-        elif method == 'fixed_percent':
-            shares = (capital * risk_per_trade) / entry_price
-        else:
-            shares = risk_amount / price_risk
-        
-        position_value = shares * entry_price
-        
-        return {
-            'shares': round(shares, 2),
-            'position_value': round(position_value, 2),
-            'risk_amount': round(risk_amount, 2),
-            'risk_percent': round((risk_amount / capital) * 100, 2)
-        }
+# 전역 알림 관리자
+notification = QuintNotification()
 
-    @staticmethod
-    def calculate_kelly_criterion(win_rate: float, avg_win: float, avg_loss: float) -> Dict[str, float]:
-        """켈리 공식 계산 (강화)"""
-        if avg_loss <= 0 or win_rate <= 0 or win_rate >= 1:
-            return {'kelly_percent': 0, 'recommended_percent': 0}
+# ============================================================================
+# 💾 백업 및 복구 시스템
+# ============================================================================
+class QuintBackup:
+    """퀸트프로젝트 백업 및 복구 시스템"""
+    
+    def __init__(self):
+        self.backup_dir = Path('backups')
+        self.backup_dir.mkdir(exist_ok=True)
+        self.max_backups = config.get('system.backup.max_backups', 30)
+        self.compression_enabled = config.get('system.backup.compression', True)
+    
+    def create_backup(self, backup_type: str = 'full') -> Optional[Path]:
+        """백업 생성"""
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_name = f"quint_backup_{backup_type}_{timestamp}"
+            
+            if self.compression_enabled:
+                backup_file = self.backup_dir / f"{backup_name}.zip"
+                return self._create_compressed_backup(backup_file, backup_type)
+            else:
+                backup_folder = self.backup_dir / backup_name
+                backup_folder.mkdir(exist_ok=True)
+                return self._create_folder_backup(backup_folder, backup_type)
+                
+        except Exception as e:
+            QuintLogger.error(f"백업 생성 실패: {e}")
+            return None
+    
+    def _create_compressed_backup(self, backup_file: Path, backup_type: str) -> Path:
+        """압축 백업 생성"""
+        with zipfile.ZipFile(backup_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # 설정 파일들
+            config_files = [
+                'quint_config.yaml',
+                'settings.yaml',
+                '.env'
+            ]
+            
+            for file_name in config_files:
+                file_path = Path(file_name)
+                if file_path.exists():
+                    zipf.write(file_path, file_name)
+            
+            # 데이터 파일들
+            data_files = [
+                'quint_portfolio.json',
+                'quint_trades.json',
+                'quint_performance.json'
+            ]
+            
+            for file_name in data_files:
+                file_path = Path(file_name)
+                if file_path.exists():
+                    zipf.write(file_path, file_name)
+            
+            # 로그 파일들 (선택적)
+            if backup_type == 'full':
+                logs_dir = Path('logs')
+                if logs_dir.exists():
+                    for log_file in logs_dir.glob('*.log'):
+                        zipf.write(log_file, f"logs/{log_file.name}")
+            
+            # 암호화된 비밀 파일
+            secret_files = ['.quint_secrets.enc', '.quint_key']
+            for file_name in secret_files:
+                file_path = Path(file_name)
+                if file_path.exists():
+                    zipf.write(file_path, file_name)
         
-        loss_rate = 1 - win_rate
-        win_loss_ratio = avg_win / avg_loss
+        QuintLogger.info(f"압축 백업 생성 완료: {backup_file}")
+        return backup_file
+    
+    def _create_folder_backup(self, backup_folder: Path, backup_type: str) -> Path:
+        """폴더 백업 생성"""
+        # 설정 파일 복사
+        config_files = ['quint_config.yaml', 'settings.yaml', '.env']
+        for file_name in config_files:
+            src_path = Path(file_name)
+            if src_path.exists():
+                shutil.copy2(src_path, backup_folder / file_name)
         
-        kelly_pct = (win_rate * win_loss_ratio - loss_rate) / win_loss_ratio
+        # 데이터 파일 복사
+        data_files = ['quint_portfolio.json', 'quint_trades.json', 'quint_performance.json']
+        for file_name in data_files:
+            src_path = Path(file_name)
+            if src_path.exists():
+                shutil.copy2(src_path, backup_folder / file_name)
         
-        # 실용적 제한 (최대 25%)
-        recommended_pct = max(0, min(kelly_pct * 0.5, 0.25))  # 켈리의 절반, 최대 25%
+        # 로그 디렉토리 복사 (전체 백업시)
+        if backup_type == 'full':
+            logs_dir = Path('logs')
+            if logs_dir.exists():
+                shutil.copytree(logs_dir, backup_folder / 'logs', dirs_exist_ok=True)
         
-        return {
-            'kelly_percent': round(kelly_pct * 100, 2),
-            'recommended_percent': round(recommended_pct * 100, 2),
-            'win_loss_ratio': round(win_loss_ratio, 2),
-            'expectancy': round((win_rate * avg_win) - (loss_rate * avg_loss), 2)
-        }
+        QuintLogger.info(f"폴더 백업 생성 완료: {backup_folder}")
+        return backup_folder
+    
+    def restore_backup(self, backup_path: Path) -> bool:
+        """백업 복원"""
+        try:
+            if not backup_path.exists():
+                QuintLogger.error(f"백업 파일이 존재하지 않습니다: {backup_path}")
+                return False
+            
+            # 현재 파일들 백업
+            safety_backup = self.create_backup('safety')
+            
+            if backup_path.suffix == '.zip':
+                return self._restore_compressed_backup(backup_path)
+            else:
+                return self._restore_folder_backup(backup_path)
+                
+        except Exception as e:
+            QuintLogger.error(f"백업 복원 실패: {e}")
+            return False
+    
+    def _restore_compressed_backup(self, backup_file: Path) -> bool:
+        """압축 백업 복원"""
+        try:
+            with zipfile.ZipFile(backup_file, 'r') as zipf:
+                zipf.extractall('.')
+            
+            QuintLogger.info(f"압축 백업 복원 완료: {backup_file}")
+            return True
+        except Exception as e:
+            QuintLogger.error(f"압축 백업 복원 실패: {e}")
+            return False
+    
+    def _restore_folder_backup(self, backup_folder: Path) -> bool:
+        """폴더 백업 복원"""
+        try:
+            for item in backup_folder.iterdir():
+                if item.is_file():
+                    shutil.copy2(item, item.name)
+                elif item.is_dir():
+                    if item.name == 'logs':
+                        logs_dir = Path('logs')
+                        if logs_dir.exists():
+                            shutil.rmtree(logs_dir)
+                        shutil.copytree(item, logs_dir)
+            
+            QuintLogger.info(f"폴더 백업 복원 완료: {backup_folder}")
+            return True
+        except Exception as e:
+            QuintLogger.error(f"폴더 백업 복원 실패: {e}")
+            return False
+    
+    def list_backups(self) -> List[Dict[str, Any]]:
+        """백업 목록 조회"""
+        backups = []
+        
+        for backup_path in self.backup_dir.iterdir():
+            if backup_path.name.startswith('quint_backup_'):
+                try:
+                    # 백업 정보 파싱
+                    parts = backup_path.stem.split('_')
+                    backup_type = parts[2] if len(parts) >= 3 else 'unknown'
+                    timestamp_str = parts[3] if len(parts) >= 4 else 'unknown'
+                    
+                    # 타임스탬프 파싱
+                    if timestamp_str != 'unknown':
+                        backup_time = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
+                    else:
+                        backup_time = datetime.fromtimestamp(backup_path.stat().st_mtime)
+                    
+                    # 파일 크기
+                    if backup_path.is_file():
+                        size = backup_path.stat().st_size
+                    else:
+                        size = sum(f.stat().st_size for f in backup_path.rglob('*') if f.is_file())
+                    
+                    backups.append({
+                        'path': backup_path,
+                        'name': backup_path.name,
+                        'type': backup_type,
+                        'timestamp': backup_time,
+                        'size': size,
+                        'size_mb': round(size / (1024 * 1024), 2)
+                    })
+                    
+                except Exception as e:
+                    QuintLogger.warning(f"백업 정보 파싱 실패 {backup_path}: {e}")
+        
+        # 시간순 정렬 (최신순)
+        backups.sort(key=lambda x: x['timestamp'], reverse=True)
+        return backups
+    
+    def cleanup_old_backups(self) -> int:
+        """오래된 백업 정리"""
+        backups = self.list_backups()
+        deleted_count = 0
+        
+        if len(backups) > self.max_backups:
+            old_backups = backups[self.max_backups:]
+            
+            for backup in old_backups:
+                try:
+                    backup_path = backup['path']
+                    if backup_path.is_file():
+                        backup_path.unlink()
+                    else:
+                        shutil.rmtree(backup_path)
+                    
+                    deleted_count += 1
+                    QuintLogger.info(f"오래된 백업 삭제: {backup['name']}")
+                except Exception as e:
+                    QuintLogger.error(f"백업 삭제 실패 {backup['name']}: {e}")
+        
+        return deleted_count
+    
+    def schedule_auto_backup(self, interval_hours: int = 24):
+        """자동 백업 스케줄링"""
+        def backup_task():
+            while True:
+                try:
+                    # 백업 생성
+                    backup_path = self.create_backup('auto')
+                    if backup_path:
+                        QuintLogger.info(f"자동 백업 완료: {backup_path}")
+                    
+                    # 오래된 백업 정리
+                    deleted = self.cleanup_old_backups()
+                    if deleted > 0:
+                        QuintLogger.info(f"오래된 백업 {deleted}개 정리 완료")
+                    
+                except Exception as e:
+                    QuintLogger.error(f"자동 백업 실패: {e}")
+                
+                # 다음 백업까지 대기
+                time.sleep(interval_hours * 3600)
+        
+        # 백그라운드 스레드로 실행
+        backup_thread = threading.Thread(target=backup_task, daemon=True)
+        backup_thread.start()
+        QuintLogger.info(f"자동 백업 스케줄링 시작 (간격: {interval_hours}시간)")
 
-    @staticmethod
-    def calculate_portfolio_metrics(returns: pd.Series, benchmark_returns: pd.Series = None,
-                                  risk_free_rate: float = 0.02) -> Dict[str, float]:
+# 전역 백업 관리자
+backup = QuintBackup()
+
+# ============================================================================
+# 📊 성과 분석 도구
+# ============================================================================
+class QuintPerformanceAnalyzer:
+    """퀸트프로젝트 성과 분석 도구"""
+    
+    def __init__(self):
+        self.performance_file = "quint_performance.json"
+        self.trades_file = "quint_trades.json"
+        self.benchmarks = {
+            'us': '^GSPC',      # S&P 500
+            'crypto': 'BTC-USD', # 비트코인
+            'japan': '^N225',    # 니케이 225
+            'india': '^NSEI'     # Nifty 50
+        }
+    
+    def calculate_portfolio_metrics(self, returns: pd.Series) -> Dict[str, float]:
         """포트폴리오 성과 지표 계산"""
         if returns.empty:
             return {}
         
         # 기본 통계
         total_return = (1 + returns).prod() - 1
-        annualized_return = (1 + returns.mean()) ** 252 - 1
+        annualized_return = (1 + total_return) ** (252 / len(returns)) - 1
         volatility = returns.std() * np.sqrt(252)
         
-        # 샤프 비율
-        excess_return = annualized_return - risk_free_rate
-        sharpe_ratio = excess_return / volatility if volatility != 0 else 0
+        # 샤프 비율 (무위험 수익률 2% 가정)
+        risk_free_rate = 0.02
+        sharpe_ratio = (annualized_return - risk_free_rate) / volatility if volatility != 0 else 0
         
-        # 최대 손실폭
+        # 최대 낙폭 (Maximum Drawdown)
         cumulative = (1 + returns).cumprod()
-        peak = cumulative.cummax()
-        drawdown = (cumulative - peak) / peak
+        running_max = cumulative.expanding().max()
+        drawdown = (cumulative - running_max) / running_max
         max_drawdown = drawdown.min()
-        
-        # 칼마 비율
-        calmar_ratio = annualized_return / abs(max_drawdown) if max_drawdown != 0 else 0
-        
-        # 소르티노 비율
-        downside_returns = returns[returns < 0]
-        downside_deviation = downside_returns.std() * np.sqrt(252)
-        sortino_ratio = excess_return / downside_deviation if downside_deviation != 0 else 0
         
         # 승률
         win_rate = (returns > 0).mean()
         
-        metrics = {
-            'total_return': round(total_return * 100, 2),
-            'annualized_return': round(annualized_return * 100, 2),
-            'volatility': round(volatility * 100, 2),
-            'sharpe_ratio': round(sharpe_ratio, 3),
-            'calmar_ratio': round(calmar_ratio, 3),
-            'sortino_ratio': round(sortino_ratio, 3),
-            'max_drawdown': round(max_drawdown * 100, 2),
-            'win_rate': round(win_rate * 100, 2),
-            'best_day': round(returns.max() * 100, 2),
-            'worst_day': round(returns.min() * 100, 2),
-            'total_trades': len(returns[returns != 0])
+        # 평균 수익/손실
+        avg_win = returns[returns > 0].mean() if len(returns[returns > 0]) > 0 else 0
+        avg_loss = returns[returns < 0].mean() if len(returns[returns < 0]) > 0 else 0
+        
+        # 수익 팩터
+        profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 else float('inf')
+        
+        # 칼마 비율
+        calmar_ratio = abs(annualized_return / max_drawdown) if max_drawdown != 0 else 0
+        
+        # 소르티노 비율
+        downside_returns = returns[returns < 0]
+        downside_volatility = downside_returns.std() * np.sqrt(252) if len(downside_returns) > 0 else 0
+        sortino_ratio = (annualized_return - risk_free_rate) / downside_volatility if downside_volatility != 0 else 0
+        
+        return {
+            'total_return': total_return,
+            'annualized_return': annualized_return,
+            'volatility': volatility,
+            'sharpe_ratio': sharpe_ratio,
+            'max_drawdown': max_drawdown,
+            'win_rate': win_rate,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'profit_factor': profit_factor,
+            'calmar_ratio': calmar_ratio,
+            'sortino_ratio': sortino_ratio
         }
-        
-        # 벤치마크 대비 지표
-        if benchmark_returns is not None and not benchmark_returns.empty:
-            # 베타
-            covariance = returns.cov(benchmark_returns)
-            benchmark_variance = benchmark_returns.var()
-            beta = covariance / benchmark_variance if benchmark_variance != 0 else 0
-            
-            # 알파
-            benchmark_annual_return = (1 + benchmark_returns.mean()) ** 252 - 1
-            alpha = annualized_return - (risk_free_rate + beta * (benchmark_annual_return - risk_free_rate))
-            
-            # 정보 비율
-            excess_returns = returns - benchmark_returns
-            tracking_error = excess_returns.std() * np.sqrt(252)
-            information_ratio = excess_returns.mean() * 252 / tracking_error if tracking_error != 0 else 0
-            
-            metrics.update({
-                'beta': round(beta, 3),
-                'alpha': round(alpha * 100, 2),
-                'information_ratio': round(information_ratio, 3),
-                'tracking_error': round(tracking_error * 100, 2)
-            })
-        
-        return metrics
-
-# ================================
-# 📁 파일 I/O 관리 (강화)
-# ================================
-
-class FileManager:
-    """파일 관리 전용 클래스 (강화)"""
     
-    def __init__(self, base_path: str = "."):
-        self.base_path = Path(base_path)
-        self._ensure_directories()
-        self.compression_enabled = config_manager.get('data_management.backup.compression', True)
-
-    def _ensure_directories(self):
-        """필요한 디렉토리 생성"""
-        directories = [
-            'data', 'logs', 'data/cache', 'data/backups', 'data/prices', 
-            'data/trades', 'data/models', 'reports', 'temp'
-        ]
-        for directory in directories:
-            (self.base_path / directory).mkdir(parents=True, exist_ok=True)
-
-    def save_json(self, data: Any, filename: str, directory: str = "data", 
-                 backup: bool = True, compress: bool = False) -> bool:
-        """JSON 파일 저장 (강화)"""
-        try:
-            filepath = self.base_path / directory / filename
-            
-            # 기존 파일 백업
-            if backup and filepath.exists():
-                self.backup_file(filename, directory)
-            
-            # JSON 직렬화 개선
-            if compress:
-                import gzip
-                with gzip.open(f"{filepath}.gz", 'wt', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2, default=str, separators=(',', ':'))
-                logger.info(f"압축 JSON 파일 저장 완료: {filepath}.gz")
-            else:
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-                logger.info(f"JSON 파일 저장 완료: {filepath}")
-            
-            return True
-        except Exception as e:
-            logger.error(f"JSON 파일 저장 실패: {e}")
-            return False
-
-    def load_json(self, filename: str, directory: str = "data", 
-                 check_compressed: bool = True) -> Optional[Any]:
-        """JSON 파일 로드 (강화)"""
-        try:
-            filepath = self.base_path / directory / filename
-            
-            # 압축 파일 우선 확인
-            if check_compressed:
-                compressed_path = Path(f"{filepath}.gz")
-                if compressed_path.exists():
-                    import gzip
-                    with gzip.open(compressed_path, 'rt', encoding='utf-8') as f:
-                        data = json.load(f)
-                    logger.info(f"압축 JSON 파일 로드 완료: {compressed_path}")
-                    return data
-            
-            if not filepath.exists():
-                logger.warning(f"파일이 존재하지 않음: {filepath}")
-                return None
-                
-            with open(filepath, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            logger.info(f"JSON 파일 로드 완료: {filepath}")
-            return data
-        except Exception as e:
-            logger.error(f"JSON 파일 로드 실패: {e}")
-            return None
-
-    def save_csv(self, df: pd.DataFrame, filename: str, directory: str = "data",
-                backup: bool = True, compression: str = None) -> bool:
-        """CSV 파일 저장 (강화)"""
-        try:
-            filepath = self.base_path / directory / filename
-            
-            if backup and filepath.exists():
-                self.backup_file(filename, directory)
-            
-            # 압축 옵션
-            if compression:
-                df.to_csv(filepath, index=False, encoding='utf-8', compression=compression)
-            else:
-                df.to_csv(filepath, index=False, encoding='utf-8')
-            
-            logger.info(f"CSV 파일 저장 완료: {filepath}")
-            return True
-        except Exception as e:
-            logger.error(f"CSV 파일 저장 실패: {e}")
-            return False
-
-    def save_pickle(self, data: Any, filename: str, directory: str = "data") -> bool:
-        """Pickle 파일 저장"""
-        try:
-            filepath = self.base_path / directory / filename
-            with open(filepath, 'wb') as f:
-                pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
-            logger.info(f"Pickle 파일 저장 완료: {filepath}")
-            return True
-        except Exception as e:
-            logger.error(f"Pickle 파일 저장 실패: {e}")
-            return False
-
-    def load_pickle(self, filename: str, directory: str = "data") -> Optional[Any]:
-        """Pickle 파일 로드"""
-        try:
-            filepath = self.base_path / directory / filename
-            if not filepath.exists():
-                return None
-            
-            with open(filepath, 'rb') as f:
-                data = pickle.load(f)
-            logger.info(f"Pickle 파일 로드 완료: {filepath}")
-            return data
-        except Exception as e:
-            logger.error(f"Pickle 파일 로드 실패: {e}")
-            return None
-
-    def backup_file(self, filename: str, directory: str = "data") -> bool:
-        """파일 백업 (강화)"""
-        try:
-            filepath = self.base_path / directory / filename
-            if not filepath.exists():
-                return False
-                
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_name = f"{filepath.stem}_{timestamp}{filepath.suffix}"
-            backup_path = self.base_path / "data" / "backups" / backup_name
-            
-            import shutil
-            if self.compression_enabled and filepath.suffix in ['.json', '.csv', '.txt']:
-                # 백업시 압축
-                import gzip
-                with open(filepath, 'rb') as f_in:
-                    with gzip.open(f"{backup_path}.gz", 'wb') as f_out:
-                        shutil.copyfileobj(f_in, f_out)
-                logger.info(f"압축 백업 완료: {backup_path}.gz")
-            else:
-                shutil.copy2(filepath, backup_path)
-                logger.info(f"파일 백업 완료: {backup_path}")
-            
-            return True
-        except Exception as e:
-            logger.error(f"파일 백업 실패: {e}")
-            return False
-
-    def cleanup_old_files(self, directory: str = "logs", days: int = 30,
-                         pattern: str = "*") -> int:
-        """오래된 파일 정리 (강화)"""
-        try:
-            target_dir = self.base_path / directory
-            cutoff_date = datetime.now() - timedelta(days=days)
-            
-            deleted_count = 0
-            total_size = 0
-            
-            for filepath in target_dir.glob(pattern):
-                if filepath.is_file():
-                    file_time = datetime.fromtimestamp(filepath.stat().st_mtime)
-                    if file_time < cutoff_date:
-                        file_size = filepath.stat().st_size
-                        filepath.unlink()
-                        deleted_count += 1
-                        total_size += file_size
-            
-            logger.info(f"{directory} 폴더에서 {deleted_count}개 파일 정리 완료 "
-                       f"(절약된 용량: {self._format_bytes(total_size)})")
-            return deleted_count
-        except Exception as e:
-            logger.error(f"파일 정리 실패: {e}")
-            return 0
-
-    def get_directory_size(self, directory: str = "data") -> Dict[str, Any]:
-        """디렉토리 크기 정보"""
-        try:
-            target_dir = self.base_path / directory
-            total_size = 0
-            file_count = 0
-            
-            for filepath in target_dir.rglob("*"):
-                if filepath.is_file():
-                    total_size += filepath.stat().st_size
-                    file_count += 1
-            
-            return {
-                'directory': directory,
-                'total_size_bytes': total_size,
-                'total_size_formatted': self._format_bytes(total_size),
-                'file_count': file_count
-            }
-        except Exception as e:
-            logger.error(f"디렉토리 크기 계산 실패: {e}")
+    def analyze_market_correlation(self, portfolio_returns: pd.Series, 
+                                 market_returns: Dict[str, pd.Series]) -> Dict[str, float]:
+        """시장과의 상관관계 분석"""
+        correlations = {}
+        
+        for market, returns in market_returns.items():
+            # 공통 날짜만 사용
+            common_dates = portfolio_returns.index.intersection(returns.index)
+            if len(common_dates) > 10:  # 최소 10일 데이터
+                port_common = portfolio_returns.loc[common_dates]
+                market_common = returns.loc[common_dates]
+                correlation = port_common.corr(market_common)
+                correlations[market] = correlation
+        
+        return correlations
+    
+    def calculate_var_cvar(self, returns: pd.Series, confidence_level: float = 0.05) -> Dict[str, float]:
+        """VaR (Value at Risk)와 CVaR (Conditional VaR) 계산"""
+        if returns.empty:
+            return {'var': 0, 'cvar': 0}
+        
+        # VaR 계산
+        var = returns.quantile(confidence_level)
+        
+        # CVaR 계산 (VaR 이하의 손실들의 평균)
+        cvar = returns[returns <= var].mean()
+        
+        return {
+            'var': var,
+            'cvar': cvar
+        }
+    
+    def analyze_trade_performance(self, trades: List[Dict]) -> Dict[str, Any]:
+        """거래 성과 분석"""
+        if not trades:
             return {}
-
-    def _format_bytes(self, bytes_value: int) -> str:
-        """바이트 크기 포맷팅"""
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if bytes_value < 1024.0:
-                return f"{bytes_value:.1f} {unit}"
-            bytes_value /= 1024.0
-        return f"{bytes_value:.1f} PB"
-
-# ================================
-# 🔄 API 재시도 로직 (강화)
-# ================================
-
-def retry_on_failure(max_retries: int = 3, delay: float = 1.0, 
-                    backoff: float = 2.0, exceptions: tuple = (Exception,),
-                    jitter: bool = True):
-    """API 호출 재시도 데코레이터 (강화)"""
-    def decorator(func: Callable):
-        @wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            last_exception = None
-            current_delay = delay
+        
+        # 거래 데이터 처리
+        df = pd.DataFrame(trades)
+        
+        # 기본 통계
+        total_trades = len(df)
+        winning_trades = len(df[df['pnl'] > 0])
+        losing_trades = len(df[df['pnl'] < 0])
+        win_rate = winning_trades / total_trades if total_trades > 0 else 0
+        
+        # 수익 통계
+        total_pnl = df['pnl'].sum()
+        avg_pnl = df['pnl'].mean()
+        best_trade = df['pnl'].max()
+        worst_trade = df['pnl'].min()
+        
+        # 승부 분석
+        avg_win = df[df['pnl'] > 0]['pnl'].mean() if winning_trades > 0 else 0
+        avg_loss = df[df['pnl'] < 0]['pnl'].mean() if losing_trades > 0 else 0
+        
+        # 연속 승부 분석
+        df['win'] = df['pnl'] > 0
+        df['streak'] = (df['win'] != df['win'].shift()).cumsum()
+        streak_stats = df.groupby(['win', 'streak']).size()
+        
+        max_win_streak = 0
+        max_loss_streak = 0
+        
+        for (is_win, streak), count in streak_stats.items():
+            if is_win:
+                max_win_streak = max(max_win_streak, count)
+            else:
+                max_loss_streak = max(max_loss_streak, count)
+        
+        # 시장별 성과
+        market_performance = df.groupby('market')['pnl'].agg(['sum', 'mean', 'count']).to_dict()
+        
+        # 월별 성과
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            df['month'] = df['date'].dt.to_period('M')
+            monthly_performance = df.groupby('month')['pnl'].sum().to_dict()
+        else:
+            monthly_performance = {}
+        
+        return {
+            'total_trades': total_trades,
+            'winning_trades': winning_trades,
+            'losing_trades': losing_trades,
+            'win_rate': win_rate,
+            'total_pnl': total_pnl,
+            'avg_pnl': avg_pnl,
+            'best_trade': best_trade,
+            'worst_trade': worst_trade,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'max_win_streak': max_win_streak,
+            'max_loss_streak': max_loss_streak,
+            'market_performance': market_performance,
+            'monthly_performance': monthly_performance
+        }
+    
+    def generate_performance_report(self, start_date: str = None, end_date: str = None) -> Dict[str, Any]:
+        """성과 리포트 생성"""
+        try:
+            # 거래 데이터 로드
+            trades = self.load_trades_data()
             
-            for attempt in range(max_retries + 1):
+            # 날짜 필터링
+            if start_date or end_date:
+                trades = self.filter_trades_by_date(trades, start_date, end_date)
+            
+            # 성과 분석
+            trade_analysis = self.analyze_trade_performance(trades)
+            
+            # 수익률 시계열 생성
+            returns = self.calculate_returns_series(trades)
+            portfolio_metrics = self.calculate_portfolio_metrics(returns)
+            
+            # 리스크 분석
+            risk_metrics = self.calculate_var_cvar(returns)
+            
+            # 벤치마크 비교 (간소화)
+            benchmark_comparison = self.compare_with_benchmarks(returns)
+            
+            report = {
+                'report_date': datetime.now().isoformat(),
+                'analysis_period': {
+                    'start': start_date or (trades[0]['date'] if trades else None),
+                    'end': end_date or (trades[-1]['date'] if trades else None)
+                },
+                'trade_analysis': trade_analysis,
+                'portfolio_metrics': portfolio_metrics,
+                'risk_metrics': risk_metrics,
+                'benchmark_comparison': benchmark_comparison,
+                'summary': self.create_performance_summary(trade_analysis, portfolio_metrics)
+            }
+            
+            # 리포트 저장
+            self.save_performance_report(report)
+            
+            return report
+            
+        except Exception as e:
+            QuintLogger.error(f"성과 리포트 생성 실패: {e}")
+            return {}
+    
+    def load_trades_data(self) -> List[Dict]:
+        """거래 데이터 로드"""
+        try:
+            if Path(self.trades_file).exists():
+                with open(self.trades_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+                                return []
+        except Exception as e:
+            QuintLogger.error(f"거래 데이터 로드 실패: {e}")
+            return []
+    
+    def filter_trades_by_date(self, trades: List[Dict], start_date: str, end_date: str) -> List[Dict]:
+        """날짜별 거래 필터링"""
+        filtered_trades = []
+        
+        for trade in trades:
+            trade_date = trade.get('date')
+            if trade_date:
+                if start_date and trade_date < start_date:
+                    continue
+                if end_date and trade_date > end_date:
+                    continue
+                filtered_trades.append(trade)
+        
+        return filtered_trades
+    
+    def calculate_returns_series(self, trades: List[Dict]) -> pd.Series:
+        """거래 데이터에서 수익률 시계열 생성"""
+        if not trades:
+            return pd.Series()
+        
+        # 거래를 날짜별로 그룹화
+        daily_pnl = defaultdict(float)
+        
+        for trade in trades:
+            date = trade.get('date')
+            pnl = trade.get('pnl', 0)
+            if date:
+                daily_pnl[date] += pnl
+        
+        # 시리즈 생성
+        dates = sorted(daily_pnl.keys())
+        pnl_values = [daily_pnl[date] for date in dates]
+        
+        # 수익률로 변환 (포트폴리오 가치 대비)
+        portfolio_value = config.get('system.portfolio_value', 100_000_000)
+        returns = pd.Series([pnl / portfolio_value for pnl in pnl_values], 
+                           index=pd.to_datetime(dates))
+        
+        return returns
+    
+    def compare_with_benchmarks(self, returns: pd.Series) -> Dict[str, Dict]:
+        """벤치마크 비교 (간소화 버전)"""
+        comparison = {}
+        
+        for market, benchmark in self.benchmarks.items():
+            try:
+                # 실제로는 yfinance로 벤치마크 데이터를 가져와야 함
+                # 여기서는 간소화된 버전
+                comparison[market] = {
+                    'benchmark_symbol': benchmark,
+                    'correlation': 0.0,  # 실제 계산 필요
+                    'relative_performance': 0.0,  # 실제 계산 필요
+                    'beta': 1.0,  # 실제 계산 필요
+                    'alpha': 0.0   # 실제 계산 필요
+                }
+            except Exception as e:
+                QuintLogger.warning(f"벤치마크 {market} 비교 실패: {e}")
+        
+        return comparison
+    
+    def create_performance_summary(self, trade_analysis: Dict, portfolio_metrics: Dict) -> Dict[str, str]:
+        """성과 요약 생성"""
+        total_return = portfolio_metrics.get('total_return', 0)
+        win_rate = trade_analysis.get('win_rate', 0)
+        sharpe_ratio = portfolio_metrics.get('sharpe_ratio', 0)
+        max_drawdown = portfolio_metrics.get('max_drawdown', 0)
+        
+        # 등급 평가
+        performance_grade = 'F'
+        if total_return > 0.20:
+            performance_grade = 'A+'
+        elif total_return > 0.15:
+            performance_grade = 'A'
+        elif total_return > 0.10:
+            performance_grade = 'B+'
+        elif total_return > 0.05:
+            performance_grade = 'B'
+        elif total_return > 0:
+            performance_grade = 'C'
+        
+        # 종합 평가
+        if sharpe_ratio > 2.0 and max_drawdown > -0.05:
+            overall_rating = "탁월함"
+        elif sharpe_ratio > 1.0 and max_drawdown > -0.10:
+            overall_rating = "우수함"
+        elif sharpe_ratio > 0.5 and max_drawdown > -0.15:
+            overall_rating = "양호함"
+        elif total_return > 0:
+            overall_rating = "보통"
+        else:
+            overall_rating = "개선 필요"
+        
+        return {
+            'performance_grade': performance_grade,
+            'overall_rating': overall_rating,
+            'key_strength': self.identify_key_strength(trade_analysis, portfolio_metrics),
+            'improvement_area': self.identify_improvement_area(trade_analysis, portfolio_metrics)
+        }
+    
+    def identify_key_strength(self, trade_analysis: Dict, portfolio_metrics: Dict) -> str:
+        """주요 강점 식별"""
+        win_rate = trade_analysis.get('win_rate', 0)
+        sharpe_ratio = portfolio_metrics.get('sharpe_ratio', 0)
+        max_drawdown = portfolio_metrics.get('max_drawdown', 0)
+        
+        if win_rate > 0.7:
+            return "높은 승률"
+        elif sharpe_ratio > 2.0:
+            return "뛰어난 위험조정수익률"
+        elif max_drawdown > -0.05:
+            return "안정적인 수익 곡선"
+        else:
+            return "꾸준한 성과"
+    
+    def identify_improvement_area(self, trade_analysis: Dict, portfolio_metrics: Dict) -> str:
+        """개선 영역 식별"""
+        win_rate = trade_analysis.get('win_rate', 0)
+        sharpe_ratio = portfolio_metrics.get('sharpe_ratio', 0)
+        max_drawdown = portfolio_metrics.get('max_drawdown', 0)
+        
+        if max_drawdown < -0.20:
+            return "리스크 관리 강화"
+        elif win_rate < 0.4:
+            return "매매 신호 정확도 향상"
+        elif sharpe_ratio < 0.5:
+            return "위험조정수익률 개선"
+        else:
+            return "전략 최적화"
+    
+    def save_performance_report(self, report: Dict):
+        """성과 리포트 저장"""
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_file = Path(f"performance_report_{timestamp}.json")
+            
+            with open(report_file, 'w', encoding='utf-8') as f:
+                json.dump(report, f, ensure_ascii=False, indent=2, default=str)
+            
+            QuintLogger.info(f"성과 리포트 저장 완료: {report_file}")
+        except Exception as e:
+            QuintLogger.error(f"성과 리포트 저장 실패: {e}")
+
+# 전역 성과 분석기
+performance_analyzer = QuintPerformanceAnalyzer()
+
+# ============================================================================
+# 🔄 시스템 모니터링
+# ============================================================================
+class QuintSystemMonitor:
+    """퀸트프로젝트 시스템 모니터링"""
+    
+    def __init__(self):
+        self.monitoring_active = False
+        self.metrics_history = deque(maxlen=1000)  # 최근 1000개 메트릭만 보관
+        self.alert_thresholds = {
+            'cpu_percent': 80.0,
+            'memory_percent': 85.0,
+            'disk_percent': 90.0,
+            'network_error_rate': 0.05
+        }
+    
+    def get_system_metrics(self) -> Dict[str, Any]:
+        """시스템 메트릭 수집"""
+        try:
+            # CPU 사용률
+            cpu_percent = psutil.cpu_percent(interval=1)
+            
+            # 메모리 사용률
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+            
+            # 디스크 사용률
+            disk = psutil.disk_usage('/')
+            disk_percent = (disk.used / disk.total) * 100
+            
+            # 네트워크 통계
+            network = psutil.net_io_counters()
+            
+            # 프로세스 정보
+            process = psutil.Process()
+            process_memory = process.memory_info().rss / 1024 / 1024  # MB
+            
+            metrics = {
+                'timestamp': datetime.now(),
+                'cpu_percent': cpu_percent,
+                'memory_percent': memory_percent,
+                'memory_available_gb': memory.available / 1024**3,
+                'disk_percent': disk_percent,
+                'disk_free_gb': disk.free / 1024**3,
+                'network_bytes_sent': network.bytes_sent,
+                'network_bytes_recv': network.bytes_recv,
+                'process_memory_mb': process_memory,
+                'process_cpu_percent': process.cpu_percent()
+            }
+            
+            return metrics
+            
+        except Exception as e:
+            QuintLogger.error(f"시스템 메트릭 수집 실패: {e}")
+            return {}
+    
+    def check_system_health(self) -> Dict[str, Any]:
+        """시스템 건강 상태 확인"""
+        metrics = self.get_system_metrics()
+        
+        if not metrics:
+            return {'status': 'unknown', 'issues': ['메트릭 수집 실패']}
+        
+        issues = []
+        warnings = []
+        
+        # CPU 사용률 확인
+        if metrics['cpu_percent'] > self.alert_thresholds['cpu_percent']:
+            issues.append(f"높은 CPU 사용률: {metrics['cpu_percent']:.1f}%")
+        elif metrics['cpu_percent'] > self.alert_thresholds['cpu_percent'] * 0.8:
+            warnings.append(f"CPU 사용률 주의: {metrics['cpu_percent']:.1f}%")
+        
+        # 메모리 사용률 확인
+        if metrics['memory_percent'] > self.alert_thresholds['memory_percent']:
+            issues.append(f"높은 메모리 사용률: {metrics['memory_percent']:.1f}%")
+        elif metrics['memory_percent'] > self.alert_thresholds['memory_percent'] * 0.8:
+            warnings.append(f"메모리 사용률 주의: {metrics['memory_percent']:.1f}%")
+        
+        # 디스크 사용률 확인
+        if metrics['disk_percent'] > self.alert_thresholds['disk_percent']:
+            issues.append(f"높은 디스크 사용률: {metrics['disk_percent']:.1f}%")
+        elif metrics['disk_percent'] > self.alert_thresholds['disk_percent'] * 0.8:
+            warnings.append(f"디스크 사용률 주의: {metrics['disk_percent']:.1f}%")
+        
+        # 메모리 부족 확인
+        if metrics['memory_available_gb'] < 1.0:
+            issues.append(f"사용 가능한 메모리 부족: {metrics['memory_available_gb']:.1f}GB")
+        
+        # 디스크 공간 부족 확인
+        if metrics['disk_free_gb'] < 5.0:
+            issues.append(f"사용 가능한 디스크 공간 부족: {metrics['disk_free_gb']:.1f}GB")
+        
+        # 상태 판정
+        if issues:
+            status = 'critical'
+        elif warnings:
+            status = 'warning'
+        else:
+            status = 'healthy'
+        
+        return {
+            'status': status,
+            'issues': issues,
+            'warnings': warnings,
+            'metrics': metrics
+        }
+    
+    def start_monitoring(self, interval: int = 60):
+        """시스템 모니터링 시작"""
+        def monitoring_loop():
+            self.monitoring_active = True
+            QuintLogger.info(f"시스템 모니터링 시작 (간격: {interval}초)")
+            
+            while self.monitoring_active:
                 try:
-                    return await func(*args, **kwargs)
-                except exceptions as e:
-                    last_exception = e
-                    if attempt == max_retries:
-                        logger.error(f"함수 {func.__name__} 최대 재시도 횟수 초과: {e}")
-                        raise e
+                    health = self.check_system_health()
+                    self.metrics_history.append(health)
                     
-                    # 지터 추가 (실제 대기 시간에 랜덤성 부여)
-                    actual_delay = current_delay
-                    if jitter:
-                        actual_delay *= (0.5 + 0.5 * secrets.randbelow(100) / 100)
+                    # 문제 발생시 알림
+                    if health['status'] == 'critical':
+                        asyncio.create_task(self.send_system_alert(health))
                     
-                    logger.warning(f"함수 {func.__name__} 재시도 {attempt + 1}/{max_retries}: {e}")
-                    await asyncio.sleep(actual_delay)
-                    current_delay *= backoff
+                    time.sleep(interval)
+                    
+                except Exception as e:
+                    QuintLogger.error(f"시스템 모니터링 오류: {e}")
+                    time.sleep(interval)
+        
+        # 백그라운드 스레드로 실행
+        monitor_thread = threading.Thread(target=monitoring_loop, daemon=True)
+        monitor_thread.start()
+    
+    def stop_monitoring(self):
+        """시스템 모니터링 중지"""
+        self.monitoring_active = False
+        QuintLogger.info("시스템 모니터링 중지")
+    
+    async def send_system_alert(self, health: Dict):
+        """시스템 경고 알림 전송"""
+        try:
+            issues = health.get('issues', [])
+            if not issues:
+                return
             
-            raise last_exception
+            title = "🚨 시스템 경고"
+            message = "다음 시스템 문제가 감지되었습니다:\n\n"
             
-        @wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            last_exception = None
+            for issue in issues:
+                message += f"• {issue}\n"
+            
+            message += f"\n상태: {health['status'].upper()}"
+            
+            await notification.send_alert('error', title, message, 'high')
+            
+        except Exception as e:
+            QuintLogger.error(f"시스템 경고 알림 전송 실패: {e}")
+    
+    def get_monitoring_summary(self, hours: int = 24) -> Dict[str, Any]:
+        """모니터링 요약 조회"""
+        if not self.metrics_history:
+            return {'message': '모니터링 데이터 없음'}
+        
+        # 지정된 시간 내의 데이터만 필터링
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+        recent_metrics = [
+            m for m in self.metrics_history 
+            if m.get('metrics', {}).get('timestamp', datetime.min) > cutoff_time
+        ]
+        
+        if not recent_metrics:
+            return {'message': f'최근 {hours}시간 데이터 없음'}
+        
+        # 통계 계산
+        cpu_values = [m['metrics']['cpu_percent'] for m in recent_metrics if 'metrics' in m]
+        memory_values = [m['metrics']['memory_percent'] for m in recent_metrics if 'metrics' in m]
+        
+        status_counts = defaultdict(int)
+        for m in recent_metrics:
+            status_counts[m.get('status', 'unknown')] += 1
+        
+        return {
+            'period_hours': hours,
+            'total_checks': len(recent_metrics),
+            'avg_cpu_percent': np.mean(cpu_values) if cpu_values else 0,
+            'max_cpu_percent': np.max(cpu_values) if cpu_values else 0,
+            'avg_memory_percent': np.mean(memory_values) if memory_values else 0,
+            'max_memory_percent': np.max(memory_values) if memory_values else 0,
+            'status_distribution': dict(status_counts),
+            'uptime_percentage': (status_counts['healthy'] / len(recent_metrics)) * 100 if recent_metrics else 0
+        }
+
+# 전역 시스템 모니터
+system_monitor = QuintSystemMonitor()
+
+# ============================================================================
+# 🎯 데코레이터 및 헬퍼 함수들
+# ============================================================================
+
+def measure_time(func):
+    """실행 시간 측정 데코레이터"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        try:
+            result = func(*args, **kwargs)
+            execution_time = time.time() - start_time
+            QuintLogger.log_performance(func.__name__, execution_time)
+            return result
+        except Exception as e:
+            execution_time = time.time() - start_time
+            QuintLogger.log_exception(e, f"{func.__name__} 실행 중 오류 (실행시간: {execution_time:.4f}초)")
+            raise
+    return wrapper
+
+def async_measure_time(func):
+    """비동기 실행 시간 측정 데코레이터"""
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        start_time = time.time()
+        try:
+            result = await func(*args, **kwargs)
+            execution_time = time.time() - start_time
+            QuintLogger.log_performance(func.__name__, execution_time)
+            return result
+        except Exception as e:
+            execution_time = time.time() - start_time
+            QuintLogger.log_exception(e, f"{func.__name__} 실행 중 오류 (실행시간: {execution_time:.4f}초)")
+            raise
+    return wrapper
+
+def retry_on_failure(max_retries: int = 3, delay: float = 1.0, backoff: float = 2.0):
+    """실패시 재시도 데코레이터"""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
             current_delay = delay
             
             for attempt in range(max_retries + 1):
                 try:
                     return func(*args, **kwargs)
-                except exceptions as e:
-                    last_exception = e
+                except Exception as e:
                     if attempt == max_retries:
-                        logger.error(f"함수 {func.__name__} 최대 재시도 횟수 초과: {e}")
-                        raise e
+                        QuintLogger.error(f"{func.__name__} 최종 실패 (시도: {attempt + 1}회): {e}")
+                        raise
                     
-                    actual_delay = current_delay
-                    if jitter:
-                        actual_delay *= (0.5 + 0.5 * secrets.randbelow(100) / 100)
-                    
-                    logger.warning(f"함수 {func.__name__} 재시도 {attempt + 1}/{max_retries}: {e}")
-                    time.sleep(actual_delay)
+                    QuintLogger.warning(f"{func.__name__} 실패 (시도: {attempt + 1}회), {current_delay:.1f}초 후 재시도: {e}")
+                    time.sleep(current_delay)
                     current_delay *= backoff
             
-            raise last_exception
-        
-        return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
+        return wrapper
     return decorator
 
-class RateLimiter:
-    """API 호출 속도 제한 (강화)"""
+def cache_result(ttl_seconds: int = 300):
+    """결과 캐싱 데코레이터"""
+    cache = {}
     
-    def __init__(self, calls_per_second: float = 1.0, burst_limit: int = None):
-        self.calls_per_second = calls_per_second
-        self.min_interval = 1.0 / calls_per_second
-        self.last_call_time = 0
-        self.burst_limit = burst_limit or int(calls_per_second * 2)
-        self.call_times = []
-
-    async def wait(self):
-        """속도 제한 대기 (버스트 지원)"""
-        current_time = time.time()
-        
-        # 버스트 제한 확인
-        self.call_times = [t for t in self.call_times if current_time - t < 1.0]
-        
-        if len(self.call_times) >= self.burst_limit:
-            wait_time = 1.0 - (current_time - self.call_times[0])
-            if wait_time > 0:
-                await asyncio.sleep(wait_time)
-                current_time = time.time()
-        
-        # 기본 속도 제한
-        time_since_last_call = current_time - self.last_call_time
-        if time_since_last_call < self.min_interval:
-            wait_time = self.min_interval - time_since_last_call
-            await asyncio.sleep(wait_time)
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # 캐시 키 생성
+            cache_key = f"{func.__name__}_{hash(str(args) + str(sorted(kwargs.items())))}"
             current_time = time.time()
-        
-        self.last_call_time = current_time
-        self.call_times.append(current_time)
-
-    def sync_wait(self):
-        """동기 버전 대기"""
-        current_time = time.time()
-        
-        self.call_times = [t for t in self.call_times if current_time - t < 1.0]
-        
-        if len(self.call_times) >= self.burst_limit:
-            wait_time = 1.0 - (current_time - self.call_times[0])
-            if wait_time > 0:
-                time.sleep(wait_time)
-                current_time = time.time()
-        
-        time_since_last_call = current_time - self.last_call_time
-        if time_since_last_call < self.min_interval:
-            wait_time = self.min_interval - time_since_last_call
-            time.sleep(wait_time)
-            current_time = time.time()
-        
-        self.last_call_time = current_time
-        self.call_times.append(current_time)
-
-# ================================
-# 📋 포맷팅 및 검증 (강화)
-# ================================
-
-class Formatter:
-    """포맷팅 전용 클래스 (강화)"""
-    
-    @staticmethod
-    def format_price(price: float, currency: str = 'USD', decimals: int = 2) -> str:
-        """가격 포맷팅 (통화별)"""
-        if pd.isna(price) or price == 0:
-            return f"${0:.{decimals}f}" if currency == 'USD' else f"₩0"
-        
-        abs_price = abs(price)
-        
-        if currency == 'KRW':
-            if abs_price >= 1000000:
-                return f"₩{price/1000000:.1f}M"
-            elif abs_price >= 1000:
-                return f"₩{price:,.0f}"
-            else:
-                return f"₩{price:.0f}"
-        
-        elif currency == 'JPY':
-            if abs_price >= 1000000:
-                return f"¥{price/1000000:.1f}M"
-            else:
-                return f"¥{price:,.0f}"
-        
-        else:  # USD 기본
-            if abs_price >= 1000000:
-                return f"${price/1000000:.1f}M"
-            elif abs_price >= 1000:
-                return f"${price:,.{decimals}f}"
-            elif abs_price >= 1:
-                return f"${price:.{decimals}f}"
-            else:
-                return f"${price:.4f}"
-
-    @staticmethod
-    def format_percentage(value: float, decimals: int = 1, show_sign: bool = True) -> str:
-        """퍼센트 포맷팅 (강화)"""
-        if pd.isna(value):
-            return "N/A"
-        
-        if show_sign:
-            sign = "+" if value > 0 else ""
-            return f"{sign}{value:.{decimals}f}%"
-        else:
-            return f"{value:.{decimals}f}%"
-
-    @staticmethod
-    def format_volume(volume: float) -> str:
-        """거래량 포맷팅"""
-        if pd.isna(volume) or volume == 0:
-            return "0"
-        
-        abs_volume = abs(volume)
-        
-        if abs_volume >= 1e12:
-            return f"{volume/1e12:.1f}T"
-        elif abs_volume >= 1e9:
-            return f"{volume/1e9:.1f}B"
-        elif abs_volume >= 1e6:
-            return f"{volume/1e6:.1f}M"
-        elif abs_volume >= 1e3:
-            return f"{volume/1e3:.1f}K"
-        else:
-            return f"{volume:.0f}"
-
-    @staticmethod
-    def format_duration(seconds: float) -> str:
-        """시간 지속 포맷팅 (강화)"""
-        if seconds < 0:
-            return "0초"
-        
-        if seconds < 60:
-            return f"{seconds:.1f}초"
-        elif seconds < 3600:
-            return f"{seconds/60:.1f}분"
-        elif seconds < 86400:
-            return f"{seconds/3600:.1f}시간"
-        else:
-            return f"{seconds/86400:.1f}일"
-
-    @staticmethod
-    def format_market_cap(market_cap: float) -> str:
-        """시가총액 포맷팅"""
-        if pd.isna(market_cap) or market_cap == 0:
-            return "N/A"
-        
-        abs_cap = abs(market_cap)
-        
-        if abs_cap >= 1e12:
-            return f"${market_cap/1e12:.1f}T"
-        elif abs_cap >= 1e9:
-            return f"${market_cap/1e9:.1f}B"
-        elif abs_cap >= 1e6:
-            return f"${market_cap/1e6:.1f}M"
-        else:
-            return f"${market_cap:,.0f}"
-
-    @staticmethod
-    def format_datetime(dt: datetime, format_type: str = 'default') -> str:
-        """날짜시간 포맷팅"""
-        if pd.isna(dt):
-            return "N/A"
-        
-        if format_type == 'short':
-            return dt.strftime('%m/%d %H:%M')
-        elif format_type == 'date_only':
-            return dt.strftime('%Y-%m-%d')
-        elif format_type == 'time_only':
-            return dt.strftime('%H:%M:%S')
-        elif format_type == 'korean':
-            return dt.strftime('%Y년 %m월 %d일 %H시 %M분')
-        else:  # default
-            return dt.strftime('%Y-%m-%d %H:%M:%S')
-
-    @staticmethod
-    def format_trading_signal(signal: Dict[str, Any]) -> str:
-        """거래 신호 포맷팅"""
-        action = signal.get('action', '').upper()
-        symbol = signal.get('symbol', '')
-        confidence = signal.get('confidence', 0)
-        price = signal.get('price', 0)
-        
-        action_emoji = {
-            'BUY': '🟢',
-            'SELL': '🔴', 
-            'HOLD': '🟡',
-            'WAIT': '⚪'
-        }.get(action, '❓')
-        
-        confidence_text = f"{confidence:.1%}" if confidence else "N/A"
-        price_text = Formatter.format_price(price) if price else "N/A"
-        
-        return f"{action_emoji} {action} {symbol} @ {price_text} (신뢰도: {confidence_text})"
-
-class Validator:
-    """검증 전용 클래스 (강화)"""
-    
-    @staticmethod
-    def is_valid_symbol(symbol: str) -> bool:
-        """심볼 유효성 검사 (강화)"""
-        if not symbol or not isinstance(symbol, str):
-            return False
-        
-        symbol = symbol.strip().upper()
-        if len(symbol) < 1 or len(symbol) > 20:
-            return False
             
-        # 패턴별 검증
-        import re
-        patterns = [
-            r'^[A-Z]{1,6},                    # 미국 주식 (AAPL, MSFT 등)
-            r'^[0-9]{4}\.T,                   # 일본 주식 (7203.T 등)
-            r'^[A-Z]{2,10}-[A-Z]{3,10},       # 암호화폐 (BTC-KRW 등)
-            r'^[A-Z]{1,6}\.[A-Z]{1,3}        # 기타 거래소 (TSE, LSE 등)
-        ]
-        
-        return any(re.match(pattern, symbol) for pattern in patterns)
-
-    @staticmethod
-    def is_valid_price(price: float) -> bool:
-        """가격 유효성 검사 (강화)"""
-        return (isinstance(price, (int, float)) and 
-                price > 0 and 
-                not np.isnan(price) and 
-                not np.isinf(price) and
-                price < 1e10)  # 상한선 추가
-
-    @staticmethod
-    def is_valid_confidence(confidence: float) -> bool:
-        """신뢰도 유효성 검사"""
-        return (isinstance(confidence, (int, float)) and 
-                0 <= confidence <= 1 and 
-                not np.isnan(confidence))
-
-    @staticmethod
-    def is_valid_quantity(quantity: float, min_qty: float = 0) -> bool:
-        """수량 유효성 검사"""
-        return (isinstance(quantity, (int, float)) and 
-                quantity > min_qty and 
-                not np.isnan(quantity) and
-                not np.isinf(quantity))
-
-    @staticmethod
-    def is_valid_percentage(percentage: float, min_pct: float = -100, max_pct: float = 1000) -> bool:
-        """퍼센트 유효성 검사"""
-        return (isinstance(percentage, (int, float)) and 
-                min_pct <= percentage <= max_pct and 
-                not np.isnan(percentage))
-
-    @staticmethod
-    def validate_trading_signal(signal: Dict[str, Any]) -> Tuple[bool, List[str]]:
-        """거래 신호 유효성 검사"""
-        errors = []
-        
-        # 필수 필드 검사
-        required_fields = ['symbol', 'action', 'confidence']
-        for field in required_fields:
-            if field not in signal:
-                errors.append(f"필수 필드 누락: {field}")
-        
-        # 심볼 검사
-        if 'symbol' in signal and not Validator.is_valid_symbol(signal['symbol']):
-            errors.append(f"유효하지 않은 심볼: {signal['symbol']}")
-        
-        # 액션 검사
-        valid_actions = ['BUY', 'SELL', 'HOLD', 'WAIT']
-        if 'action' in signal and signal['action'].upper() not in valid_actions:
-            errors.append(f"유효하지 않은 액션: {signal['action']}")
-        
-        # 신뢰도 검사
-        if 'confidence' in signal and not Validator.is_valid_confidence(signal['confidence']):
-            errors.append(f"유효하지 않은 신뢰도: {signal['confidence']}")
-        
-        # 가격 검사 (있는 경우)
-        if 'price' in signal and signal['price'] is not None:
-            if not Validator.is_valid_price(signal['price']):
-                errors.append(f"유효하지 않은 가격: {signal['price']}")
-        
-        return len(errors) == 0, errors
-
-    @staticmethod
-    def sanitize_input(input_str: str, max_length: int = 100) -> str:
-        """입력값 정화"""
-        if not isinstance(input_str, str):
-            return ""
-        
-        # 위험한 문자 제거
-        import re
-        sanitized = re.sub(r'[<>"\';]', '', input_str)
-        
-        # 길이 제한
-        if len(sanitized) > max_length:
-            sanitized = sanitized[:max_length]
-        
-        return sanitized.strip()
-
-# ================================
-# 💾 캐싱 시스템 (강화)
-# ================================
-
-class SimpleCache:
-    """간단한 메모리 캐시 (강화)"""
-    
-    def __init__(self, ttl_seconds: int = 300, max_size: int = 1000):
-        self.cache = {}
-        self.ttl = ttl_seconds
-        self.max_size = max_size
-        self.access_count = {}
-        self.last_cleanup = time.time()
-
-    def _is_expired(self, timestamp: float) -> bool:
-        """만료 확인"""
-        return time.time() - timestamp > self.ttl
-
-    def _cleanup_if_needed(self):
-        """필요시 캐시 정리"""
-        current_time = time.time()
-        
-        # 5분마다 정리
-        if current_time - self.last_cleanup > 300:
-            self.cleanup()
-            self.last_cleanup = current_time
-        
-        # 크기 제한 초과시 LRU 제거
-        if len(self.cache) > self.max_size:
-            self._evict_lru()
-
-    def _evict_lru(self):
-        """LRU 방식으로 오래된 항목 제거"""
-        # 접근 횟수가 적은 항목부터 제거
-        sorted_keys = sorted(self.access_count.keys(), key=lambda k: self.access_count[k])
-        remove_count = len(self.cache) - self.max_size + 1
-        
-        for key in sorted_keys[:remove_count]:
-            if key in self.cache:
-                del self.cache[key]
-                del self.access_count[key]
-
-    def get(self, key: str) -> Optional[Any]:
-        """캐시에서 값 가져오기 (강화)"""
-        self._cleanup_if_needed()
-        
-        if key not in self.cache:
-            return None
+            # 캐시 확인
+            if cache_key in cache:
+                cached_result, cached_time = cache[cache_key]
+                if current_time - cached_time < ttl_seconds:
+                    QuintLogger.debug(f"{func.__name__} 캐시 적중")
+                    return cached_result
             
-        data, timestamp = self.cache[key]
-        if self._is_expired(timestamp):
-            del self.cache[key]
-            if key in self.access_count:
-                del self.access_count[key]
-            return None
-        
-        # 접근 횟수 증가
-        self.access_count[key] = self.access_count.get(key, 0) + 1
-        return data
-
-    def set(self, key: str, value: Any, ttl_override: int = None):
-        """캐시에 값 저장 (강화)"""
-        self._cleanup_if_needed()
-        
-        expiry_time = time.time() + (ttl_override or self.ttl)
-        self.cache[key] = (value, expiry_time)
-        self.access_count[key] = self.access_count.get(key, 0) + 1
-
-    def delete(self, key: str):
-        """특정 키 삭제"""
-        if key in self.cache:
-            del self.cache[key]
-        if key in self.access_count:
-            del self.access_count[key]
-
-    def clear(self):
-        """캐시 전체 삭제"""
-        self.cache.clear()
-        self.access_count.clear()
-
-    def cleanup(self):
-        """만료된 항목 정리"""
-        expired_keys = []
-        current_time = time.time()
-        
-        for key, (data, timestamp) in self.cache.items():
-            if current_time - timestamp > self.ttl:
-                expired_keys.append(key)
-        
-        for key in expired_keys:
-            del self.cache[key]
-            if key in self.access_count:
-                del self.access_count[key]
-        
-        logger.debug(f"캐시 정리 완료: {len(expired_keys)}개 항목 제거")
-
-    def stats(self) -> Dict[str, Any]:
-        """캐시 통계"""
-        return {
-            'size': len(self.cache),
-            'max_size': self.max_size,
-            'ttl_seconds': self.ttl,
-            'usage_percent': (len(self.cache) / self.max_size) * 100,
-            'top_accessed': sorted(self.access_count.items(), 
-                                 key=lambda x: x[1], reverse=True)[:5]
-        }
-
-# ================================
-# 🔔 알림 시스템 (강화)
-# ================================
-
-class NotificationManager:
-    """통합 알림 관리자"""
-    
-    def __init__(self):
-        self.telegram_enabled = config_manager.get('notifications.telegram.enabled', False)
-        self.email_enabled = config_manager.get('notifications.email.enabled', False)
-        self.slack_enabled = config_manager.get('notifications.slack.enabled', False)
-        
-        # 알림 레벨 설정
-        self.notification_levels = {
-            'critical': 1,
-            'error': 2,
-            'warning': 3,
-            'info': 4,
-            'debug': 5
-        }
-        
-        self.min_level = self.notification_levels.get(
-            config_manager.get('notifications.min_level', 'info'), 4
-        )
-
-    async def send_notification(self, message: str, level: str = 'info', 
-                              channels: List[str] = None) -> Dict[str, bool]:
-        """통합 알림 발송"""
-        if self.notification_levels.get(level, 4) > self.min_level:
-            return {'skipped': True}
-        
-        results = {}
-        
-        # 채널 지정이 없으면 활성화된 모든 채널 사용
-        if channels is None:
-            channels = []
-            if self.telegram_enabled:
-                channels.append('telegram')
-            if self.email_enabled:
-                channels.append('email')
-            if self.slack_enabled:
-                channels.append('slack')
-        
-        # 레벨별 이모지 추가
-        level_emojis = {
-            'critical': '🚨',
-            'error': '❌',
-            'warning': '⚠️',
-            'info': 'ℹ️',
-            'debug': '🔍'
-        }
-        
-        formatted_message = f"{level_emojis.get(level, '')} {message}"
-        
-        # 각 채널별 발송
-        for channel in channels:
-            try:
-                if channel == 'telegram':
-                    results[channel] = await self._send_telegram(formatted_message)
-                elif channel == 'email':
-                    results[channel] = await self._send_email(formatted_message, level)
-                elif channel == 'slack':
-                    results[channel] = await self._send_slack(formatted_message)
-                else:
-                    results[channel] = False
-            except Exception as e:
-                logger.error(f"알림 발송 실패 ({channel}): {e}")
-                results[channel] = False
-        
-        return results
-
-    async def _send_telegram(self, message: str) -> bool:
-        """텔레그램 알림 발송"""
-        try:
-            bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-            chat_id = os.getenv('TELEGRAM_CHAT_ID')
+            # 함수 실행 및 캐시 저장
+            result = func(*args, **kwargs)
+            cache[cache_key] = (result, current_time)
             
-            if not bot_token or not chat_id:
-                logger.warning("텔레그램 설정이 누락됨")
-                return False
+            # 오래된 캐시 정리
+            expired_keys = [
+                key for key, (_, cached_time) in cache.items()
+                if current_time - cached_time >= ttl_seconds
+            ]
+            for key in expired_keys:
+                del cache[key]
             
-            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            payload = {
-                'chat_id': chat_id,
-                'text': message,
-                'parse_mode': 'HTML'
-            }
+            return result
+        return wrapper
+    return decorator
+
+def validate_inputs(**validators):
+    """입력값 검증 데코레이터"""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # 매개변수 이름 가져오기
+            import inspect
+            sig = inspect.signature(func)
+            bound_args = sig.bind(*args, **kwargs)
+            bound_args.apply_defaults()
             
-            async with requests.Session() as session:
-                response = session.post(url, json=payload, timeout=10)
-                return response.status_code == 200
-                
-        except Exception as e:
-            logger.error(f"텔레그램 발송 실패: {e}")
-            return False
-
-    async def _send_email(self, message: str, level: str) -> bool:
-        """이메일 알림 발송"""
-        try:
-            # 이메일 발송 로직 (실제 구현 필요)
-            logger.info(f"이메일 발송 시뮬레이션: {message[:50]}...")
-            return True
-        except Exception as e:
-            logger.error(f"이메일 발송 실패: {e}")
-            return False
-
-    async def _send_slack(self, message: str) -> bool:
-        """슬랙 알림 발송"""
-        try:
-            webhook_url = os.getenv('SLACK_WEBHOOK_URL')
-            if not webhook_url:
-                return False
+            # 검증 실행
+            for param_name, validator in validators.items():
+                if param_name in bound_args.arguments:
+                    value = bound_args.arguments[param_name]
+                    if not validator(value):
+                        raise ValueError(f"{func.__name__}의 매개변수 '{param_name}' 검증 실패: {value}")
             
-            payload = {'text': message}
-            async with requests.Session() as session:
-                response = session.post(webhook_url, json=payload, timeout=10)
-                return response.status_code == 200
-                
-        except Exception as e:
-            logger.error(f"슬랙 발송 실패: {e}")
-            return False
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
-    def send_trading_alert(self, signal: Dict[str, Any]):
-        """거래 신호 알림"""
-        message = Formatter.format_trading_signal(signal)
-        asyncio.create_task(self.send_notification(message, 'info'))
+# ============================================================================
+# 🔧 유틸리티 함수들
+# ============================================================================
 
-    def send_error_alert(self, error_msg: str, context: str = ""):
-        """에러 알림"""
-        message = f"🚨 에러 발생\n{context}\n{error_msg}"
-        asyncio.create_task(self.send_notification(message, 'error'))
-
-    def send_performance_report(self, report: Dict[str, Any]):
-        """성과 리포트 알림"""
-        message = self._format_performance_report(report)
-        asyncio.create_task(self.send_notification(message, 'info'))
-
-    def _format_performance_report(self, report: Dict[str, Any]) -> str:
-        """성과 리포트 포맷팅"""
-        return f"""
-📊 일일 성과 리포트
-
-💰 총 수익률: {Formatter.format_percentage(report.get('total_return', 0))}
-📈 연환산 수익률: {Formatter.format_percentage(report.get('annualized_return', 0))}
-📉 최대 손실폭: {Formatter.format_percentage(report.get('max_drawdown', 0))}
-🎯 승률: {Formatter.format_percentage(report.get('win_rate', 0))}
-📊 샤프 비율: {report.get('sharpe_ratio', 0):.2f}
-🔢 총 거래 횟수: {report.get('total_trades', 0)}
-
-시간: {Formatter.format_datetime(datetime.now())}
-        """.strip()
-
-# ================================
-# 🔒 보안 유틸리티
-# ================================
-
-class SecurityUtils:
-    """보안 관련 유틸리티"""
-    
-    @staticmethod
-    def encrypt_api_key(api_key: str, master_key: str = None) -> str:
-        """API 키 암호화"""
-        try:
-            if not master_key:
-                master_key = os.getenv('MASTER_ENCRYPTION_KEY', 'default_key_change_this')
-            
-            from cryptography.fernet import Fernet
-            key = SecurityUtils._derive_key(master_key)
-            f = Fernet(key)
-            
-            encrypted = f.encrypt(api_key.encode())
-            return encrypted.decode()
-        except Exception as e:
-            logger.error(f"API 키 암호화 실패: {e}")
-            return api_key
-
-    @staticmethod
-    def decrypt_api_key(encrypted_key: str, master_key: str = None) -> str:
-        """API 키 복호화"""
-        try:
-            if not master_key:
-                master_key = os.getenv('MASTER_ENCRYPTION_KEY', 'default_key_change_this')
-            
-            from cryptography.fernet import Fernet
-            key = SecurityUtils._derive_key(master_key)
-            f = Fernet(key)
-            
-            decrypted = f.decrypt(encrypted_key.encode())
-            return decrypted.decode()
-        except Exception as e:
-            logger.error(f"API 키 복호화 실패: {e}")
-            return encrypted_key
-
-    @staticmethod
-    def _derive_key(password: str) -> bytes:
-        """비밀번호에서 암호화 키 도출"""
-        import base64
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        
-        salt = b'quant_project_salt'
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100000,
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
-        return key
-
-    @staticmethod
-    def hash_password(password: str) -> str:
-        """비밀번호 해시"""
-        import bcrypt
-        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
-    @staticmethod
-    def verify_password(password: str, hashed: str) -> bool:
-        """비밀번호 검증"""
-        import bcrypt
-        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
-
-    @staticmethod
-    def generate_api_signature(secret: str, data: str) -> str:
-        """API 서명 생성"""
-        import hmac
-        import hashlib
-        
-        signature = hmac.new(
-            secret.encode('utf-8'),
-            data.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
-        
-        return signature
-
-# ================================
-# 📊 백테스트 유틸리티 (강화)
-# ================================
-
-class BacktestUtils:
-    """백테스트 관련 유틸리티 (강화)"""
-    
-    @staticmethod
-    def calculate_max_drawdown(equity_curve: pd.Series) -> float:
-        """최대 손실폭 계산"""
-        if equity_curve.empty:
-            return 0.0
-        
-        peak = equity_curve.cummax()
-        drawdown = (equity_curve - peak) / peak
-        return drawdown.min()
-
-    @staticmethod
-    def calculate_underwater_periods(equity_curve: pd.Series) -> pd.DataFrame:
-        """수중 기간 분석"""
-        peak = equity_curve.cummax()
-        drawdown = (equity_curve - peak) / peak
-        
-        # 손실 구간 식별
-        underwater = drawdown < -0.01  # 1% 이상 손실
-        periods = []
-        
-        in_drawdown = False
-        start_date = None
-        
-        for date, is_underwater in underwater.items():
-            if is_underwater and not in_drawdown:
-                in_drawdown = True
-                start_date = date
-            elif not is_underwater and in_drawdown:
-                in_drawdown = False
-                if start_date:
-                    duration = (date - start_date).days
-                    max_dd = drawdown[start_date:date].min()
-                    periods.append({
-                        'start': start_date,
-                        'end': date,
-                        'duration_days': duration,
-                        'max_drawdown': max_dd
-                    })
-        
-        return pd.DataFrame(periods)
-
-    @staticmethod
-    def calculate_rolling_performance(returns: pd.Series, window: int = 252) -> pd.DataFrame:
-        """롤링 성과 분석"""
-        rolling_return = returns.rolling(window).sum()
-        rolling_vol = returns.rolling(window).std() * np.sqrt(252)
-        rolling_sharpe = (rolling_return * 252 - 0.02) / rolling_vol
-        
-        return pd.DataFrame({
-            'rolling_return': rolling_return,
-            'rolling_volatility': rolling_vol,
-            'rolling_sharpe': rolling_sharpe
-        })
-
-    @staticmethod
-    def calculate_var(returns: pd.Series, confidence: float = 0.05) -> float:
-        """Value at Risk 계산"""
-        if returns.empty:
-            return 0.0
-        
-        return returns.quantile(confidence)
-
-    @staticmethod
-    def calculate_cvar(returns: pd.Series, confidence: float = 0.05) -> float:
-        """Conditional Value at Risk 계산"""
-        var = BacktestUtils.calculate_var(returns, confidence)
-        return returns[returns <= var].mean()
-
-    @staticmethod
-    def monte_carlo_simulation(returns: pd.Series, days: int = 252, 
-                             simulations: int = 1000) -> pd.DataFrame:
-        """몬테카르로 시뮬레이션"""
-        np.random.seed(42)
-        
-        mean_return = returns.mean()
-        std_return = returns.std()
-        
-        simulated_paths = []
-        
-        for i in range(simulations):
-            random_returns = np.random.normal(mean_return, std_return, days)
-            cumulative_returns = (1 + random_returns).cumprod()
-            simulated_paths.append(cumulative_returns)
-        
-        simulation_df = pd.DataFrame(simulated_paths).T
-        
-        return {
-            'paths': simulation_df,
-            'final_values': simulation_df.iloc[-1],
-            'percentiles': {
-                '5%': simulation_df.iloc[-1].quantile(0.05),
-                '50%': simulation_df.iloc[-1].quantile(0.50),
-                '95%': simulation_df.iloc[-1].quantile(0.95)
-            }
-        }
-
-# ================================
-# 🌐 전역 객체 및 편의 함수
-# ================================
-
-# 전역 객체들 초기화
-file_manager = FileManager()
-cache = SimpleCache(
-    ttl_seconds=config_manager.get('performance.caching.ttl_seconds', 300),
-    max_size=config_manager.get('performance.caching.max_size', 1000)
-)
-timezone_manager = TimeZoneManager()
-notification_manager = NotificationManager()
-
-def get_config(key_path: str = None, default: Any = None) -> Any:
-    """설정값 조회 (캐시 적용)"""
-    if key_path is None:
-        return config_manager.config
-    
-    cached_key = f"config_{key_path}"
-    cached = cache.get(cached_key)
-    if cached is not None:
-        return cached
-    
-    value = config_manager.get(key_path, default)
-    cache.set(cached_key, value, ttl_override=600)  # 10분 캐시
-    return value
-
-def save_trading_log(log_data: Dict, log_type: str = "trading"):
-    """거래 로그 저장 (강화)"""
-    timestamp = datetime.now().strftime('%Y%m%d')
-    filename = f"{log_type}_log_{timestamp}.json"
-    
-    # 기존 로그 로드
-    existing_logs = file_manager.load_json(filename, "logs") or []
-    
-    # 새 로그 추가 (모든 시간대 정보 포함)
-    enhanced_log = {
-        **log_data,
-        'timestamp': datetime.now().isoformat(),
-        'market_times': timezone_manager.get_all_market_times(),
-        'log_id': f"{log_type}_{int(time.time())}_{secrets.randbelow(1000)}",
-        'session_id': os.getenv('SESSION_ID', 'default'),
-        'environment': config_manager.get('project.environment', 'development')
-    }
-    
-    existing_logs.append(enhanced_log)
-    
-    # 로그 크기 제한 (최대 1000개)
-    if len(existing_logs) > 1000:
-        existing_logs = existing_logs[-1000:]
-    
-    # 저장
-    success = file_manager.save_json(existing_logs, filename, "logs")
-    
-    if success and log_data.get('level') in ['error', 'critical']:
-        # 중요한 로그는 알림 발송
-        asyncio.create_task(
-            notification_manager.send_notification(
-                f"로그 기록: {log_data.get('message', '')}", 
-                log_data.get('level', 'info')
-            )
-        )
-
-def get_market_status_summary() -> Dict[str, Any]:
-    """시장 상태 요약"""
-    all_status = {}
-    
-    for market in ['US', 'JP', 'COIN']:
-        status = timezone_manager.is_market_open_detailed(market)
-        all_status[market] = {
-            'is_open': status['is_open'],
-            'session_type': status['session_type'],
-            'next_event': status['next_event']
-        }
-    
-    # 한국 시간 추가
-    seoul_time = timezone_manager.get_current_time('KOR')
-    all_status['KOR'] = {
-        'current_time': seoul_time.strftime('%Y-%m-%d %H:%M:%S KST'),
-        'weekday': seoul_time.strftime('%A'),
-        'is_weekend': timezone_manager.is_weekend('KOR')
-    }
-    
-    return all_status
-
-def calculate_portfolio_summary(positions: Dict[str, Dict]) -> Dict[str, Any]:
-    """포트폴리오 요약 계산"""
-    if not positions:
-        return {
-            'total_value': 0,
-            'total_pnl': 0,
-            'position_count': 0,
-            'markets': {}
-        }
-    
-    total_value = 0
-    total_pnl = 0
-    market_breakdown = {}
-    
-    for symbol, position in positions.items():
-        quantity = position.get('quantity', 0)
-        current_price = position.get('current_price', 0)
-        avg_price = position.get('avg_price', 0)
-        
-        market_value = quantity * current_price
-        pnl = quantity * (current_price - avg_price)
-        
-        total_value += market_value
-        total_pnl += pnl
-        
-        # 시장별 분류
-        market = DataProcessor.detect_market(symbol)
-        if market not in market_breakdown:
-            market_breakdown[market] = {
-                'value': 0,
-                'pnl': 0,
-                'count': 0,
-                'symbols': []
-            }
-        
-        market_breakdown[market]['value'] += market_value
-        market_breakdown[market]['pnl'] += pnl
-        market_breakdown[market]['count'] += 1
-        market_breakdown[market]['symbols'].append(symbol)
-    
-    return {
-        'total_value': round(total_value, 2),
-        'total_pnl': round(total_pnl, 2),
-        'total_pnl_percent': round((total_pnl / (total_value - total_pnl)) * 100, 2) if total_value != total_pnl else 0,
-        'position_count': len(positions),
-        'markets': market_breakdown,
-        'timestamp': datetime.now().isoformat()
-    }
-
-def monitor_system_health() -> Dict[str, Any]:
-    """시스템 상태 모니터링"""
-    import psutil
-    
+def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> float:
+    """안전한 나눗셈"""
     try:
-        # CPU 사용률
-        cpu_percent = psutil.cpu_percent(interval=1)
+        if denominator == 0:
+            return default
+        return numerator / denominator
+    except (TypeError, ZeroDivisionError):
+        return default
+
+def safe_percentage(value: float, total: float, default: float = 0.0) -> float:
+    """안전한 백분율 계산"""
+    return safe_divide(value * 100, total, default)
+
+def format_currency(amount: float, currency: str = 'KRW') -> str:
+    """통화 포맷팅"""
+    if currency == 'KRW':
+        if amount >= 100_000_000:  # 1억 이상
+            return f"{amount/100_000_000:.1f}억원"
+        elif amount >= 10_000:  # 1만 이상
+            return f"{amount/10_000:.0f}만원"
+        else:
+            return f"{amount:,.0f}원"
+    elif currency == 'USD':
+        return f"${amount:,.2f}"
+    else:
+        return f"{amount:,.2f} {currency}"
+
+def format_percentage(value: float, decimal_places: int = 1) -> str:
+    """백분율 포맷팅"""
+    return f"{value:.{decimal_places}f}%"
+
+def format_number(value: float, decimal_places: int = 2) -> str:
+    """숫자 포맷팅"""
+    if abs(value) >= 1_000_000:
+        return f"{value/1_000_000:.1f}M"
+    elif abs(value) >= 1_000:
+        return f"{value/1_000:.1f}K"
+    else:
+        return f"{value:.{decimal_places}f}"
+
+def calculate_compound_growth(principal: float, rate: float, periods: int) -> float:
+    """복리 성장 계산"""
+    return principal * (1 + rate) ** periods
+
+def calculate_annualized_return(start_value: float, end_value: float, periods: int) -> float:
+    """연환산 수익률 계산"""
+    if start_value <= 0 or periods <= 0:
+        return 0.0
+    return (end_value / start_value) ** (1 / periods) - 1
+
+def normalize_symbol(symbol: str, market: str = 'us') -> str:
+    """심볼 정규화"""
+    symbol = symbol.upper().strip()
+    
+    if market == 'us':
+        # 미국 주식 심볼 정규화
+        return symbol
+    elif market == 'crypto':
+        # 암호화폐 심볼 정규화
+        if not symbol.startswith('KRW-'):
+            symbol = f"KRW-{symbol}"
+        return symbol
+    elif market == 'japan':
+        # 일본 주식 심볼 정규화
+        if not symbol.endswith('.T'):
+            symbol = f"{symbol}.T"
+        return symbol
+    elif market == 'india':
+        # 인도 주식 심볼 정규화
+        if not symbol.endswith('.NS') and not symbol.endswith('.BO'):
+            symbol = f"{symbol}.NS"
+        return symbol
+    
+    return symbol
+
+def parse_timeframe(timeframe: str) -> timedelta:
+    """시간 프레임 파싱"""
+    timeframe = timeframe.lower().strip()
+    
+    if timeframe.endswith('d'):
+        days = int(timeframe[:-1])
+        return timedelta(days=days)
+    elif timeframe.endswith('h'):
+        hours = int(timeframe[:-1])
+        return timedelta(hours=hours)
+    elif timeframe.endswith('m'):
+        minutes = int(timeframe[:-1])
+        return timedelta(minutes=minutes)
+    elif timeframe.endswith('w'):
+        weeks = int(timeframe[:-1])
+        return timedelta(weeks=weeks)
+    else:
+        raise ValueError(f"지원되지 않는 시간 프레임: {timeframe}")
+
+def get_market_timezone(market: str) -> str:
+    """시장별 타임존 반환"""
+    timezones = {
+        'us': 'America/New_York',
+        'crypto': 'UTC',
+        'japan': 'Asia/Tokyo',
+        'india': 'Asia/Kolkata',
+        'korea': 'Asia/Seoul'
+    }
+    return timezones.get(market.lower(), 'UTC')
+
+def is_market_open(market: str) -> bool:
+    """시장 개장 여부 확인"""
+    import pytz
+    
+    timezone_str = get_market_timezone(market)
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    
+    # 암호화폐는 24시간
+    if market.lower() == 'crypto':
+        return True
+    
+    # 주말 체크
+    if now.weekday() >= 5:  # 토요일(5), 일요일(6)
+        return False
+    
+    # 시장별 개장 시간
+    market_hours = {
+        'us': (9, 30, 16, 0),      # 9:30 AM - 4:00 PM EST
+        'japan': (9, 0, 15, 0),    # 9:00 AM - 3:00 PM JST
+        'india': (9, 15, 15, 30),  # 9:15 AM - 3:30 PM IST
+        'korea': (9, 0, 15, 30)    # 9:00 AM - 3:30 PM KST
+    }
+    
+    if market.lower() not in market_hours:
+        return False
+    
+    open_h, open_m, close_h, close_m = market_hours[market.lower()]
+    open_time = now.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
+    close_time = now.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
+    
+    return open_time <= now <= close_time
+
+def get_next_market_open(market: str) -> datetime:
+    """다음 시장 개장 시간 반환"""
+    import pytz
+    
+    timezone_str = get_market_timezone(market)
+    tz = pytz.timezone(timezone_str)
+    now = datetime.now(tz)
+    
+    # 암호화폐는 항상 열려있음
+    if market.lower() == 'crypto':
+        return now
+    
+    market_hours = {
+        'us': (9, 30),
+        'japan': (9, 0),
+        'india': (9, 15),
+        'korea': (9, 0)
+    }
+    
+    if market.lower() not in market_hours:
+        return now
+    
+    open_h, open_m = market_hours[market.lower()]
+    
+    # 오늘 개장 시간
+    today_open = now.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
+    
+    # 오늘 개장하지 않았고 평일이면 오늘
+    if now < today_open and now.weekday() < 5:
+        return today_open
+    
+    # 다음 평일 개장 시간
+    days_ahead = 1
+    while True:
+        next_day = now + timedelta(days=days_ahead)
+        if next_day.weekday() < 5:  # 평일
+            return next_day.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
+        days_ahead += 1
+
+def create_database_connection(db_path: str = 'quint_data.db') -> sqlite3.Connection:
+    """데이터베이스 연결 생성"""
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row  # 딕셔너리 형태로 결과 반환
         
-        # 메모리 사용률
-        memory = psutil.virtual_memory()
-        memory_percent = memory.percent
+        # 기본 테이블 생성
+        cursor = conn.cursor()
         
-        # 디스크 사용률
-        disk = psutil.disk_usage('/')
-        disk_percent = (disk.used / disk.total) * 100
+        # 거래 기록 테이블
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                market TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                action TEXT NOT NULL,
+                quantity REAL NOT NULL,
+                price REAL NOT NULL,
+                amount REAL NOT NULL,
+                pnl REAL,
+                strategy TEXT,
+                confidence REAL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
-        # 프로세스 정보
-        process = psutil.Process()
-        process_memory = process.memory_info().rss / 1024 / 1024  # MB
+        # 포트폴리오 스냅샷 테이블
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                total_value REAL NOT NULL,
+                cash_balance REAL NOT NULL,
+                positions TEXT NOT NULL,  -- JSON
+                daily_pnl REAL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
-        # 네트워크 상태 (간단한 체크)
-        network_ok = True
-        try:
-            import socket
-            socket.create_connection(("8.8.8.8", 53), timeout=3)
-        except:
-            network_ok = False
+        # 시스템 메트릭 테이블
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS system_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                cpu_percent REAL,
+                memory_percent REAL,
+                disk_percent REAL,
+                network_bytes_sent INTEGER,
+                network_bytes_recv INTEGER,
+                status TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
-        health_status = {
-            'system': {
-                'cpu_percent': round(cpu_percent, 1),
-                'memory_percent': round(memory_percent, 1),
-                'disk_percent': round(disk_percent, 1),
-                'network_ok': network_ok
-            },
-            'process': {
-                'memory_mb': round(process_memory, 1),
-                'threads': process.num_threads(),
-                'status': process.status()
-            },
-            'cache': cache.stats(),
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        # 경고 체크
-        warnings = []
-        if cpu_percent > 80:
-            warnings.append(f"높은 CPU 사용률: {cpu_percent:.1f}%")
-        if memory_percent > 85:
-            warnings.append(f"높은 메모리 사용률: {memory_percent:.1f}%")
-        if disk_percent > 90:
-            warnings.append(f"높은 디스크 사용률: {disk_percent:.1f}%")
-        if not network_ok:
-            warnings.append("네트워크 연결 문제")
-        
-        health_status['warnings'] = warnings
-        health_status['status'] = 'warning' if warnings else 'healthy'
-        
-        return health_status
+        conn.commit()
+        return conn
         
     except Exception as e:
-        logger.error(f"시스템 상태 모니터링 실패: {e}")
-        return {
-            'status': 'error',
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        }
+        QuintLogger.error(f"데이터베이스 연결 실패: {e}")
+        return None
 
-def cleanup_system():
-    """시스템 정리"""
-    logger.info("시스템 정리 시작...")
+# ============================================================================
+# 📊 데이터베이스 헬퍼
+# ============================================================================
+class QuintDatabase:
+    """퀸트프로젝트 데이터베이스 헬퍼"""
     
-    # 캐시 정리
-    cache.cleanup()
+    def __init__(self, db_path: str = 'quint_data.db'):
+        self.db_path = db_path
+        self.conn = None
+        self._initialize_db()
     
-    # 오래된 로그 파일 정리
-    log_retention_days = config_manager.get('data_management.retention.log_data_days', 30)
-    file_manager.cleanup_old_files('logs', log_retention_days, '*.log')
-    file_manager.cleanup_old_files('logs', log_retention_days, '*.json')
+    def _initialize_db(self):
+        """데이터베이스 초기화"""
+        self.conn = create_database_connection(self.db_path)
+        if self.conn:
+            QuintLogger.info(f"데이터베이스 초기화 완료: {self.db_path}")
     
-    # 임시 파일 정리
-    file_manager.cleanup_old_files('temp', 1, '*')
-    
-    # 백업 파일 정리
-    backup_retention_days = config_manager.get('data_management.backup.retention_days', 30)
-    file_manager.cleanup_old_files('data/backups', backup_retention_days)
-    
-    logger.info("시스템 정리 완료")
-
-# ================================
-# 🧪 테스트 및 검증 함수들
-# ================================
-
-def validate_environment() -> Dict[str, Any]:
-    """환경 검증"""
-    validation_results = {
-        'config_file': os.path.exists('settings.yaml'),
-        'env_file': os.path.exists('.env'),
-        'required_dirs': True,
-        'python_version': sys.version_info >= (3, 8),
-        'required_packages': [],
-        'api_keys': {},
-        'issues': []
-    }
-    
-    # 필수 디렉토리 확인
-    required_dirs = ['data', 'logs', 'data/cache', 'data/backups']
-    for dir_name in required_dirs:
-        if not os.path.exists(dir_name):
-            validation_results['required_dirs'] = False
-            validation_results['issues'].append(f"디렉토리 없음: {dir_name}")
-    
-    # 필수 패키지 확인
-    required_packages = ['pandas', 'numpy', 'yaml', 'requests', 'pytz']
-    for package in required_packages:
+    def execute_query(self, query: str, params: tuple = ()) -> List[sqlite3.Row]:
+        """쿼리 실행"""
         try:
-            __import__(package)
-            validation_results['required_packages'].append({'name': package, 'status': 'ok'})
-        except ImportError:
-            validation_results['required_packages'].append({'name': package, 'status': 'missing'})
-            validation_results['issues'].append(f"패키지 없음: {package}")
+            if not self.conn:
+                self._initialize_db()
+            
+            cursor = self.conn.cursor()
+            cursor.execute(query, params)
+            return cursor.fetchall()
+        except Exception as e:
+            QuintLogger.error(f"쿼리 실행 실패: {e}")
+            return []
     
-    # API 키 확인
-    api_keys_to_check = [
-        'UPBIT_ACCESS_KEY', 'UPBIT_SECRET_KEY',
-        'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'
-    ]
+    def execute_insert(self, query: str, params: tuple = ()) -> int:
+        """INSERT 쿼리 실행"""
+        try:
+            if not self.conn:
+                self._initialize_db()
+            
+            cursor = self.conn.cursor()
+            cursor.execute(query, params)
+            self.conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            QuintLogger.error(f"INSERT 실행 실패: {e}")
+            return -1
     
-    for key_name in api_keys_to_check:
-        key_value = os.getenv(key_name)
-        validation_results['api_keys'][key_name] = {
-            'configured': bool(key_value),
-            'length': len(key_value) if key_value else 0
-        }
+    def save_trade(self, trade_data: Dict) -> int:
+        """거래 기록 저장"""
+        query = '''
+            INSERT INTO trades (timestamp, market, symbol, action, quantity, 
+                              price, amount, pnl, strategy, confidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        '''
         
-        if not key_value:
-            validation_results['issues'].append(f"API 키 없음: {key_name}")
+        params = (
+            trade_data.get('timestamp', datetime.now().isoformat()),
+            trade_data.get('market'),
+            trade_data.get('symbol'),
+            trade_data.get('action'),
+            trade_data.get('quantity'),
+            trade_data.get('price'),
+            trade_data.get('amount'),
+            trade_data.get('pnl'),
+            trade_data.get('strategy'),
+            trade_data.get('confidence')
+        )
+        
+        return self.execute_insert(query, params)
     
-    # 전체 상태 결정
-    validation_results['overall_status'] = 'ok' if not validation_results['issues'] else 'issues'
+    def save_portfolio_snapshot(self, portfolio_data: Dict) -> int:
+        """포트폴리오 스냅샷 저장"""
+        query = '''
+            INSERT INTO portfolio_snapshots (timestamp, total_value, cash_balance, 
+                                           positions, daily_pnl)
+            VALUES (?, ?, ?, ?, ?)
+        '''
+        
+        params = (
+            portfolio_data.get('timestamp', datetime.now().isoformat()),
+            portfolio_data.get('total_value'),
+            portfolio_data.get('cash_balance'),
+            json.dumps(portfolio_data.get('positions', {})),
+            portfolio_data.get('daily_pnl')
+        )
+        
+        return self.execute_insert(query, params)
     
-    return validation_results
+    def save_system_metrics(self, metrics: Dict) -> int:
+        """시스템 메트릭 저장"""
+        query = '''
+            INSERT INTO system_metrics (timestamp, cpu_percent, memory_percent,
+                                      disk_percent, network_bytes_sent, 
+                                      network_bytes_recv, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        '''
+        
+        params = (
+            metrics.get('timestamp', datetime.now()).isoformat(),
+            metrics.get('cpu_percent'),
+            metrics.get('memory_percent'),
+            metrics.get('disk_percent'),
+            metrics.get('network_bytes_sent'),
+            metrics.get('network_bytes_recv'),
+            metrics.get('status', 'unknown')
+        )
+        
+        return self.execute_insert(query, params)
+    
+    def get_trades(self, market: str = None, symbol: str = None, 
+                   start_date: str = None, end_date: str = None) -> List[Dict]:
+        """거래 기록 조회"""
+        query = "SELECT * FROM trades WHERE 1=1"
+        params = []
+        
+        if market:
+            query += " AND market = ?"
+            params.append(market)
+        
+        if symbol:
+            query += " AND symbol = ?"
+            params.append(symbol)
+        
+        if start_date:
+            query += " AND timestamp >= ?"
+            params.append(start_date)
+        
+        if end_date:
+            query += " AND timestamp <= ?"
+            params.append(end_date)
+        
+        query += " ORDER BY timestamp DESC"
+        
+        rows = self.execute_query(query, tuple(params))
+        return [dict(row) for row in rows]
+    
+    def get_portfolio_history(self, days: int = 30) -> List[Dict]:
+        """포트폴리오 이력 조회"""
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        
+        query = '''
+            SELECT * FROM portfolio_snapshots 
+            WHERE timestamp >= ? 
+            ORDER BY timestamp DESC
+        '''
+        
+        rows = self.execute_query(query, (cutoff_date,))
+        result = []
+        
+        for row in rows:
+            row_dict = dict(row)
+            # JSON 파싱
+            try:
+                row_dict['positions'] = json.loads(row_dict['positions'])
+            except:
+                row_dict['positions'] = {}
+            result.append(row_dict)
+        
+        return result
+    
+    def cleanup_old_data(self, days: int = 90):
+        """오래된 데이터 정리"""
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+        
+        tables = ['trades', 'portfolio_snapshots', 'system_metrics']
+        deleted_total = 0
+        
+        for table in tables:
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff_date,))
+                deleted_count = cursor.rowcount
+                deleted_total += deleted_count
+                QuintLogger.info(f"{table} 테이블에서 {deleted_count}개 레코드 삭제")
+            except Exception as e:
+                QuintLogger.error(f"{table} 정리 실패: {e}")
+        
+        if deleted_total > 0:
+            self.conn.commit()
+            # VACUUM으로 데이터베이스 최적화
+            self.conn.execute("VACUUM")
+            QuintLogger.info(f"총 {deleted_total}개 레코드 정리 완료")
+        
+        return deleted_total
+    
+    def close(self):
+        """데이터베이스 연결 종료"""
+        if self.conn:
+            self.conn.close()
+            self.conn = None
 
-def run_comprehensive_test():
-    """종합 테스트 실행"""
-    print("🛠️ 최고퀸트프로젝트 - 강화된 유틸리티 종합 테스트")
-    print("=" * 70)
+# 전역 데이터베이스 헬퍼
+database = QuintDatabase()
+
+# ============================================================================
+# 🚀 초기화 함수
+# ============================================================================
+def initialize_quint_utils():
+    """퀸트프로젝트 유틸리티 시스템 초기화"""
+    QuintLogger.info("🚀 퀸트프로젝트 유틸리티 시스템 초기화 시작")
     
-    # 1. 환경 검증
-    print("\n🔍 환경 검증:")
-    env_validation = validate_environment()
-    print(f"  전체 상태: {'✅ 정상' if env_validation['overall_status'] == 'ok' else '⚠️ 문제 있음'}")
+    try:
+        # 환경변수 로드
+        if Path('.env').exists():
+            load_dotenv('.env')
+            QuintLogger.info("환경변수 로드 완료")
+        
+        # 설정 검증
+        config_errors = config.validate()
+        if config_errors:
+            QuintLogger.warning(f"설정 검증 경고: {len(config_errors)}개")
+            for error in config_errors:
+                QuintLogger.warning(f"  - {error}")
+        else:
+            QuintLogger.info("설정 검증 완료")
+        
+        # 필수 디렉토리 생성
+        essential_dirs = ['logs', 'backups', 'data', 'reports']
+        for dir_name in essential_dirs:
+            Path(dir_name).mkdir(exist_ok=True)
+        QuintLogger.info("필수 디렉토리 생성 완료")
+        
+        # 보안 시스템 초기화
+        security._initialize_security()
+        QuintLogger.info("보안 시스템 초기화 완료")
+        
+        # 알림 시스템 초기화
+        notification._initialize_services()
+        QuintLogger.info("알림 시스템 초기화 완료")
+        
+        # 데이터베이스 초기화
+        database._initialize_db()
+        QuintLogger.info("데이터베이스 초기화 완료")
+        
+        # 시스템 모니터링 시작 (선택적)
+        if config.get('system.monitoring.enabled', False):
+            system_monitor.start_monitoring()
+            QuintLogger.info("시스템 모니터링 시작")
+        
+        # 자동 백업 스케줄링 (선택적)
+        if config.get('system.backup.auto_enabled', False):
+            interval = config.get('system.backup.interval_hours', 24)
+            backup.schedule_auto_backup(interval)
+            QuintLogger.info(f"자동 백업 스케줄링 시작 (간격: {interval}시간)")
+        
+        QuintLogger.info("✅ 퀸트프로젝트 유틸리티 시스템 초기화 완료")
+        
+        return True
+        
+    except Exception as e:
+        QuintLogger.error(f"❌ 유틸리티 시스템 초기화 실패: {e}")
+        return False
+
+def cleanup_quint_utils():
+    """퀸트프로젝트 유틸리티 시스템 정리"""
+    QuintLogger.info("🧹 퀸트프로젝트 유틸리티 시스템 정리 시작")
     
-    if env_validation['issues']:
-        print("  발견된 문제:")
-        for issue in env_validation['issues'][:5]:  # 최대 5개만 표시
-            print(f"    - {issue}")
-    
-    # 2. 설정 시스템 테스트
-    print("\n⚙️ 설정 시스템 테스트:")
-    test_config = config_manager.get('project.name', 'Unknown')
-    print(f"  프로젝트 이름: {test_config}")
-    print(f"  거래 모드: {'모의거래' if config_manager.is_paper_trading() else '실거래'}")
-    
-    # 3. 시간대 관리 테스트
-    print("\n🕐 시간대 관리 테스트:")
-    current_times = timezone_manager.get_all_market_times()
-    for market, time_info in current_times.items():
-        market_name = {'KOR': '🇰🇷 서울', 'US': '🇺🇸 뉴욕', 'JP': '🇯🇵 도쿄', 'EU': '🇪🇺 런던'}[market]
-        print(f"  {market_name}: {time_info['datetime']}")
-    
-    # 4. 시장 개장 상태 테스트
-    print("\n📈 시장 상태 테스트:")
-    market_status = get_market_status_summary()
-    for market in ['US', 'JP', 'COIN']:
-        status = market_status[market]
-        market_name = {'US': '🇺🇸 미국', 'JP': '🇯🇵 일본', 'COIN': '🪙 암호화폐'}[market]
-        open_status = "🟢 개장" if status['is_open'] else "🔴 휴장"
-        print(f"  {market_name}: {open_status} - {status['session_type']}")
-    
-    # 5. 데이터 처리 테스트
-    print("\n📊 데이터 처리 테스트:")
-    test_symbols = ['AAPL', '7203.T', 'BTC-KRW', 'INVALID']
-    for symbol in test_symbols:
-        market = DataProcessor.detect_market(symbol)
-        is_valid = Validator.is_valid_symbol(symbol)
-        print(f"  {symbol}: {market} 시장, 유효성: {'✅' if is_valid else '❌'}")
-    
-    # 6. 금융 계산 테스트
-    print("\n💰 금융 계산 테스트:")
-    # 샘플 데이터 생성
-    np.random.seed(42)
-    sample_prices = pd.Series(100 + np.cumsum(np.random.randn(100) * 0.02))
-    
-    rsi = FinanceUtils.calculate_rsi(sample_prices)
-    macd_data = FinanceUtils.calculate_macd(sample_prices)
-    bb_data = FinanceUtils.calculate_bollinger_bands(sample_prices)
-    
-    print(f"  RSI (마지막): {rsi.iloc[-1]:.2f}")
-    print(f"  MACD: {macd_data['macd'].iloc[-1]:.4f}")
-    print(f"  볼린저 밴드 폭: {bb_data['width'].iloc[-1]:.4f}")
-    
-    # 7. 포맷팅 테스트
-    print("\n📋 포맷팅 테스트:")
-    test_values = [0.0001, 1.23, 1234.56, 1234567.89]
-    for value in test_values:
-        formatted_usd = Formatter.format_price(value, 'USD')
-        formatted_krw = Formatter.format_price(value * 1300, 'KRW')
-        print(f"  ${value} → {formatted_usd} / {formatted_krw}")
-    
-    # 8. 캐시 테스트
-    print("\n💾 캐시 시스템 테스트:")
-    cache.set('test_key', {'test': 'data', 'timestamp': time.time()})
-    cached_value = cache.get('test_key')
-    cache_stats = cache.stats()
-    print(f"  캐시 저장/로드: {'✅ 성공' if cached_value else '❌ 실패'}")
-    print(f"  캐시 사용률: {cache_stats['usage_percent']:.1f}%")
-    
-    # 9. 파일 관리 테스트
-    print("\n📁 파일 관리 테스트:")
-    test_data = {
-        'test': 'enhanced_data',
+    try:
+        # 시스템 모니터링 중지
+        system_monitor.stop_monitoring()
+        
+        # 네트워크 세션 종료
+        if network.session and not network.session.closed:
+            asyncio.create_task(network.close_session())
+        
+        # 데이터베이스 연결 종료
+        database.close()
+        
+        # 최종 백업 (선택적)
+        if config.get('system.backup.final_backup', True):
+            backup.create_backup('final')
+        
+        QuintLogger.info("✅ 퀸트프로젝트 유틸리티 시스템 정리 완료")
+        
+    except Exception as e:
+        QuintLogger.error(f"❌ 유틸리티 시스템 정리 실패: {e}")
+
+# ============================================================================
+# 🎮 편의 함수들 (외부 호출용)
+# ============================================================================
+def get_system_status() -> Dict[str, Any]:
+    """시스템 상태 종합 조회"""
+    status = {
         'timestamp': datetime.now().isoformat(),
-        'market_times': timezone_manager.get_all_market_times()
-    }
-    save_success = file_manager.save_json(test_data, 'enhanced_test.json')
-    load_success = file_manager.load_json('enhanced_test.json') is not None
-    print(f"  JSON 저장: {'✅ 성공' if save_success else '❌ 실패'}")
-    print(f"  JSON 로드: {'✅ 성공' if load_success else '❌ 실패'}")
-    
-    # 10. 보안 테스트
-    print("\n🔒 보안 기능 테스트:")
-    test_api_key = "test_api_key_12345"
-    encrypted = SecurityUtils.encrypt_api_key(test_api_key)
-    decrypted = SecurityUtils.decrypt_api_key(encrypted)
-    print(f"  암호화/복호화: {'✅ 성공' if decrypted == test_api_key else '❌ 실패'}")
-    
-    # 11. 시스템 상태 테스트
-    print("\n🖥️ 시스템 상태 테스트:")
-    health = monitor_system_health()
-    if health.get('status') == 'healthy':
-        print("  시스템 상태: ✅ 정상")
-        print(f"    CPU: {health['system']['cpu_percent']}%")
-        print(f"    메모리: {health['system']['memory_percent']}%")
-    else:
-        print("  시스템 상태: ⚠️ 주의 필요")
-        for warning in health.get('warnings', []):
-            print(f"    - {warning}")
-    
-    # 12. 포트폴리오 계산 테스트
-    print("\n💼 포트폴리오 계산 테스트:")
-    sample_positions = {
-        'AAPL': {'quantity': 100, 'current_price': 150, 'avg_price': 145},
-        'BTC-KRW': {'quantity': 0.1, 'current_price': 50000000, 'avg_price': 48000000},
-        '7203.T': {'quantity': 500, 'current_price': 2500, 'avg_price': 2400}
+        'config_valid': len(config.validate()) == 0,
+        'database_connected': database.conn is not None,
+        'monitoring_active': system_monitor.monitoring_active,
+        'network_available': network.check_internet_connection(),
+        'disk_usage': {},
+        'memory_usage': {},
+        'recent_errors': []
     }
     
-    portfolio_summary = calculate_portfolio_summary(sample_positions)
-    print(f"  총 포트폴리오 가치: {Formatter.format_price(portfolio_summary['total_value'])}")
-    print(f"  총 손익: {Formatter.format_price(portfolio_summary['total_pnl'])}")
-    print(f"  포지션 수: {portfolio_summary['position_count']}개")
-    print(f"  시장별 분포: {len(portfolio_summary['markets'])}개 시장")
+    # 시스템 메트릭
+    try:
+        metrics = system_monitor.get_system_metrics()
+        status['disk_usage'] = {
+            'percent': metrics.get('disk_percent', 0),
+            'free_gb': metrics.get('disk_free_gb', 0)
+        }
+        status['memory_usage'] = {
+            'percent': metrics.get('memory_percent', 0),
+            'available_gb': metrics.get('memory_available_gb', 0)
+        }
+    except:
+        pass
     
-    # 13. 백테스트 유틸리티 테스트
-    print("\n📊 백테스트 유틸리티 테스트:")
-    sample_returns = pd.Series(np.random.normal(0.001, 0.02, 252))  # 1년치 일일 수익률
+    # 최근 에러 로그 (간소화)
+    try:
+        log_file = Path('logs/quint.log')
+        if log_file.exists():
+            with open(log_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                error_lines = [line.strip() for line in lines[-100:] if 'ERROR' in line]
+                status['recent_errors'] = error_lines[-5:]  # 최근 5개만
+    except:
+        pass
     
-    max_dd = BacktestUtils.calculate_max_drawdown((1 + sample_returns).cumprod())
-    var_5 = BacktestUtils.calculate_var(sample_returns, 0.05)
-    cvar_5 = BacktestUtils.calculate_cvar(sample_returns, 0.05)
-    
-    print(f"  최대 손실폭: {Formatter.format_percentage(max_dd * 100)}")
-    print(f"  VaR (5%): {Formatter.format_percentage(var_5 * 100)}")
-    print(f"  CVaR (5%): {Formatter.format_percentage(cvar_5 * 100)}")
-    
-    # 14. 거래 신호 검증 테스트
-    print("\n🎯 거래 신호 검증 테스트:")
-    test_signals = [
-        {'symbol': 'AAPL', 'action': 'BUY', 'confidence': 0.85, 'price': 150.0},
-        {'symbol': 'INVALID', 'action': 'BUY', 'confidence': 0.85},
-        {'symbol': 'BTC-KRW', 'action': 'HOLD', 'confidence': 1.5}  # 잘못된 신뢰도
-    ]
-    
-    for i, signal in enumerate(test_signals):
-        is_valid, errors = Validator.validate_trading_signal(signal)
-        status = "✅ 유효" if is_valid else f"❌ 오류: {', '.join(errors)}"
-        print(f"  신호 {i+1}: {status}")
-    
-    # 15. 알림 시스템 테스트
-    print("\n🔔 알림 시스템 테스트:")
-    print("  텔레그램 활성화:", "✅" if notification_manager.telegram_enabled else "❌")
-    print("  이메일 활성화:", "✅" if notification_manager.email_enabled else "❌")
-    print("  슬랙 활성화:", "✅" if notification_manager.slack_enabled else "❌")
-    
-    # 테스트 완료 요약
-    print("\n" + "=" * 70)
-    print("✅ 강화된 유틸리티 종합 테스트 완료!")
-    print(f"🕐 테스트 시간: {Formatter.format_datetime(datetime.now())}")
-    
-    # 간단한 성능 벤치마크
-    print("\n⚡ 성능 벤치마크:")
-    
-    # 데이터 처리 속도
-    start_time = time.time()
-    for _ in range(1000):
-        DataProcessor.normalize_symbol('AAPL')
-    symbol_processing_time = time.time() - start_time
-    print(f"  심볼 정규화 (1000회): {symbol_processing_time:.3f}초")
-    
-    # 캐시 성능
-    start_time = time.time()
-    for i in range(1000):
-        cache.set(f'bench_{i}', f'value_{i}')
-        cache.get(f'bench_{i}')
-    cache_performance_time = time.time() - start_time
-    print(f"  캐시 저장/로드 (1000회): {cache_performance_time:.3f}초")
-    
-    # 최종 권장사항
-    print("\n💡 권장사항:")
-    if env_validation['issues']:
-        print("  1. 환경 설정 문제를 해결하세요")
-    if not config_manager.is_paper_trading():
-        print("  2. ⚠️ 실거래 모드입니다 - 신중하게 사용하세요!")
-    print("  3. 정기적으로 시스템 상태를 모니터링하세요")
-    print("  4. 로그 파일을 주기적으로 확인하세요")
-    
-    print("\n🚀 시스템이 준비되었습니다!")
+    return status
 
-# ================================
-# 메인 실행부
-# ================================
+async def send_test_notification(message: str = "퀸트프로젝트 테스트 알림") -> Dict[str, bool]:
+    """테스트 알림 전송"""
+    return await notification.send_alert('info', '테스트 알림', message, 'normal')
 
-if __name__ == "__main__":
-    # 기본 로깅 설정
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler('logs/utils.log', encoding='utf-8')
-        ]
-    )
+def create_performance_summary() -> Dict[str, Any]:
+    """성과 요약 생성"""
+    try:
+        trades = database.get_trades()
+        if not trades:
+            return {'message': '거래 데이터 없음'}
+        
+        # 간단한 통계
+        total_trades = len(trades)
+        profitable_trades = len([t for t in trades if t.get('pnl', 0) > 0])
+        total_pnl = sum(t.get('pnl', 0) for t in trades)
+        
+        return {
+            'total_trades': total_trades,
+            'win_rate': profitable_trades / total_trades if total_trades > 0 else 0,
+            'total_pnl': total_pnl,
+            'avg_pnl': total_pnl / total_trades if total_trades > 0 else 0,
+            'formatted_pnl': format_currency(total_pnl)
+        }
+    except Exception as e:
+        QuintLogger.error(f"성과 요약 생성 실패: {e}")
+        return {'error': str(e)}
+
+def backup_system_data() -> Optional[Path]:
+    """시스템 데이터 백업"""
+    return backup.create_backup('manual')
+
+def cleanup_system_data(days: int = 90) -> Dict[str, int]:
+    """시스템 데이터 정리"""
+    result = {}
     
-    # 종합 테스트 실행
-    run_comprehensive_test()
+    # 데이터베이스 정리
+    result['database_records'] = database.cleanup_old_data(days)
+    
+    # 백업 정리
+    result['old_backups'] = backup.cleanup_old_backups()
+    
+    # 로그 파일 정리 (30일 이상)
+    logs_deleted = 0
+    try:
+        log_dir = Path('logs')
+        if log_dir.exists():
+            cutoff_time = datetime.now() - timedelta(days=30)
+            for log_file in log_dir.glob('*.log.*'):  # 로테이션된 로그만
+                if datetime.fromtimestamp(log_file.stat().st_mtime) < cutoff_time:
+                    log_file.unlink()
+                    logs_deleted += 1
+    except Exception as e:
+        QuintLogger.error(f"로그 파일 정리 실패: {e}")
+    
+    result['log_files'] = logs_deleted
+    
+    return result
+
+# ============================================================================
+# 🎯 시작시 자동 초기화
+# ============================================================================
+# 모듈 import시 자동으로 초기화 실행
+if __name__ != "__main__":
+    initialize_quint_utils()
+
+# ============================================================================
+# 📋 퀸트프로젝트 UTILS.PY 완료!
+# ============================================================================
+"""
+🏆 퀸트프로젝트 UTILS.PY 완전체 특징:
+
+🔧 혼자 보수유지 가능한 유틸리티:
+   ✅ 통합 설정 관리 시스템
+   ✅ 자동 백업 및 복구
+   ✅ 시스템 모니터링
+   ✅ 에러 핸들링 및 로깅
+
+📊 완전한 데이터 처리:
+   ✅ 기술지표 계산 라이브러리
+   ✅ 데이터 정제 및 변환
+   ✅ 성과 분석 도구
+   ✅ 데이터베이스 관리
+
+🛡️ 보안 및 안정성:
+   ✅ 암호화 시스템
+   ✅ API 키 관리
+   ✅ 입력값 검증
+   ✅ 예외 처리
+
+📱 통합 알림 시스템:
+   ✅ 텔레그램/디스코드/슬랙
+   ✅ 이메일 알림
+   ✅ 조용한 시간 관리
+   ✅ 우선순위별 알림
+
+⚡ 성능 최적화:
+   ✅ 캐싱 시스템
+   ✅ 비동기 처리
+   ✅ 재시도 메커니즘
+   ✅ 실행 시간 측정
+
+🎯 사용법:
+   - from utils import *
+   - get_system_status()
+   - send_test_notification()
+   - backup_system_data()
+   - create_performance_summary()
+
+🚀 퀸트프로젝트 = 완전 자동화 유틸리티!
