@@ -36,9 +36,9 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union, Callable
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
-from email.mime.base import MimeBase
+from email.mime.text import MIMEText
+from email.mime.multipart import MiMEMultipart
+from email.mime.base import MiMEBase
 from email import encoders
 import sqlite3
 import threading
