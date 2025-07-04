@@ -1,2682 +1,1629 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🏆 최고퀸트프로젝트 - 핵심 실행 엔진 (Enhanced 완전 통합 버전)
-==================================================================
+🏆 퀸트프로젝트 - 4대 시장 통합 핵심 시스템 CORE.PY
+================================================================
 
-전 세계 시장 통합 매매 시스템:
-- 🇺🇸 미국 주식 (버핏 + 린치 + 모멘텀 + 기술분석 전략)
-- 🇯🇵 일본 주식 (일목균형표 + 엔화 + 기술분석)
-- 🪙 암호화폐 (AI 품질평가 + 시장사이클 + 상관관계 최적화)
-- 📊 통합 리스크 관리
-- 🔔 실시간 알림 시스템
-- 📈 성과 추적 및 리포트
-- 🔄 요일별 스케줄링 시스템
-- 🤖 완전 자동화 (자동선별 + 분석 + 실행)
+🌟 핵심 특징:
+- 🇺🇸 미국주식: 전설적 퀸트 마스터시스템 V6.0 (IBKR 연동)
+- 🪙 업비트: 전설급 5대 시스템 완전체 (실시간 매매)
+- 🇯🇵 일본주식: YEN-HUNTER 전설급 TOPIX+JPX400
+- 🇮🇳 인도주식: 5대 투자거장 + 14개 전설급 기술지표
 
-Author: 최고퀸트팀
-Version: 6.0.0 (Enhanced 완전 통합)
-Project: 최고퀸트프로젝트
-Last Updated: 2025-07-01
+⚡ 혼자 보수유지 가능한 완전 자동화 아키텍처
+💎 설정 기반 모듈화 + 실시간 모니터링
+🛡️ 통합 리스크 관리 + 포트폴리오 최적화
+
+Author: 퀸트팀 | Version: ULTIMATE
+Date: 2024.12
 """
 
 import asyncio
 import logging
-import json
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Union
-import traceback
-import numpy as np
-import time
-import signal
+from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass, asdict
+import json
+import yaml
 from pathlib import Path
 
-# 설정 관리 import (안전한 fallback)
+import numpy as np
+import pandas as pd
+import yfinance as yf
+import pyupbit
+import requests
+from dotenv import load_dotenv
+
+# 선택적 import (없어도 기본 기능 동작)
 try:
-    import yaml
-    from dotenv import load_dotenv
-    YAML_AVAILABLE = True
-    DOTENV_AVAILABLE = True
-except ImportError as e:
-    print(f"⚠️ 설정 라이브러리 누락: {e}")
-    YAML_AVAILABLE = False
-    DOTENV_AVAILABLE = False
+    from ib_insync import *
+    IBKR_AVAILABLE = True
+except ImportError:
+    IBKR_AVAILABLE = False
 
-# 데이터 분석 import (안전한 fallback)
 try:
-    import pandas as pd
-    import numpy as np
-    PANDAS_AVAILABLE = True
-except ImportError as e:
-    print(f"⚠️ 데이터 분석 라이브러리 누락: {e}")
-    PANDAS_AVAILABLE = False
+    import telegram
+    TELEGRAM_AVAILABLE = True
+except ImportError:
+    TELEGRAM_AVAILABLE = False
 
-# 기본 dataclass import
-from dataclasses import dataclass, asdict, field
-
-# 프로젝트 모듈 import (개선된 안전한 fallback 처리)
-def safe_import(module_name, description):
-    """안전한 모듈 import"""
-    try:
-        module = __import__(module_name)
-        print(f"✅ {description} 모듈 로드 성공")
-        return module, True
-    except ImportError as e:
-        print(f"⚠️ {description} 모듈 로드 실패: {e}")
-        print(f"   해결방법: pip install -r requirements.txt 또는 해당 모듈 파일 생성")
-        return None, False
-
-# 전략 모듈들
-us_strategy_module, US_STRATEGY_AVAILABLE = safe_import('us_strategy', '미국 주식 전략')
-jp_strategy_module, JP_STRATEGY_AVAILABLE = safe_import('jp_strategy', '일본 주식 전략')
-coin_strategy_module, COIN_STRATEGY_AVAILABLE = safe_import('coin_strategy', '암호화폐 전략')
-
-# 유틸리티 모듈들
-notifier_module, NOTIFIER_AVAILABLE = safe_import('notifier', '알림 시스템')
-scheduler_module, SCHEDULER_AVAILABLE = safe_import('스케줄러', '스케줄러')
-trading_module, TRADING_AVAILABLE = safe_import('trading', '매매 실행')
-config_module, CONFIG_AVAILABLE = safe_import('config', '설정 로더')
-
-# 로깅 설정 (개선된 버전)
-def setup_logging(log_level: str = "INFO") -> logging.Logger:
-    """개선된 로깅 시스템 설정"""
-    # logs 폴더 생성
-    log_dir = Path('logs')
-    log_dir.mkdir(exist_ok=True)
+# ============================================================================
+# 🔧 설정 관리자 - 모든 설정을 한 곳에서 관리
+# ============================================================================
+class QuintConfigManager:
+    """퀸트프로젝트 통합 설정 관리자"""
     
-    # 로그 파일명 (날짜별)
-    today = datetime.now().strftime('%Y%m%d')
-    log_filename = log_dir / f"quant_{today}.log"
-    error_log_filename = log_dir / f"error_{today}.log"
+    def __init__(self):
+        self.config_file = "quint_config.yaml"
+        self.env_file = ".env"
+        self.config = {}
+        self._initialize_config()
     
-    # 로거 생성
-    logger = logging.getLogger('QuantTradingEngine')
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    
-    # 핸들러가 이미 있으면 제거 (중복 방지)
-    if logger.handlers:
-        logger.handlers.clear()
-    
-    # 포매터 설정
-    formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)8s | %(name)s | %(funcName)s:%(lineno)d | %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    
-    # 파일 핸들러 (일반 로그)
-    file_handler = logging.FileHandler(log_filename, encoding='utf-8')
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-    
-    # 파일 핸들러 (에러 로그)
-    error_handler = logging.FileHandler(error_log_filename, encoding='utf-8')
-    error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(formatter)
-    logger.addHandler(error_handler)
-    
-    # 콘솔 핸들러
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)s | %(message)s',
-        datefmt='%H:%M:%S'
-    )
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
-    
-    logger.info("🏆 최고퀸트프로젝트 로깅 시스템 초기화 완료")
-    return logger
-
-@dataclass
-class UnifiedTradingSignal:
-    """통합 매매 신호 데이터 클래스 (모든 시장 대응)"""
-    market: str  # 'US', 'JP', 'COIN'
-    symbol: str
-    action: str  # 'buy', 'sell', 'hold'
-    confidence: float
-    price: float
-    strategy: str
-    reasoning: str
-    target_price: float
-    timestamp: datetime
-    sector: Optional[str] = None
-    
-    # 통합 점수 정보
-    total_score: float = 0.0
-    selection_score: float = 0.0
-    
-    # 미국 주식 전용
-    buffett_score: Optional[float] = None
-    lynch_score: Optional[float] = None
-    momentum_score: Optional[float] = None
-    technical_score: Optional[float] = None
-    
-    # 일본 주식 전용
-    yen_signal: Optional[str] = None
-    stock_type: Optional[str] = None  # 'export', 'domestic'
-    
-    # 암호화폐 전용
-    project_quality_score: Optional[float] = None
-    market_cycle: Optional[str] = None
-    btc_correlation: Optional[float] = None
-    
-    # 공통 기술적 지표
-    rsi: Optional[float] = None
-    macd_signal: Optional[str] = None
-    trend: Optional[str] = None
-    
-    # 분할매매 정보 (통합)
-    position_size: Optional[float] = None
-    total_investment: Optional[float] = None
-    split_stages: Optional[int] = None
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
-    max_hold_days: Optional[int] = None
-    
-    additional_data: Optional[Dict] = field(default_factory=dict)
-
-@dataclass
-class TradeExecution:
-    """매매 실행 결과 데이터 클래스"""
-    signal: UnifiedTradingSignal
-    executed: bool
-    execution_price: Optional[float] = None
-    execution_time: Optional[datetime] = None
-    quantity: Optional[float] = None
-    order_id: Optional[str] = None
-    error_message: Optional[str] = None
-    commission: Optional[float] = None
-    slippage: Optional[float] = None
-    estimated_profit: Optional[float] = None
-
-@dataclass
-class MarketSummary:
-    """시장별 요약 데이터 (개선된 버전)"""
-    market: str
-    total_analyzed: int
-    buy_signals: int
-    sell_signals: int
-    hold_signals: int
-    top_picks: List[UnifiedTradingSignal]
-    executed_trades: List[TradeExecution]
-    analysis_time: float
-    errors: List[str]
-    is_trading_day: bool
-    
-    # 성과 지표 추가
-    avg_confidence: float = 0.0
-    success_rate: float = 0.0
-    total_estimated_profit: float = 0.0
-    
-    # 시장별 추가 정보
-    market_specific_info: Optional[Dict] = field(default_factory=dict)
-
-class QuantTradingEngine:
-    """🏆 최고퀸트프로젝트 메인 엔진 (Enhanced 완전 통합 버전)"""
-    
-    def __init__(self, config_path: str = "settings.yaml", force_test: bool = False):
-        """엔진 초기화 (개선된 버전)"""
-        # 시그널 핸들러 등록 (안전한 종료)
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        
-        self.config_path = config_path
-        self.force_test = force_test
-        self.shutdown_requested = False
-        
-        # 로깅 초기화
-        self.logger = setup_logging()
-        
+    def _initialize_config(self):
+        """설정 초기화"""
         # 환경변수 로드
-        self._load_environment()
+        if Path(self.env_file).exists():
+            load_dotenv(self.env_file)
         
-        # 설정 로드
-        self.config = self._load_config()
-        
-        # 필수 디렉토리 생성
-        self._create_directories()
-        
-        # 전략 객체 초기화
-        self.us_strategy = None
-        self.jp_strategy = None
-        self.coin_strategy = None
-        
-        # 오늘 실행할 전략 확인 (스케줄링)
-        self.today_strategies = self._get_today_strategies()
-        
-        # 🔥 강제 테스트 모드 처리
-        if self.force_test:
-            self.logger.info("🧪 강제 테스트 모드 활성화 - 모든 전략 테스트")
-            self.today_strategies = ['US', 'JP', 'COIN']
-        
-        # 전략 초기화
-        self._initialize_strategies()
-        
-        # 매매 설정
-        self._initialize_trading_config()
-        
-        # 리스크 관리 설정
-        self._initialize_risk_config()
-        
-        # 시장별 포트폴리오 비중
-        self.market_allocation = self.config.get('portfolio', {}).get('allocation', {
-            'us_ratio': 0.50,
-            'jp_ratio': 0.30, 
-            'coin_ratio': 0.20
-        })
-        
-        # 실행 통계
-        self.daily_trades_count = 0
-        self.total_signals_generated = 0
-        self.session_start_time = datetime.now()
-        self.last_analysis_time = None
-        self.analysis_count = 0
-        
-        # 성과 추적
-        self.session_stats = {
-            'total_profit': 0.0,
-            'total_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'total_commission': 0.0
-        }
-        
-        self.logger.info("🚀 최고퀸트프로젝트 엔진 초기화 완료")
-        self._log_initialization_summary()
-
-    def _signal_handler(self, signum, frame):
-        """시그널 핸들러 (안전한 종료)"""
-        self.logger.info(f"🛑 종료 시그널 수신: {signum}")
-        self.shutdown_requested = True
-
-    def _load_environment(self):
-        """환경변수 로드"""
-        if DOTENV_AVAILABLE:
-            env_file = Path('.env')
-            if env_file.exists():
-                load_dotenv(env_file)
-                self.logger.info("✅ 환경변수 로드 완료")
-            else:
-                self.logger.warning("⚠️ .env 파일 없음. .env.example 참조하여 생성하세요")
+        # 기본 설정 로드/생성
+        if Path(self.config_file).exists():
+            with open(self.config_file, 'r', encoding='utf-8') as f:
+                self.config = yaml.safe_load(f) or {}
         else:
-            self.logger.warning("⚠️ python-dotenv 패키지 없음")
-
-    def _load_config(self) -> Dict:
-        """설정 파일 로드 (개선된 버전)"""
-        config = {}
-        
-        try:
-            if not YAML_AVAILABLE:
-                self.logger.error("❌ PyYAML 패키지가 필요합니다: pip install PyYAML")
-                return self._get_default_config()
-            
-            config_file = Path(self.config_path)
-            if not config_file.exists():
-                self.logger.error(f"❌ 설정 파일 없음: {self.config_path}")
-                return self._get_default_config()
-            
-            with open(config_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-                
-                # 환경변수 치환 (${VAR_NAME:-default} 형식)
-                import re
-                def replace_env_vars(match):
-                    var_expr = match.group(1)
-                    if ':-' in var_expr:
-                        var_name, default_value = var_expr.split(':-', 1)
-                        return os.getenv(var_name, default_value)
-                    else:
-                        return os.getenv(var_expr, '')
-                
-                content = re.sub(r'\$\{([^}]+)\}', replace_env_vars, content)
-                
-                # YAML 파싱
-                config = yaml.safe_load(content)
-                self.logger.info(f"✅ 설정 파일 로드 성공: {self.config_path}")
-                
-        except Exception as e:
-            self.logger.error(f"❌ 설정 파일 로드 실패: {e}")
-            config = self._get_default_config()
-        
-        return config
-
-    def _get_default_config(self) -> Dict:
-        """기본 설정값 반환"""
-        return {
-            'project': {
-                'name': '최고퀸트프로젝트',
-                'version': '6.0.0',
-                'environment': 'development'
+            self._create_default_config()
+            self._save_config()
+    
+    def _create_default_config(self):
+        """기본 설정 생성"""
+        self.config = {
+            # 전체 시스템 설정
+            'system': {
+                'portfolio_value': 100_000_000,  # 총 포트폴리오 가치 (1억원)
+                'demo_mode': True,               # 시뮬레이션 모드
+                'auto_trading': False,           # 자동매매 활성화
+                'log_level': 'INFO',
+                'backup_enabled': True
             },
-            'schedule': {
-                'weekly_schedule': {
-                    'monday': {'strategies': ['COIN']},
-                    'tuesday': {'strategies': ['US', 'JP']},
-                    'wednesday': {'strategies': []},
-                    'thursday': {'strategies': ['US', 'JP']},
-                    'friday': {'strategies': ['COIN']},
-                    'saturday': {'strategies': ['COIN', 'US', 'JP']},
-                    'sunday': {'strategies': []}
+            
+            # 시장별 활성화 설정
+            'markets': {
+                'us_stocks': {'enabled': True, 'allocation': 40.0},      # 미국 40%
+                'upbit_crypto': {'enabled': True, 'allocation': 30.0},   # 암호화폐 30%
+                'japan_stocks': {'enabled': True, 'allocation': 20.0},   # 일본 20%
+                'india_stocks': {'enabled': True, 'allocation': 10.0}    # 인도 10%
+            },
+            
+            # 리스크 관리
+            'risk_management': {
+                'max_single_position': 8.0,     # 단일 종목 최대 비중 8%
+                'stop_loss': 15.0,              # 기본 손절선 15%
+                'take_profit': 25.0,            # 기본 익절선 25%
+                'max_correlation': 0.7,         # 최대 상관관계
+                'rebalance_threshold': 5.0      # 리밸런싱 임계값 5%
+            },
+            
+            # 알림 설정
+            'notifications': {
+                'telegram': {
+                    'enabled': False,
+                    'bot_token': '${TELEGRAM_BOT_TOKEN}',
+                    'chat_id': '${TELEGRAM_CHAT_ID}'
+                },
+                'console_only': True
+            },
+            
+            # 미국주식 설정
+            'us_stocks': {
+                'target_stocks': 15,
+                'confidence_threshold': 0.70,
+                'strategy_weights': {
+                    'buffett_value': 25.0,
+                    'lynch_growth': 25.0,
+                    'momentum': 25.0,
+                    'technical': 25.0
+                },
+                'ibkr': {
+                    'enabled': False,
+                    'host': '127.0.0.1',
+                    'port': 7497,
+                    'paper_trading': True
                 }
             },
-            'trading': {
-                'paper_trading': True,
-                'auto_execution': False,
-                'order_type': 'limit'
+            
+            # 업비트 설정
+            'upbit_crypto': {
+                'min_volume_krw': 5_000_000_000,  # 최소 거래량 50억원
+                'target_coins': 8,
+                'neural_quality_threshold': 0.6,
+                'kelly_max_ratio': 0.25
             },
-            'risk_management': {
-                'max_position_size': 0.05,
-                'max_daily_trades': 20,
-                'stop_loss': -0.03,
-                'take_profit': 0.06
+            
+            # 일본주식 설정
+            'japan_stocks': {
+                'yen_strong_threshold': 105.0,
+                'yen_weak_threshold': 110.0,
+                'target_stocks': 12,
+                'min_market_cap': 500_000_000_000  # 5천억엔
+            },
+            
+            # 인도주식 설정
+            'india_stocks': {
+                'target_stocks': 10,
+                'legendary_threshold': 8.0,
+                'index_diversity': True
             }
         }
-
-    def _create_directories(self):
-        """필수 디렉토리 생성"""
-        directories = ['data', 'logs', 'reports', 'backups', 'models']
-        
-        for directory in directories:
-            Path(directory).mkdir(exist_ok=True)
-        
-        self.logger.info("📁 필수 디렉토리 생성 완료")
-
-    def _get_today_strategies(self) -> List[str]:
-        """오늘 실행할 전략 목록 조회 (개선된 버전)"""
-        if self.force_test:
-            return ['US', 'JP', 'COIN']
-        
+    
+    def _save_config(self):
+        """설정 저장"""
         try:
-            if SCHEDULER_AVAILABLE:
-                # 스케줄러 모듈 사용
-                from scheduler import get_today_strategies
-                strategies = get_today_strategies(self.config)
-                return strategies
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True, indent=2)
         except Exception as e:
-            self.logger.error(f"❌ 스케줄러 모듈 사용 실패: {e}")
-        
-        # 기본 스케줄 로직
-        weekday = datetime.now().weekday()
-        day_mapping = {
-            0: 'monday', 1: 'tuesday', 2: 'wednesday', 3: 'thursday',
-            4: 'friday', 5: 'saturday', 6: 'sunday'
-        }
-        
-        today_key = day_mapping.get(weekday, 'monday')
-        schedule_config = self.config.get('schedule', {}).get('weekly_schedule', {})
-        today_config = schedule_config.get(today_key, {'strategies': ['US', 'JP', 'COIN']})
-        
-        strategies = today_config.get('strategies', [])
-        
-        self.logger.info(f"📅 오늘({today_key}): {strategies if strategies else '휴무'}")
-        return strategies
-
-    def _initialize_strategies(self):
-        """전략 객체들 초기화 (개선된 버전)"""
-        try:
-            # 미국 주식 전략
-            if US_STRATEGY_AVAILABLE and 'US' in self.today_strategies:
-                us_config = self.config.get('us_strategy', {})
-                if us_config.get('enabled', True):
-                    try:
-                        from us_strategy import AdvancedUSStrategy
-                        self.us_strategy = AdvancedUSStrategy(self.config_path)
-                        self.logger.info("🇺🇸 미국 주식 전략 활성화 (4가지 전략 융합)")
-                    except Exception as e:
-                        self.logger.error(f"❌ 미국 주식 전략 초기화 실패: {e}")
-                else:
-                    self.logger.info("🇺🇸 미국 주식 전략 설정에서 비활성화")
-            elif 'US' not in self.today_strategies:
-                self.logger.info("🇺🇸 미국 주식 전략 오늘 비활성화 (스케줄)")
-            
-            # 일본 주식 전략
-            if JP_STRATEGY_AVAILABLE and 'JP' in self.today_strategies:
-                jp_config = self.config.get('jp_strategy', {})
-                if jp_config.get('enabled', True):
-                    try:
-                        from jp_strategy import JPStrategy
-                        self.jp_strategy = JPStrategy(self.config_path)
-                        self.logger.info("🇯🇵 일본 주식 전략 활성화 (엔화+기술분석)")
-                    except Exception as e:
-                        self.logger.error(f"❌ 일본 주식 전략 초기화 실패: {e}")
-                else:
-                    self.logger.info("🇯🇵 일본 주식 전략 설정에서 비활성화")
-            elif 'JP' not in self.today_strategies:
-                self.logger.info("🇯🇵 일본 주식 전략 오늘 비활성화 (스케줄)")
-            
-            # 암호화폐 전략
-            if COIN_STRATEGY_AVAILABLE and 'COIN' in self.today_strategies:
-                coin_config = self.config.get('coin_strategy', {})
-                if coin_config.get('enabled', True):
-                    try:
-                        from coin_strategy import UltimateCoinStrategy
-                        self.coin_strategy = UltimateCoinStrategy(self.config_path)
-                        self.logger.info("🪙 암호화폐 전략 활성화 (AI 품질평가+시장사이클)")
-                    except Exception as e:
-                        self.logger.error(f"❌ 암호화폐 전략 초기화 실패: {e}")
-                else:
-                    self.logger.info("🪙 암호화폐 전략 설정에서 비활성화")
-            elif 'COIN' not in self.today_strategies:
-                self.logger.info("🪙 암호화폐 전략 오늘 비활성화 (스케줄)")
-                    
-        except Exception as e:
-            self.logger.error(f"❌ 전략 초기화 실패: {e}")
-
-    def _initialize_trading_config(self):
-        """매매 설정 초기화"""
-        self.trading_config = self.config.get('trading', {})
-        self.auto_execution = self.trading_config.get('auto_execution', False)
-        self.paper_trading = self.trading_config.get('paper_trading', True)
-        
-        # 매매 실행기 초기화
-        self.trading_executor = None
-        if TRADING_AVAILABLE and self.auto_execution:
-            try:
-                from trading import TradingExecutor
-                self.trading_executor = TradingExecutor(self.config_path)
-                self.logger.info(f"💰 매매 실행기 초기화 완료 (모의거래: {self.paper_trading})")
-            except Exception as e:
-                self.logger.error(f"❌ 매매 실행기 초기화 실패: {e}")
-
-    def _initialize_risk_config(self):
-        """리스크 관리 설정 초기화"""
-        self.risk_config = self.config.get('risk_management', {})
-        self.max_position_size = self.risk_config.get('position_risk', {}).get('max_position_size', 0.05)
-        self.stop_loss = self.risk_config.get('position_risk', {}).get('stop_loss', -0.03)
-        self.take_profit = self.risk_config.get('position_risk', {}).get('take_profit', 0.06)
-        self.max_daily_trades = self.risk_config.get('limits', {}).get('max_daily_trades', 20)
-
-    def _log_initialization_summary(self):
-        """초기화 요약 로그"""
-        self.logger.info("⚙️ 시스템 설정:")
-        self.logger.info(f"  자동매매: {self.auto_execution}")
-        self.logger.info(f"  모의거래: {self.paper_trading}")
-        self.logger.info(f"  활성 전략: {len(self.today_strategies)}개 - {self.today_strategies}")
-        self.logger.info(f"  시장 비중: US:{self.market_allocation.get('us_ratio', 0)*100:.0f}% "
-                        f"JP:{self.market_allocation.get('jp_ratio', 0)*100:.0f}% "
-                        f"COIN:{self.market_allocation.get('coin_ratio', 0)*100:.0f}%")
-        self.logger.info(f"  일일 거래 한도: {self.max_daily_trades}건")
-        
-        if self.force_test:
-            self.logger.info("🧪 강제 테스트: 스케줄 무시하고 모든 전략 테스트")
-
-    def _check_trading_time(self) -> bool:
-        """현재 시간이 거래 시간인지 확인 (개선된 버전)"""
-        try:
-            if self.force_test:
-                return True
-                
-            if SCHEDULER_AVAILABLE:
-                from scheduler import is_trading_time
-                return is_trading_time(self.config)
+            logging.error(f"설정 저장 실패: {e}")
+    
+    def get(self, key_path: str, default=None):
+        """설정값 조회 (점 표기법)"""
+        keys = key_path.split('.')
+        value = self.config
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
             else:
-                # 기본 거래시간 로직
-                current_hour = datetime.now().hour
-                weekday = datetime.now().weekday()
-                
-                # 암호화폐는 24시간
-                if 'COIN' in self.today_strategies:
-                    return True
-                
-                # 주식은 평일 거래시간
-                if weekday < 5 and 9 <= current_hour <= 16:
-                    return True
-                    
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"거래 시간 확인 실패: {e}")
-            return True
+                return default
+        
+        # 환경변수 치환
+        if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+            env_var = value[2:-1]
+            return os.getenv(env_var, default)
+        
+        return value
+    
+    def update(self, key_path: str, value):
+        """설정값 업데이트"""
+        keys = key_path.split('.')
+        config = self.config
+        for key in keys[:-1]:
+            if key not in config:
+                config[key] = {}
+            config = config[key]
+        config[keys[-1]] = value
+        self._save_config()
 
-    def _convert_to_unified_signal(self, signal: Any, market: str) -> UnifiedTradingSignal:
-        """각 전략의 신호를 통합 신호로 변환 (개선된 버전)"""
+# 전역 설정 관리자
+config = QuintConfigManager()
+
+# ============================================================================
+# 📊 공통 데이터 클래스
+# ============================================================================
+@dataclass
+class QuintSignal:
+    """퀸트프로젝트 통합 시그널"""
+    market: str          # 'us', 'crypto', 'japan', 'india'
+    symbol: str
+    action: str          # 'BUY', 'SELL', 'HOLD'
+    confidence: float    # 0.0 ~ 1.0
+    price: float
+    target_price: float
+    stop_loss: float
+    take_profit: float
+    
+    # 투자 계획
+    allocation_percent: float
+    investment_amount: float
+    
+    # 분석 정보
+    strategy_scores: Dict
+    technical_indicators: Dict
+    reasoning: str
+    
+    # 메타 정보
+    timestamp: datetime
+    market_cycle: str
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+@dataclass
+class Portfolio:
+    """포트폴리오 정보"""
+    total_value: float
+    positions: Dict[str, Any]
+    cash_balance: float
+    unrealized_pnl: float
+    daily_pnl: float
+    allocation_by_market: Dict[str, float]
+
+# ============================================================================
+# 🇺🇸 미국주식 전략 엔진 (간소화 버전)
+# ============================================================================
+class USStockEngine:
+    """미국주식 전설적 퀸트 엔진"""
+    
+    def __init__(self):
+        self.enabled = config.get('markets.us_stocks.enabled', True)
+        self.target_stocks = config.get('us_stocks.target_stocks', 15)
+        self.confidence_threshold = config.get('us_stocks.confidence_threshold', 0.70)
+        
+    async def analyze_us_market(self) -> List[QuintSignal]:
+        """미국 시장 분석"""
+        if not self.enabled:
+            return []
+        
+        logging.info("🇺🇸 미국주식 전설 퀸트 분석 시작")
+        
         try:
-            # 기본 필드 추출 (안전한 방식)
-            symbol = getattr(signal, 'symbol', 'UNKNOWN')
-            action = getattr(signal, 'action', 'hold')
-            confidence = getattr(signal, 'confidence', 0.0)
-            price = getattr(signal, 'price', 0.0)
-            strategy = getattr(signal, 'strategy', 'unknown')
-            reasoning = getattr(signal, 'reasoning', '')
-            target_price = getattr(signal, 'target_price', price)
-            timestamp = getattr(signal, 'timestamp', datetime.now())
+            # S&P 500 상위 종목 수집
+            sp500_symbols = self._get_sp500_sample()
             
-            # 통합 신호 생성
-            unified = UnifiedTradingSignal(
-                market=market,
+            # VIX 조회
+            vix = await self._get_vix()
+            
+            # 개별 종목 분석
+            signals = []
+            for symbol in sp500_symbols[:self.target_stocks]:
+                signal = await self._analyze_us_stock(symbol, vix)
+                if signal:
+                    signals.append(signal)
+                await asyncio.sleep(0.3)  # API 제한
+            
+            # 신뢰도 순 정렬
+            signals.sort(key=lambda x: x.confidence, reverse=True)
+            
+            buy_signals = [s for s in signals if s.action == 'BUY']
+            logging.info(f"🇺🇸 미국주식 분석 완료: {len(buy_signals)}개 매수 신호")
+            
+            return signals[:10]  # 상위 10개만
+            
+        except Exception as e:
+            logging.error(f"미국주식 분석 실패: {e}")
+            return []
+    
+    def _get_sp500_sample(self) -> List[str]:
+        """S&P 500 샘플 종목"""
+        return [
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK-B',
+            'UNH', 'JNJ', 'V', 'PG', 'JPM', 'HD', 'MA', 'PFE', 'ABBV', 'BAC',
+            'KO', 'AVGO', 'XOM', 'CVX', 'LLY', 'WMT', 'PEP', 'TMO', 'COST'
+        ]
+    
+    async def _get_vix(self) -> float:
+        """VIX 지수 조회"""
+        try:
+            vix_ticker = yf.Ticker("^VIX")
+            hist = vix_ticker.history(period="1d")
+            return float(hist['Close'].iloc[-1]) if not hist.empty else 20.0
+        except:
+            return 20.0
+    
+    async def _analyze_us_stock(self, symbol: str, vix: float) -> Optional[QuintSignal]:
+        """개별 미국 주식 분석"""
+        try:
+            stock = yf.Ticker(symbol)
+            info = stock.info
+            hist = stock.history(period="6mo")
+            
+            if hist.empty or not info:
+                return None
+            
+            current_price = float(hist['Close'].iloc[-1])
+            
+            # 간단한 점수 계산
+            scores = self._calculate_strategy_scores(info, hist)
+            
+            # VIX 조정
+            vix_adjustment = 1.15 if vix < 15 else 0.85 if vix > 30 else 1.0
+            total_score = scores['total'] * vix_adjustment
+            
+            # 액션 결정
+            if total_score >= self.confidence_threshold:
+                action = 'BUY'
+                confidence = min(0.95, total_score)
+            elif total_score <= 0.30:
+                action = 'SELL'
+                confidence = min(0.95, 1 - total_score)
+            else:
+                action = 'HOLD'
+                confidence = 0.50
+            
+            # 목표가 및 손절가
+            target_price = current_price * (1 + confidence * 0.30)
+            stop_loss = current_price * 0.85
+            take_profit = current_price * 1.25
+            
+            # 투자 금액 계산
+            allocation = config.get('markets.us_stocks.allocation', 40.0)
+            portfolio_value = config.get('system.portfolio_value', 100_000_000)
+            max_investment = portfolio_value * allocation / 100 / self.target_stocks
+            investment_amount = max_investment * confidence
+            
+            return QuintSignal(
+                market='us',
+                symbol=symbol,
+                action=action,
+                confidence=confidence,
+                price=current_price,
+                target_price=target_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                allocation_percent=(investment_amount / portfolio_value) * 100,
+                investment_amount=investment_amount,
+                strategy_scores=scores,
+                technical_indicators={'rsi': self._calculate_rsi(hist['Close'])},
+                reasoning=f"버핏:{scores['buffett']:.2f} 린치:{scores['lynch']:.2f} VIX조정:{vix_adjustment:.2f}",
+                timestamp=datetime.now(),
+                market_cycle='bull' if vix < 20 else 'bear' if vix > 30 else 'neutral'
+            )
+            
+        except Exception as e:
+            logging.error(f"미국주식 {symbol} 분석 실패: {e}")
+            return None
+    
+    def _calculate_strategy_scores(self, info: Dict, hist: pd.DataFrame) -> Dict:
+        """전략별 점수 계산"""
+        # 워렌 버핏 가치투자
+        pe = info.get('trailingPE', 999)
+        roe = info.get('returnOnEquity', 0) or 0
+        buffett_score = 0.3 if 5 <= pe <= 25 else 0.1
+        buffett_score += 0.3 if roe > 0.15 else 0.1
+        
+        # 피터 린치 성장투자
+        growth = info.get('earningsQuarterlyGrowth', 0) or 0
+        peg = info.get('pegRatio', 999) or 999
+        lynch_score = 0.3 if growth > 0.15 else 0.1
+        lynch_score += 0.3 if 0 < peg <= 1.5 else 0.1
+        
+        # 모멘텀
+        if len(hist) >= 60:
+            momentum_3m = (hist['Close'].iloc[-1] / hist['Close'].iloc[-60] - 1)
+            momentum_score = 0.4 if momentum_3m > 0.1 else 0.2 if momentum_3m > 0 else 0.1
+        else:
+            momentum_score = 0.2
+        
+        # 기술적 분석
+        rsi = self._calculate_rsi(hist['Close'])
+        technical_score = 0.4 if 30 <= rsi <= 70 else 0.2
+        
+        # 가중치 적용
+        weights = config.get('us_stocks.strategy_weights', {})
+        total = (
+            buffett_score * weights.get('buffett_value', 25) / 100 +
+            lynch_score * weights.get('lynch_growth', 25) / 100 +
+            momentum_score * weights.get('momentum', 25) / 100 +
+            technical_score * weights.get('technical', 25) / 100
+        )
+        
+        return {
+            'buffett': buffett_score,
+            'lynch': lynch_score,
+            'momentum': momentum_score,
+            'technical': technical_score,
+            'total': total
+        }
+    
+    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
+        """RSI 계산"""
+        try:
+            delta = prices.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            return float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
+        except:
+            return 50.0
+
+# ============================================================================
+# 🪙 업비트 암호화폐 전략 엔진 (간소화 버전)
+# ============================================================================
+class UpbitCryptoEngine:
+    """업비트 전설급 5대 시스템"""
+    
+    def __init__(self):
+        self.enabled = config.get('markets.upbit_crypto.enabled', True)
+        self.min_volume = config.get('upbit_crypto.min_volume_krw', 5_000_000_000)
+        self.target_coins = config.get('upbit_crypto.target_coins', 8)
+        
+        # 코인 품질 점수 (기술력, 생태계, 커뮤니티, 채택도)
+        self.coin_scores = {
+            'BTC': [0.98, 0.95, 0.90, 0.95], 'ETH': [0.95, 0.98, 0.85, 0.90],
+            'BNB': [0.80, 0.90, 0.75, 0.85], 'ADA': [0.85, 0.75, 0.80, 0.70],
+            'SOL': [0.90, 0.80, 0.85, 0.75], 'AVAX': [0.85, 0.75, 0.70, 0.70],
+            'DOT': [0.85, 0.80, 0.70, 0.65], 'MATIC': [0.80, 0.85, 0.75, 0.80],
+            'ATOM': [0.75, 0.70, 0.75, 0.60], 'NEAR': [0.80, 0.70, 0.65, 0.60],
+            'LINK': [0.90, 0.75, 0.70, 0.80], 'UNI': [0.85, 0.80, 0.75, 0.75]
+        }
+    
+    async def analyze_crypto_market(self) -> List[QuintSignal]:
+        """암호화폐 시장 분석"""
+        if not self.enabled:
+            return []
+        
+        logging.info("🪙 업비트 전설급 암호화폐 분석 시작")
+        
+        try:
+            # 모든 KRW 마켓 조회
+            all_tickers = pyupbit.get_tickers(fiat="KRW")
+            if not all_tickers:
+                return []
+            
+            # 거래량 필터링
+            candidates = await self._filter_by_volume(all_tickers)
+            
+            # 개별 분석
+            signals = []
+            for candidate in candidates[:self.target_coins * 2]:  # 여유분 포함
+                signal = await self._analyze_crypto_coin(candidate)
+                if signal:
+                    signals.append(signal)
+                await asyncio.sleep(0.2)
+            
+            # 상위 선별
+            signals.sort(key=lambda x: x.confidence, reverse=True)
+            buy_signals = [s for s in signals if s.action == 'BUY']
+            
+            logging.info(f"🪙 암호화폐 분석 완료: {len(buy_signals)}개 매수 신호")
+            
+            return signals[:self.target_coins]
+            
+        except Exception as e:
+            logging.error(f"암호화폐 분석 실패: {e}")
+            return []
+    
+    async def _filter_by_volume(self, tickers: List[str]) -> List[Dict]:
+        """거래량 기반 필터링"""
+        candidates = []
+        
+        for ticker in tickers:
+            try:
+                price = pyupbit.get_current_price(ticker)
+                if not price:
+                    continue
+                
+                ohlcv = pyupbit.get_ohlcv(ticker, interval="day", count=7)
+                if ohlcv is None or len(ohlcv) < 7:
+                    continue
+                
+                volume_krw = ohlcv.iloc[-1]['volume'] * price
+                if volume_krw >= self.min_volume:
+                    candidates.append({
+                        'symbol': ticker,
+                        'price': price,
+                        'volume_krw': volume_krw,
+                        'ohlcv': ohlcv
+                    })
+                    
+            except:
+                continue
+        
+        return sorted(candidates, key=lambda x: x['volume_krw'], reverse=True)
+    
+    async def _analyze_crypto_coin(self, candidate: Dict) -> Optional[QuintSignal]:
+        """개별 암호화폐 분석"""
+        try:
+            symbol = candidate['symbol']
+            price = candidate['price']
+            ohlcv = candidate['ohlcv']
+            
+            coin_name = symbol.replace('KRW-', '')
+            
+            # Neural Quality Score
+            quality_scores = self.coin_scores.get(coin_name, [0.6, 0.6, 0.6, 0.6])
+            weights = [0.30, 0.30, 0.20, 0.20]
+            neural_quality = sum(s * w for s, w in zip(quality_scores, weights))
+            
+            # 기술적 분석
+            rsi = self._calculate_crypto_rsi(ohlcv['close'])
+            
+            # 모멘텀 계산
+            momentum_7d = (price / ohlcv['close'].iloc[-8] - 1) if len(ohlcv) >= 8 else 0
+            
+            # 종합 점수
+            total_score = (
+                neural_quality * 0.40 +
+                (rsi / 100) * 0.30 +
+                max(0, momentum_7d + 1) * 0.30
+            )
+            
+            # 액션 결정
+            threshold = config.get('upbit_crypto.neural_quality_threshold', 0.6)
+            if total_score >= threshold and rsi < 70:
+                action = 'BUY'
+                confidence = min(0.95, total_score + 0.1)
+            elif total_score <= 0.4 or rsi > 80:
+                action = 'SELL'
+                confidence = min(0.95, 1 - total_score)
+            else:
+                action = 'HOLD'
+                confidence = 0.50
+            
+            # 투자 계획
+            allocation = config.get('markets.upbit_crypto.allocation', 30.0)
+            portfolio_value = config.get('system.portfolio_value', 100_000_000)
+            max_investment = portfolio_value * allocation / 100 / self.target_coins
+            investment_amount = max_investment * confidence
+            
+            return QuintSignal(
+                market='crypto',
                 symbol=symbol,
                 action=action,
                 confidence=confidence,
                 price=price,
-                strategy=strategy,
-                reasoning=reasoning,
-                target_price=target_price,
-                timestamp=timestamp,
-                sector=getattr(signal, 'sector', None),
-                rsi=getattr(signal, 'rsi', None),
-                macd_signal=getattr(signal, 'macd_signal', None)
+                target_price=price * (1 + confidence * 0.50),
+                stop_loss=price * 0.85,
+                take_profit=price * 1.30,
+                allocation_percent=(investment_amount / portfolio_value) * 100,
+                investment_amount=investment_amount,
+                strategy_scores={'neural_quality': neural_quality, 'momentum': momentum_7d},
+                technical_indicators={'rsi': rsi},
+                reasoning=f"AI품질:{neural_quality:.2f} RSI:{rsi:.0f} 모멘텀:{momentum_7d*100:+.1f}%",
+                timestamp=datetime.now(),
+                market_cycle='bull' if momentum_7d > 0.1 else 'bear' if momentum_7d < -0.1 else 'neutral'
             )
             
-            # 시장별 특수 필드 (안전한 추출)
-            if market == 'US':
-                unified.buffett_score = getattr(signal, 'buffett_score', None)
-                unified.lynch_score = getattr(signal, 'lynch_score', None)
-                unified.momentum_score = getattr(signal, 'momentum_score', None)
-                unified.technical_score = getattr(signal, 'technical_score', None)
-                unified.total_score = getattr(signal, 'total_score', confidence)
-                unified.position_size = getattr(signal, 'total_shares', None)
-                unified.split_stages = 3
-                
-            elif market == 'JP':
-                unified.yen_signal = getattr(signal, 'yen_signal', None)
-                unified.stock_type = getattr(signal, 'stock_type', None)
-                unified.total_score = confidence
-                unified.split_stages = getattr(signal, 'split_stages', 0)
-                
-            elif market == 'COIN':
-                unified.project_quality_score = getattr(signal, 'project_quality_score', None)
-                unified.market_cycle = getattr(signal, 'market_cycle', None)
-                unified.btc_correlation = getattr(signal, 'correlation_with_btc', None)
-                unified.total_score = getattr(signal, 'total_score', confidence)
-                unified.split_stages = 5
+        except Exception as e:
+            logging.error(f"암호화폐 {candidate['symbol']} 분석 실패: {e}")
+            return None
+    
+    def _calculate_crypto_rsi(self, prices: pd.Series, period: int = 14) -> float:
+        """암호화폐 RSI 계산"""
+        try:
+            delta = prices.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            return float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
+        except:
+            return 50.0
+
+# ============================================================================
+# 🇯🇵 일본주식 전략 엔진 (간소화 버전)
+# ============================================================================
+class JapanStockEngine:
+    """일본주식 YEN-HUNTER 전략"""
+    
+    def __init__(self):
+        self.enabled = config.get('markets.japan_stocks.enabled', True)
+        self.target_stocks = config.get('japan_stocks.target_stocks', 12)
+        self.yen_strong = config.get('japan_stocks.yen_strong_threshold', 105.0)
+        self.yen_weak = config.get('japan_stocks.yen_weak_threshold', 110.0)
+        
+        # 주요 일본 종목 (실제로는 크롤링)
+        self.major_stocks = [
+            '7203.T', '6758.T', '9984.T', '6861.T', '8306.T', '7974.T', '9432.T',
+            '8316.T', '6367.T', '4063.T', '9983.T', '8411.T', '6954.T', '7201.T'
+        ]
+    
+    async def analyze_japan_market(self) -> List[QuintSignal]:
+        """일본 시장 분석"""
+        if not self.enabled:
+            return []
+        
+        logging.info("🇯🇵 일본주식 YEN-HUNTER 분석 시작")
+        
+        try:
+            # USD/JPY 환율 조회
+            usd_jpy = await self._get_usd_jpy()
+            yen_signal = self._get_yen_signal(usd_jpy)
             
-            # 공통 설정
-            unified.stop_loss = getattr(signal, 'stop_loss', self.stop_loss)
-            unified.take_profit = getattr(signal, 'take_profit', self.take_profit)
-            unified.max_hold_days = getattr(signal, 'max_hold_days', 30)
+            # 개별 종목 분석
+            signals = []
+            for symbol in self.major_stocks[:self.target_stocks]:
+                signal = await self._analyze_japan_stock(symbol, yen_signal, usd_jpy)
+                if signal:
+                    signals.append(signal)
+                await asyncio.sleep(0.5)  # 야후 API 제한
             
-            return unified
+            signals.sort(key=lambda x: x.confidence, reverse=True)
+            buy_signals = [s for s in signals if s.action == 'BUY']
+            
+            logging.info(f"🇯🇵 일본주식 분석 완료: {len(buy_signals)}개 매수 신호 (USD/JPY: {usd_jpy:.2f})")
+            
+            return signals[:8]  # 상위 8개
             
         except Exception as e:
-            self.logger.error(f"신호 변환 실패 {market}-{getattr(signal, 'symbol', 'UNKNOWN')}: {e}")
+            logging.error(f"일본주식 분석 실패: {e}")
+            return []
+    
+    async def _get_usd_jpy(self) -> float:
+        """USD/JPY 환율 조회"""
+        try:
+            ticker = yf.Ticker("USDJPY=X")
+            data = ticker.history(period="1d")
+            return float(data['Close'].iloc[-1]) if not data.empty else 107.0
+        except:
+            return 107.0
+    
+    def _get_yen_signal(self, usd_jpy: float) -> Dict:
+        """엔화 신호 분석"""
+        if usd_jpy <= self.yen_strong:
+            return {'signal': 'STRONG', 'factor': 1.2, 'favor': 'domestic'}
+        elif usd_jpy >= self.yen_weak:
+            return {'signal': 'WEAK', 'factor': 1.2, 'favor': 'export'}
+        else:
+            return {'signal': 'NEUTRAL', 'factor': 1.0, 'favor': 'balanced'}
+    
+    async def _analyze_japan_stock(self, symbol: str, yen_signal: Dict, usd_jpy: float) -> Optional[QuintSignal]:
+        """개별 일본 종목 분석"""
+        try:
+            stock = yf.Ticker(symbol)
+            hist = stock.history(period="3mo")
+            info = stock.info
             
-            # 기본 신호 반환
-            return UnifiedTradingSignal(
-                market=market,
-                symbol=getattr(signal, 'symbol', 'UNKNOWN'),
-                action='hold',
-                confidence=0.0,
-                price=getattr(signal, 'price', 0.0),
-                strategy='conversion_error',
-                reasoning=f"신호 변환 실패: {str(e)}",
-                target_price=0.0,
-                timestamp=datetime.now()
+            if hist.empty:
+                return None
+            
+            current_price = float(hist['Close'].iloc[-1])
+            
+            # 수출주/내수주 분류
+            export_stocks = ['7203.T', '6758.T', '7974.T', '6861.T', '9984.T']
+            stock_type = 'export' if symbol in export_stocks else 'domestic'
+            
+            # 기본 점수
+            base_score = 0.5
+            
+            # 엔화 매칭 보너스
+            if (yen_signal['favor'] == stock_type) or (yen_signal['favor'] == 'balanced'):
+                base_score += 0.2 * yen_signal['factor']
+            
+            # 기술적 분석
+            rsi = self._calculate_rsi(hist['Close'])
+            if 30 <= rsi <= 70:
+                base_score += 0.2
+            elif rsi < 30:
+                base_score += 0.3  # 과매도 = 매수기회
+            
+            # 추세 분석
+            ma20 = hist['Close'].rolling(20).mean()
+            if len(ma20) > 0 and current_price > ma20.iloc[-1]:
+                base_score += 0.1
+            
+            total_score = min(base_score, 0.95)
+            
+            # 액션 결정
+            if total_score >= 0.65:
+                action = 'BUY'
+                confidence = total_score
+            elif total_score <= 0.35:
+                action = 'SELL'
+                confidence = 1 - total_score
+            else:
+                action = 'HOLD'
+                confidence = 0.50
+            
+            # 투자 계획
+            allocation = config.get('markets.japan_stocks.allocation', 20.0)
+            portfolio_value = config.get('system.portfolio_value', 100_000_000)
+            max_investment = portfolio_value * allocation / 100 / self.target_stocks
+            investment_amount = max_investment * confidence
+            
+            return QuintSignal(
+                market='japan',
+                symbol=symbol,
+                action=action,
+                confidence=confidence,
+                price=current_price,
+                target_price=current_price * (1 + confidence * 0.25),
+                stop_loss=current_price * 0.85,
+                take_profit=current_price * 1.20,
+                allocation_percent=(investment_amount / portfolio_value) * 100,
+                investment_amount=investment_amount,
+                strategy_scores={'yen_score': yen_signal['factor'], 'base_score': base_score},
+                technical_indicators={'rsi': rsi, 'usd_jpy': usd_jpy},
+                reasoning=f"엔화{yen_signal['signal']} {stock_type}주 RSI:{rsi:.0f}",
+                timestamp=datetime.now(),
+                market_cycle=yen_signal['signal'].lower()
             )
-
-    def _apply_risk_management(self, signals: List[UnifiedTradingSignal]) -> List[UnifiedTradingSignal]:
-        """통합 리스크 관리 적용 (개선된 버전)"""
-        filtered_signals = []
-        
-        # 종료 요청 확인
-        if self.shutdown_requested:
-            self.logger.info("🛑 종료 요청으로 리스크 관리 중단")
-            return filtered_signals
-        
-        # 일일 거래 제한 체크
-        if self.daily_trades_count >= self.max_daily_trades:
-            self.logger.warning(f"⚠️ 일일 거래 한도 도달: {self.daily_trades_count}/{self.max_daily_trades}")
-            return filtere
-            'basic_status': {
-                    'uptime_hours': (datetime.now() - self.session_start_time).total_seconds() / 3600,
-                    'daily_trades': self.daily_trades_count,
-                    'shutdown_requested': self.shutdown_requested
-                }
-             {
-                    'uptime_hours': (datetime.now() - self.session_start_time).total_seconds() / 3600,
-                    'daily_trades': self.daily_trades_count,
-                    'shutdown_requested': self.shutdown_requested
-                }
-             {
-                    'uptime_hours': (datetime.now() - self.session_start_time).total_seconds() / 3600,
-                    'daily_trades': self.daily_trades_count,
-                    'shutdown_requested': self.shutdown_requested
-                }
-
-    async def force_reselection_all_markets(self) -> Dict[str, List[str]]:
-        """모든 시장 강제 재선별 (개선된 버전)"""
-        results = {}
-        
-        if self.shutdown_requested:
-            self.logger.info("🛑 종료 요청으로 재선별 중단")
-            return results
-        
-        self.logger.info("🔄 전체 시장 강제 재선별 시작...")
-        
-        # 미국 주식 재선별
-        if self.us_strategy and US_STRATEGY_AVAILABLE:
-            try:
-                from us_strategy import force_us_reselection
-                us_symbols = await force_us_reselection()
-                results['US'] = us_symbols
-                self.logger.info(f"🇺🇸 미국 주식 재선별 완료: {len(us_symbols)}개")
-            except Exception as e:
-        print(f"\n❌ 시스템 실행 중 치명적 오류: {e}")
-        traceback.print_exc()
-    finally:
-        print("\n🏁 최고퀸트프로젝트 시스템 종료")
-
-# ========================================================================================
-# 🔧 CLI 유틸리티 함수들 (새로 추가)
-# ========================================================================================
-
-def print_help():
-    """도움말 출력"""
-    print("🏆 최고퀸트프로젝트 V5.0 - Enhanced 완전 통합 시스템")
-    print("=" * 60)
-    print("사용법: python main_engine.py [옵션] [설정파일]")
-    print()
-    print("📋 기본 옵션:")
-    print("  (없음)           : 정상 실행 (스케줄에 따라)")
-    print("  --test, --force  : 강제 테스트 모드 (모든 전략 실행)")
-    print("  --help, -h       : 이 도움말 표시")
-    print()
-    print("🔧 고급 옵션:")
-    print("  --continuous     : 연속 모니터링 모드")
-    print("  --benchmark      : 성능 벤치마크 실행")
-    print("  --stress         : 시스템 스트레스 테스트")
-    print("  --simulation     : 매매 시뮬레이션 실행")
-    print("  --status         : 시스템 상태만 확인")
-    print("  --reselect       : 모든 시장 강제 재선별")
-    print()
-    print("📁 설정 파일:")
-    print("  settings.yaml    : 기본 설정 파일")
-    print("  custom.yaml      : 사용자 정의 설정")
-    print()
-    print("💡 사용 예시:")
-    print("  python main_engine.py")
-    print("  python main_engine.py --test")
-    print("  python main_engine.py --continuous")
-    print("  python main_engine.py custom.yaml --test")
-    print()
-    print("📞 지원:")
-    print("  - 설정: .env.example → .env 파일 생성")
-    print("  - 패키지: pip install -r requirements.txt")
-    print("  - 로그: logs/ 폴더 확인")
-
-async def show_status_only(config_path: str = "settings.yaml"):
-    """상태만 확인하고 종료"""
-    try:
-        print("📊 시스템 상태 확인 중...")
-        
-        engine = QuantTradingEngine(config_path=config_path, force_test=False)
-        status = engine.get_system_status()
-        
-        print("\n💻 시스템 정보:")
-        sys_info = status['system_info']
-        print(f"  상태: {sys_info['status']}")
-        print(f"  버전: {sys_info['version']}")
-        print(f"  가동시간: {sys_info['uptime_hours']:.1f}시간")
-        print(f"  시작시간: {sys_info['start_time']}")
-        
-        print("\n🎯 전략 상태:")
-        strategies = status['strategies']
-        enabled = strategies['enabled_strategies']
-        available = strategies['available_modules']
-        
-        for strategy in ['us_strategy', 'jp_strategy', 'coin_strategy']:
-            enabled_icon = "✅" if enabled.get(strategy, False) else "❌"
-            available_icon = "📦" if available.get(f"{strategy}_module", False) else "❌"
-            market = strategy.split('_')[0].upper()
-            print(f"  {market:4s}: {enabled_icon} 활성화 {available_icon} 모듈")
-        
-        print(f"  오늘 실행: {strategies['today_strategies']}")
-        
-        print("\n💰 거래 설정:")
-        trading = status['trading_status']
-        print(f"  자동매매: {trading['auto_execution']}")
-        print(f"  모의거래: {trading['paper_trading']}")
-        print(f"  일일거래: {trading['daily_trades_count']}/{trading['max_daily_trades']}")
-        print(f"  거래활용: {trading['trading_utilization']:.1f}%")
-        
-        print("\n📈 분석 현황:")
-        analysis = status['analysis_status']
-        print(f"  총 신호: {analysis['total_signals_generated']}개")
-        print(f"  분석횟수: {analysis['analysis_count']}회")
-        print(f"  마지막분석: {analysis['last_analysis_time'] or 'None'}")
-        
-        print("\n🔧 의존성:")
-        deps = status['system_dependencies']
-        for dep, available in deps.items():
-            icon = "✅" if available else "❌"
-            print(f"  {icon} {dep}")
-        
-        print("\n✅ 상태 확인 완료")
-        
-    except Exception as e:
-        print(f"❌ 상태 확인 실패: {e}")
-
-async def run_reselection_only(config_path: str = "settings.yaml"):
-    """재선별만 실행하고 종료"""
-    try:
-        print("🔄 모든 시장 강제 재선별 시작...")
-        
-        results = await force_reselection_all(config_path)
-        
-        if results:
-            total_symbols = sum(len(symbols) for symbols in results.values())
-            print(f"\n✅ 재선별 완료: 총 {total_symbols}개 종목")
-            
-            for market, symbols in results.items():
-                market_name = {'US': '🇺🇸 미국', 'JP': '🇯🇵 일본', 'COIN': '🪙 코인'}.get(market, market)
-                print(f"  {market_name}: {len(symbols)}개")
-                
-                if symbols:
-                    print(f"    예시: {', '.join(symbols[:5])}")
-                    if len(symbols) > 5:
-                        print(f"    ... 외 {len(symbols)-5}개")
-        else:
-            print("❌ 재선별 결과가 없습니다")
-            
-    except Exception as e:
-        print(f"❌ 재선별 실패: {e}")
-
-# ========================================================================================
-# 🚀 메인 진입점 (개선된 CLI 처리)
-# ========================================================================================
-
-if __name__ == "__main__":
-    # 명령행 인수 파싱
-    import sys
-    
-    # 도움말 확인
-    if '--help' in sys.argv or '-h' in sys.argv:
-        print_help()
-        sys.exit(0)
-    
-    # 설정 파일 확인
-    config_path = "settings.yaml"
-    for arg in sys.argv[1:]:
-        if arg.endswith('.yaml') or arg.endswith('.yml'):
-            config_path = arg
-            break
-    
-    # 설정 파일 존재 확인
-    if not Path(config_path).exists():
-        print(f"❌ 설정 파일이 없습니다: {config_path}")
-        print("💡 해결방법:")
-        print("  1. settings.yaml 파일을 생성하세요")
-        print("  2. 또는 다른 설정 파일을 지정하세요")
-        print("  3. --help 옵션으로 사용법을 확인하세요")
-        sys.exit(1)
-    
-    # 환경변수 파일 확인
-    env_file = Path('.env')
-    if not env_file.exists():
-        print("⚠️ .env 파일이 없습니다")
-        print("💡 .env.example을 참조하여 .env 파일을 생성하세요")
-        print("   주요 설정: API 키, 보안 키, 데이터베이스 등")
-        print()
-    
-    # 특별 모드 확인 및 실행
-    try:
-        if '--status' in sys.argv:
-            asyncio.run(show_status_only(config_path))
-        elif '--reselect' in sys.argv:
-            asyncio.run(run_reselection_only(config_path))
-        else:
-            # 메인 시스템 실행
-            asyncio.run(main())
-            
-    except KeyboardInterrupt:
-        print("\n🛑 사용자에 의해 중단되었습니다")
-    except Exception as e:
-        print(f"\n❌ 프로그램 실행 중 오류: {e}")
-        print("\n🔧 문제해결 방법:")
-        print("  1. pip install -r requirements.txt")
-        print("  2. .env 파일 설정 확인")
-        print("  3. settings.yaml 파일 구문 확인")
-        print("  4. logs/ 폴더의 오류 로그 확인")
-        print("  5. --help 옵션으로 사용법 확인")
-        
-        # 개발자 모드에서는 상세 오류 출력
-        if '--debug' in sys.argv:
-            traceback.print_exc()
-    
-    finally:
-        print("\n🏁 최고퀸트프로젝트 종료")
-
-# ========================================================================================
-# 📝 모듈 정보 (docstring)
-# ========================================================================================
-
-__version__ = "5.0.0"
-__author__ = "최고퀸트팀"
-__description__ = "최고퀸트프로젝트 - Enhanced 완전 통합 시스템"
-
-__all__ = [
-    # 메인 클래스
-    'QuantTradingEngine',
-    
-    # 데이터 클래스
-    'UnifiedTradingSignal',
-    'TradeExecution', 
-    'MarketSummary',
-    
-    # 편의 함수
-    'run_single_analysis',
-    'run_full_system_analysis',
-    'analyze_symbols',
-    'get_engine_status',
-    'force_reselection_all',
-    'get_all_selection_status',
-    
-    # 고급 기능
-    'run_continuous_monitoring',
-    'run_performance_benchmark',
-    'run_stress_test',
-    'run_trading_simulation',
-    
-    # CLI 유틸리티
-    'print_help',
-    'show_status_only',
-    'run_reselection_only'
-]
-
-# ========================================================================================
-# 🎯 사용 예시 (주석)
-# ========================================================================================
-
-"""
-📋 사용 예시:
-
-1. 기본 실행:
-   python main_engine.py
-
-2. 강제 테스트:
-   python main_engine.py --test
-
-3. 연속 모니터링:
-   python main_engine.py --continuous
-
-4. 성능 벤치마크:
-   python main_engine.py --benchmark
-
-5. 시스템 상태 확인:
-   python main_engine.py --status
-
-6. 프로그래매틱 사용:
-   ```python
-   import asyncio
-   from main_engine import run_full_system_analysis
-   
-   async def my_analysis():
-       market_results, report = await run_full_system_analysis(force_test=True)
-       return report
-   
-   result = asyncio.run(my_analysis())
-   ```
-
-7. 개별 종목 분석:
-   ```python
-   from main_engine import analyze_symbols
-   
-   signals = await analyze_symbols(['AAPL', 'GOOGL', 'KRW-BTC'])
-   for signal in signals:
-       print(f"{signal.symbol}: {signal.action} ({signal.confidence:.1%})")
-   ```
-
-🔧 설정 파일 구조:
-- settings.yaml: 메인 설정 (전략, 리스크, 스케줄 등)
-- .env: 민감 정보 (API 키, 보안 설정 등)
-- requirements.txt: 의존성 패키지
-- .gitignore: 보안 파일 제외
-
-📁 디렉토리 구조:
-- data/: 분석 결과, 캐시 데이터
-- logs/: 실행 로그, 오류 로그  
-- reports/: 생성된 리포트
-- backups/: 백업 데이터
-- models/: ML 모델 (향후)
-
-🚀 시스템 특징:
-- 🌍 전 세계 3개 시장 통합 (미국, 일본, 암호화폐)
-- 🤖 완전 자동화 (선별, 분석, 실행, 알림)
-- ⚡ 고성능 병렬 처리
-- 🛡️ 강화된 리스크 관리
-- 🔒 안전한 종료 및 오류 처리
-- 📊 실시간 성과 추적
-- 🎮 시뮬레이션 및 백테스팅
-- 📱 다채널 알림 시스템
-- 💾 자동 데이터 저장 및 백업
-- 🔄 연속 모니터링 지원
-"""
-                self.logger.error(f"❌ 미국 주식 재선별 실패: {e}")
-                results['US'] = []
-
-        # 일본 주식 재선별
-        if self.jp_strategy and JP_STRATEGY_AVAILABLE:
-            try:
-                from jp_strategy import force_jp_reselection
-                jp_symbols = await force_jp_reselection()
-                results['JP'] = jp_symbols
-                self.logger.info(f"🇯🇵 일본 주식 재선별 완료: {len(jp_symbols)}개")
-            except Exception as e:
-                self.logger.error(f"❌ 일본 주식 재선별 실패: {e}")
-                results['JP'] = []
-
-        # 암호화폐 재선별
-        if self.coin_strategy and COIN_STRATEGY_AVAILABLE:
-            try:
-                from coin_strategy import force_coin_reselection
-                coin_symbols = await force_coin_reselection()
-                results['COIN'] = coin_symbols
-                self.logger.info(f"🪙 암호화폐 재선별 완료: {len(coin_symbols)}개")
-            except Exception as e:
-                self.logger.error(f"❌ 암호화폐 재선별 실패: {e}")
-                results['COIN'] = []
-
-        total_symbols = sum(len(symbols) for symbols in results.values())
-        self.logger.info(f"🔄 전체 재선별 완료: {total_symbols}개 종목")
-        
-        return results
-
-    async def get_auto_selection_status_all(self) -> Dict[str, Dict]:
-        """모든 시장의 자동선별 상태 조회 (개선된 버전)"""
-        status = {}
-        
-        if self.shutdown_requested:
-            return {'error': '시스템 종료 중'}
-        
-        # 미국 주식 상태
-        if US_STRATEGY_AVAILABLE:
-            try:
-                from us_strategy import get_us_auto_selection_status
-                status['US'] = await get_us_auto_selection_status()
-            except Exception as e:
-                self.logger.error(f"❌ 미국 주식 상태 조회 실패: {e}")
-                status['US'] = {'error': str(e), 'available': False}
-        else:
-            status['US'] = {'error': '모듈 없음', 'available': False}
-
-        # 일본 주식 상태
-        if JP_STRATEGY_AVAILABLE:
-            try:
-                from jp_strategy import get_jp_auto_selection_status
-                status['JP'] = await get_jp_auto_selection_status()
-            except Exception as e:
-                self.logger.error(f"❌ 일본 주식 상태 조회 실패: {e}")
-                status['JP'] = {'error': str(e), 'available': False}
-        else:
-            status['JP'] = {'error': '모듈 없음', 'available': False}
-
-        # 암호화폐 상태
-        if COIN_STRATEGY_AVAILABLE:
-            try:
-                from coin_strategy import get_coin_auto_selection_status
-                status['COIN'] = await get_coin_auto_selection_status()
-            except Exception as e:
-                self.logger.error(f"❌ 암호화폐 상태 조회 실패: {e}")
-                status['COIN'] = {'error': str(e), 'available': False}
-        else:
-            status['COIN'] = {'error': '모듈 없음', 'available': False}
-
-        return status
-
-    def graceful_shutdown(self):
-        """안전한 종료"""
-        self.logger.info("🛑 안전한 종료 시작...")
-        self.shutdown_requested = True
-        
-        # 진행 중인 작업 완료 대기
-        # (실제로는 asyncio 태스크들이 자연스럽게 종료되도록 함)
-        
-        # 세션 통계 로그
-        uptime = (datetime.now() - self.session_start_time).total_seconds()
-        self.logger.info(f"📊 세션 종료 통계:")
-        self.logger.info(f"  가동시간: {uptime/3600:.1f}시간")
-        self.logger.info(f"  총 분석: {self.analysis_count}회")
-        self.logger.info(f"  총 신호: {self.total_signals_generated}개")
-        self.logger.info(f"  총 거래: {self.daily_trades_count}건")
-        self.logger.info(f"  예상 수익: {self.session_stats['total_profit']:,.0f}원")
-        
-        self.logger.info("✅ 안전한 종료 완료")
-
-# ========================================================================================
-# 🎯 편의 함수들 (개선된 버전)
-# ========================================================================================
-
-async def run_single_analysis(force_test: bool = False, config_path: str = "settings.yaml"):
-    """단일 분석 실행"""
-    try:
-        engine = QuantTradingEngine(config_path=config_path, force_test=force_test)
-        results = await engine.run_full_analysis()
-        return results
-    except Exception as e:
-        print(f"❌ 단일 분석 실행 실패: {e}")
-        return {}
-
-async def run_full_system_analysis(force_test: bool = False, config_path: str = "settings.yaml"):
-    """전체 시스템 분석 + 리포트 생성"""
-    try:
-        engine = QuantTradingEngine(config_path=config_path, force_test=force_test)
-        market_results = await engine.run_full_analysis()
-        
-        if market_results:
-            unified_report = await engine.generate_unified_portfolio_report(market_results)
-            return market_results, unified_report
-        else:
-            return {}, {}
-    except Exception as e:
-        print(f"❌ 전체 시스템 분석 실패: {e}")
-        return {}, {}
-
-async def analyze_symbols(symbols: List[str], config_path: str = "settings.yaml"):
-    """특정 종목들 분석"""
-    try:
-        engine = QuantTradingEngine(config_path=config_path)
-        signals = await engine.get_quick_analysis(symbols)
-        return signals
-    except Exception as e:
-        print(f"❌ 종목 분석 실패: {e}")
-        return []
-
-def get_engine_status(config_path: str = "settings.yaml"):
-    """엔진 상태 조회"""
-    try:
-        engine = QuantTradingEngine(config_path=config_path)
-        return engine.get_system_status()
-    except Exception as e:
-        print(f"❌ 상태 조회 실패: {e}")
-        return {"error": str(e)}
-
-async def force_reselection_all(config_path: str = "settings.yaml"):
-    """모든 시장 강제 재선별"""
-    try:
-        engine = QuantTradingEngine(config_path=config_path)
-        return await engine.force_reselection_all_markets()
-    except Exception as e:
-        print(f"❌ 재선별 실패: {e}")
-        return {}
-
-async def get_all_selection_status(config_path: str = "settings.yaml"):
-    """모든 시장 선별 상태 조회"""
-    try:
-        engine = QuantTradingEngine(config_path=config_path)
-        return await engine.get_auto_selection_status_all()
-    except Exception as e:
-        print(f"❌ 상태 조회 실패: {e}")
-        return {}
-
-# ========================================================================================
-# 🧪 고급 테스트 및 시뮬레이션 함수들 (새로 추가)
-# ========================================================================================
-
-async def run_continuous_monitoring(interval_minutes: int = 60, max_iterations: int = 24):
-    """연속 모니터링 실행"""
-    print(f"📡 연속 모니터링 시작: {interval_minutes}분 간격, 최대 {max_iterations}회")
-    
-    for i in range(max_iterations):
-        try:
-            print(f"\n🔄 모니터링 {i+1}/{max_iterations} 시작...")
-            
-            # 전체 분석 실행
-            market_results, unified_report = await run_full_system_analysis(force_test=False)
-            
-            if unified_report:
-                summary = unified_report.get('summary', {})
-                print(f"📊 결과: 분석 {summary.get('total_analyzed', 0)}개, "
-                      f"매수 {summary.get('total_buy_signals', 0)}개, "
-                      f"실행 {summary.get('total_executed', 0)}개")
-            
-            # 다음 실행까지 대기
-            if i < max_iterations - 1:
-                print(f"⏰ {interval_minutes}분 대기...")
-                await asyncio.sleep(interval_minutes * 60)
-                
-        except KeyboardInterrupt:
-            print("\n🛑 사용자가 모니터링을 중단했습니다")
-            break
-        except Exception as e:
-            print(f"❌ 모니터링 {i+1} 실행 중 오류: {e}")
-            await asyncio.sleep(60)  # 1분 대기 후 계속
-
-    print("✅ 연속 모니터링 완료")
-
-async def run_performance_benchmark(iterations: int = 10):
-    """성능 벤치마크 실행"""
-    print(f"⚡ 성능 벤치마크 시작: {iterations}회 반복")
-    
-    times = []
-    signal_counts = []
-    
-    for i in range(iterations):
-        try:
-            start_time = time.time()
-            
-            # 강제 테스트 모드로 실행
-            market_results = await run_single_analysis(force_test=True)
-            
-            elapsed_time = time.time() - start_time
-            total_signals = sum([len(result.top_picks) for result in market_results.values()]) if market_results else 0
-            
-            times.append(elapsed_time)
-            signal_counts.append(total_signals)
-            
-            print(f"  {i+1:2d}회: {elapsed_time:.1f}초, {total_signals}개 신호")
             
         except Exception as e:
-            print(f"  {i+1:2d}회: 오류 - {e}")
+            logging.error(f"일본주식 {symbol} 분석 실패: {e}")
+            return None
     
-    if times:
-        avg_time = sum(times) / len(times)
-        min_time = min(times)
-        max_time = max(times)
-        avg_signals = sum(signal_counts) / len(signal_counts)
-        
-        print(f"\n📊 벤치마크 결과:")
-        print(f"  평균 시간: {avg_time:.1f}초")
-        print(f"  최소 시간: {min_time:.1f}초")
-        print(f"  최대 시간: {max_time:.1f}초")
-        print(f"  평균 신호: {avg_signals:.1f}개")
-        print(f"  초당 신호: {avg_signals/avg_time:.1f}개/초")
+    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
+        """RSI 계산"""
+        try:
+            delta = prices.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            return float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
+        except:
+            return 50.0
 
-async def run_stress_test(concurrent_analyses: int = 5, iterations: int = 3):
-    """시스템 스트레스 테스트"""
-    print(f"💪 스트레스 테스트 시작: 동시 {concurrent_analyses}개 분석, {iterations}회 반복")
+# ============================================================================
+# 🇮🇳 인도주식 전략 엔진 (간소화 버전)
+# ============================================================================
+class IndiaStockEngine:
+    """인도주식 5대 투자거장 전략"""
     
-    for iteration in range(iterations):
-        print(f"\n🔥 스트레스 테스트 {iteration+1}/{iterations}")
+    def __init__(self):
+        self.enabled = config.get('markets.india_stocks.enabled', True)
+        self.target_stocks = config.get('india_stocks.target_stocks', 10)
         
-        start_time = time.time()
+        # 주요 인도 종목 샘플 (4개 지수 통합)
+        self.sample_stocks = [
+            'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'ICICIBANK.NS', 'INFY.NS',
+            'ITC.NS', 'SBIN.NS', 'BHARTIARTL.NS', 'KOTAKBANK.NS', 'LT.NS',
+            'HCLTECH.NS', 'AXISBANK.NS', 'MARUTI.NS', 'ASIANPAINT.NS'
+        ]
+    
+    async def analyze_india_market(self) -> List[QuintSignal]:
+        """인도 시장 분석"""
+        if not self.enabled:
+            return []
         
-        # 동시 분석 실행
-        tasks = []
-        for i in range(concurrent_analyses):
-            task = run_single_analysis(force_test=True)
-            tasks.append(task)
+        logging.info("🇮🇳 인도주식 5대 투자거장 분석 시작")
         
         try:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # 샘플 데이터로 분석 (실제로는 NSE API 연동)
+            signals = []
             
-            elapsed_time = time.time() - start_time
-            success_count = sum(1 for r in results if not isinstance(r, Exception))
+            for symbol in self.sample_stocks[:self.target_stocks]:
+                signal = await self._analyze_india_stock(symbol)
+                if signal:
+                    signals.append(signal)
+                await asyncio.sleep(0.3)
             
-            print(f"  결과: {success_count}/{concurrent_analyses} 성공")
-            print(f"  시간: {elapsed_time:.1f}초")
-            print(f"  동시 처리 효율: {success_count/elapsed_time:.1f}개/초")
+            signals.sort(key=lambda x: x.confidence, reverse=True)
+            buy_signals = [s for s in signals if s.action == 'BUY']
             
-            # 실패한 태스크가 있으면 로그
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    print(f"  태스크 {i+1} 실패: {result}")
-                    
+            logging.info(f"🇮🇳 인도주식 분석 완료: {len(buy_signals)}개 매수 신호")
+            
+            return signals[:6]  # 상위 6개
+            
         except Exception as e:
-            print(f"  전체 실패: {e}")
-        
-        # 테스트 간 휴식
-        if iteration < iterations - 1:
-            await asyncio.sleep(5)
-
-    print("✅ 스트레스 테스트 완료")
-
-async def run_trading_simulation(days: int = 30, initial_capital: float = 10000000):
-    """고급 매매 시뮬레이션"""
-    print(f"🎮 {days}일간 매매 시뮬레이션 시작 (초기자본: {initial_capital:,.0f}원)")
+            logging.error(f"인도주식 분석 실패: {e}")
+            return []
     
-    portfolio = {
-        'cash': initial_capital,
-        'positions': {},
-        'daily_pnl': [],
-        'total_trades': 0,
-        'winning_trades': 0,
-        'losing_trades': 0
-    }
-    
-    for day in range(days):
+    async def _analyze_india_stock(self, symbol: str) -> Optional[QuintSignal]:
+        """개별 인도 종목 분석"""
         try:
-            print(f"\n📅 Day {day + 1}/{days}")
+            stock = yf.Ticker(symbol)
+            hist = stock.history(period="6mo")
+            info = stock.info
             
-            # 일일 분석 실행
-            market_results = await run_single_analysis(force_test=True)
+            if hist.empty:
+                return None
             
-            if market_results:
-                daily_pnl = 0
-                daily_trades = 0
-                
-                for market, summary in market_results.items():
-                    # 매수 신호 처리
-                    for signal in summary.top_picks[:2]:  # 상위 2개만
-                        if signal.action == 'buy' and signal.confidence > 0.7:
-                            # 포지션 크기 계산 (자본의 5%)
-                            position_value = portfolio['cash'] * 0.05
-                            
-                            if position_value > 0:
-                                # 매수 실행
-                                portfolio['positions'][signal.symbol] = {
-                                    'shares': position_value / signal.price,
-                                    'entry_price': signal.price,
-                                    'market': market,
-                                    'entry_day': day
-                                }
-                                portfolio['cash'] -= position_value
-                                daily_trades += 1
-                                portfolio['total_trades'] += 1
-                                
-                                print(f"  매수: {signal.symbol} @ {signal.price:.2f}")
-                    
-                    # 기존 포지션 평가 및 매도
-                    positions_to_close = []
-                    for symbol, position in portfolio['positions'].items():
-                        # 간단한 수익률 시뮬레이션
-                        import random
-                        current_price = position['entry_price'] * (1 + random.uniform(-0.1, 0.15))
-                        
-                        pnl = (current_price - position['entry_price']) * position['shares']
-                        
-                        # 손익 조건 체크 (±10% 또는 7일 홀딩)
-                        pnl_rate = pnl / (position['entry_price'] * position['shares'])
-                        holding_days = day - position['entry_day']
-                        
-                        if abs(pnl_rate) > 0.1 or holding_days > 7:
-                            # 매도
-                            sell_value = current_price * position['shares']
-                            portfolio['cash'] += sell_value
-                            daily_pnl += pnl
-                            
-                            if pnl > 0:
-                                portfolio['winning_trades'] += 1
-                            else:
-                                portfolio['losing_trades'] += 1
-                            
-                            positions_to_close.append(symbol)
-                            daily_trades += 1
-                            
-                            print(f"  매도: {symbol} @ {current_price:.2f} (수익: {pnl:,.0f}원)")
-                    
-                    # 포지션 정리
-                    for symbol in positions_to_close:
-                        del portfolio['positions'][symbol]
-                
-                portfolio['daily_pnl'].append(daily_pnl)
-                
-                # 일일 요약
-                total_value = portfolio['cash'] + sum([pos['entry_price'] * pos['shares'] 
-                                                     for pos in portfolio['positions'].values()])
-                
-                print(f"  일일 손익: {daily_pnl:,.0f}원")
-                print(f"  총 자산: {total_value:,.0f}원")
-                print(f"  수익률: {(total_value - initial_capital) / initial_capital * 100:.1f}%")
-                print(f"  거래: {daily_trades}건")
+            current_price = float(hist['Close'].iloc[-1])
             
-            # 하루 대기 (시뮬레이션)
-            await asyncio.sleep(0.1)
+            # 5대 투자거장 스타일 점수 (간소화)
+            legendary_scores = self._calculate_legendary_scores(info, hist)
             
-        except Exception as e:
-            print(f"  ❌ Day {day + 1} 오류: {e}")
-    
-    # 최종 결과
-    final_value = portfolio['cash'] + sum([pos['entry_price'] * pos['shares'] 
-                                         for pos in portfolio['positions'].values()])
-    total_return = (final_value - initial_capital) / initial_capital * 100
-    win_rate = portfolio['winning_trades'] / max(1, portfolio['total_trades']) * 100
-    
-    print(f"\n📊 {days}일 시뮬레이션 결과:")
-    print(f"  초기자본: {initial_capital:,.0f}원")
-    print(f"  최종자산: {final_value:,.0f}원")
-    print(f"  총 수익률: {total_return:.1f}%")
-    print(f"  연환산 수익률: {total_return * 365 / days:.1f}%")
-    print(f"  총 거래: {portfolio['total_trades']}건")
-    print(f"  승률: {win_rate:.1f}%")
-    print(f"  승리: {portfolio['winning_trades']}건")
-    print(f"  패배: {portfolio['losing_trades']}건")
-
-# ========================================================================================
-# 🧪 메인 실행 함수 (Enhanced 완전 통합 버전)
-# ========================================================================================
-
-async def main():
-    """메인 실행 함수 (Enhanced 완전 통합 시스템)"""
-    try:
-        print("🏆 최고퀸트프로젝트 - Enhanced 완전 통합 시스템 V5.0!")
-        print("=" * 80)
-        print("🌍 전 세계 시장 통합 매매 시스템:")
-        print("  🇺🇸 미국 주식 (버핏+린치+모멘텀+기술분석)")
-        print("  🇯🇵 일본 주식 (엔화+기술분석+자동선별)")
-        print("  🪙 암호화폐 (AI품질평가+시장사이클+상관관계)")
-        print("  🤖 완전 자동화 (자동선별+분석+실행+알림)")
-        print("  ⚡ Enhanced 기능 (성능최적화+안전종료+오류처리)")
-        print("=" * 80)
-        
-        # 명령행 인수 처리
-        import sys
-        force_test = '--test' in sys.argv or '--force' in sys.argv
-        continuous = '--continuous' in sys.argv or '--monitor' in sys.argv
-        benchmark = '--benchmark' in sys.argv or '--perf' in sys.argv
-        stress = '--stress' in sys.argv
-        simulation = '--simulation' in sys.argv or '--sim' in sys.argv
-        
-        if force_test:
-            print("🧪 강제 테스트 모드 활성화")
-        
-        # 엔진 초기화
-        config_path = "settings.yaml"
-        if len(sys.argv) > 1 and sys.argv[1].endswith('.yaml'):
-            config_path = sys.argv[1]
-        
-        engine = QuantTradingEngine(config_path=config_path, force_test=force_test)
-        
-        # 시스템 상태 출력
-        status = engine.get_system_status()
-        print(f"\n💻 시스템 상태:")
-        print(f"  버전: {status['system_info']['version']}")
-        print(f"  상태: {status['system_info']['status']}")
-        print(f"  가동시간: {status['system_info']['uptime_hours']:.1f}시간")
-        print(f"  활성화된 전략: {sum(status['strategies']['enabled_strategies'].values())}개")
-        print(f"  오늘 실행 전략: {status['strategies']['today_strategies']}")
-        print(f"  일일 거래: {status['trading_status']['daily_trades_count']}/{status['trading_status']['max_daily_trades']}")
-        print(f"  자동매매: {status['trading_status']['auto_execution']} (모의거래: {status['trading_status']['paper_trading']})")
-        
-        # 의존성 상태
-        print(f"\n🔧 시스템 의존성:")
-        deps = status['system_dependencies']
-        for dep, available in deps.items():
-            status_icon = "✅" if available else "❌"
-            print(f"  {status_icon} {dep}")
-        
-        # 모듈 가용성
-        print(f"\n📦 모듈 상태:")
-        modules = status['strategies']['available_modules']
-        for module, available in modules.items():
-            status_icon = "✅" if available else "❌"
-            print(f"  {status_icon} {module}")
-        
-        # 특수 모드 실행
-        if benchmark:
-            await run_performance_benchmark(iterations=5)
-            return
-        elif stress:
-            await run_stress_test(concurrent_analyses=3, iterations=2)
-            return
-        elif simulation:
-            await run_trading_simulation(days=10, initial_capital=10000000)
-            return
-        elif continuous:
-            await run_continuous_monitoring(interval_minutes=30, max_iterations=48)
-            return
-        
-        # 자동선별 상태 확인
-        print(f"\n📋 자동선별 상태 확인...")
-        selection_status = await engine.get_auto_selection_status_all()
-        
-        for market, info in selection_status.items():
-            if 'error' in info:
-                print(f"  ❌ {market}: {info['error']}")
+            # 기술지표 (14개 중 핵심 3개)
+            technical_scores = self._calculate_technical_scores(hist)
+            
+            # 종합 점수
+            total_score = (
+                legendary_scores['total'] * 0.60 +
+                technical_scores['total'] * 0.40
+            )
+            
+            # 액션 결정
+            threshold = config.get('india_stocks.legendary_threshold', 8.0) / 10
+            if total_score >= threshold:
+                action = 'BUY'
+                confidence = min(0.95, total_score + 0.05)
+            elif total_score <= 0.4:
+                action = 'SELL'
+                confidence = min(0.95, 1 - total_score)
             else:
-                print(f"  ✅ {market}: 선별 {info.get('selected_count', 0)}개, "
-                      f"캐시 {'유효' if info.get('cache_valid', False) else '무효'}")
-        
-        print()
-        
-        # 전체 시장 통합 분석 실행
-        print(f"🔍 전체 시장 통합 분석 시작...")
-        start_time = time.time()
-        
-        try:
-            market_results, unified_report = await run_full_system_analysis(force_test, config_path)
+                action = 'HOLD'
+                confidence = 0.50
             
-            elapsed_time = time.time() - start_time
-            print(f"\n⏱️ 총 소요 시간: {elapsed_time:.1f}초")
+            # 투자 계획
+            allocation = config.get('markets.india_stocks.allocation', 10.0)
+            portfolio_value = config.get('system.portfolio_value', 100_000_000)
+            max_investment = portfolio_value * allocation / 100 / self.target_stocks
+            investment_amount = max_investment * confidence
             
-            if market_results and unified_report:
-                # 결과 출력 (기존 코드와 동일하지만 더 안전하게)
-                summary = unified_report.get('summary', {})
-                print(f"\n🎯 통합 분석 결과:")
-                print(f"  분석 시장: {summary.get('total_markets', 0)}개")
-                print(f"  총 분석 종목: {summary.get('total_analyzed', 0)}개")
-                print(f"  매수 신호: {summary.get('total_buy_signals', 0)}개")
-                print(f"  매도 신호: {summary.get('total_sell_signals', 0)}개")
-                print(f"  실행된 거래: {summary.get('total_executed', 0)}개")
-                print(f"  전체 매수율: {summary.get('overall_buy_rate', 0):.1f}%")
-                print(f"  예상 수익: {summary.get('total_estimated_profit', 0):,.0f}원")
-                
-                # 시장별 성과 (요약)
-                performance = unified_report.get('market_performance', {})
-                if performance:
-                    print(f"\n📊 시장별 성과:")
-                    for market, perf in performance.items():
-                        market_name = {'US': '🇺🇸 미국', 'JP': '🇯🇵 일본', 'COIN': '🪙 코인'}.get(market, market)
-                        print(f"  {market_name}: 분석 {perf.get('analyzed', 0)}개, "
-                              f"매수 {perf.get('buy_signals', 0)}개 ({perf.get('buy_rate', 0):.1f}%), "
-                              f"실행 {perf.get('executed_trades', 0)}개")
-                
-                # 상위 추천 (간략)
-                top_picks = unified_report.get('global_top_picks', [])
-                if top_picks:
-                    print(f"\n🏆 글로벌 상위 추천 TOP 3:")
-                    for i, pick in enumerate(top_picks[:3], 1):
-                        market_emoji = {'US': '🇺🇸', 'JP': '🇯🇵', 'COIN': '🪙'}.get(pick['market'], '❓')
-                        potential_return = pick.get('potential_return', 0)
-                        print(f"  {i}. {market_emoji} {pick['symbol']} "
-                              f"({pick['confidence']:.1%}, +{potential_return:.1f}%)")
-            
-            else:
-                print("❌ 분석 결과가 없습니다.")
-        
-        except KeyboardInterrupt:
-            print("\n🛑 사용자에 의해 중단되었습니다")
-            engine.graceful_shutdown()
-        except Exception as e:
-            print(f"\n❌ 분석 실행 중 오류: {e}")
-            traceback.print_exc()
-        
-        print("\n✅ Enhanced 완전 통합 분석 완료!")
-        print("\n🎯 최고퀸트프로젝트 V6.0 Enhanced 시스템 특징:")
-        print("  ✅ 🌍 전 세계 3개 시장 완전 통합")
-        print("  ✅ 🤖 완전 자동화 시스템")
-        print("  ✅ ⚡ 성능 최적화 및 병렬 처리")
-        print("  ✅ 🛡️ 강화된 리스크 관리")
-        print("  ✅ 🔒 안전한 종료 및 오류 처리")
-        print("  ✅ 📊 고급 성과 분석")
-        print("  ✅ 🎮 시뮬레이션 및 백테스팅")
-        print("  ✅ 📱 실시간 알림 시스템")
-        print("  ✅ 💾 자동 데이터 저장")
-        print("  ✅ 🔄 연속 모니터링")
-        
-        print("\n💡 사용법:")
-        print("  python main_engine.py                    : 정상 실행")
-        print("  python main_engine.py --test             : 강제 테스트 모드")
-        print("  python main_engine.py --continuous       : 연속 모니터링")
-        print("  python main_engine.py --benchmark        : 성능 벤치마크")
-        print("  python main_engine.py --stress           : 스트레스 테스트")
-        print("  python main_engine.py --simulation       : 매매 시뮬레이션")
-        print("  python main_engine.py custom.yaml        : 커스텀 설정 파일")
-        
-        # 안전한 종료
-        engine.graceful_shutdown()
-        
-    except KeyboardInterrupt:
-        print("\n🛑 사용자에 의해 중단되었습니다")
-    except Exception as e:    async def _save_analysis_results(self, market_summaries: Dict[str, MarketSummary]):olds = {
-            'US': {'buy': 0.65, 'sell': 0.60},
-            'JP': {'buy': 0.60, 'sell': 0.55},
-            'COIN': {'buy': 0.50, 'sell': 0.45}
-        }
-        
-        # 신호 품질 분석
-        signal_stats = {
-            'total': len(signals),
-            'high_confidence': 0,
-            'medium_confidence': 0,
-            'low_confidence': 0
-        }
-        
-        for signal in signals:
-            try:
-                market = signal.market
-                thresholds = market_thresholds.get(market, {'buy': 0.60, 'sell': 0.55})
-                
-                # 신뢰도 분류
-                if signal.confidence >= 0.8:
-                    signal_stats['high_confidence'] += 1
-                elif signal.confidence >= 0.6:
-                    signal_stats['medium_confidence'] += 1
-                else:
-                    signal_stats['low_confidence'] += 1
-                
-                # 매수 신호 필터링
-                if signal.action == 'buy':
-                    if signal.confidence >= thresholds['buy']:
-                        # 추가 검증 로직
-                        if self._validate_buy_signal(signal):
-                            filtered_signals.append(signal)
-                            self.logger.info(f"✅ {market} 매수 신호 통과: {signal.symbol} ({signal.confidence:.2%})")
-                        else:
-                            self.logger.debug(f"추가 검증 실패: {signal.symbol}")
-                    else:
-                        self.logger.debug(f"낮은 신뢰도로 매수 신호 제외: {signal.symbol} ({signal.confidence:.2%})")
-                
-                # 매도 신호 필터링
-                elif signal.action == 'sell':
-                    if signal.confidence >= thresholds['sell']:
-                        if self._validate_sell_signal(signal):
-                            filtered_signals.append(signal)
-                            self.logger.info(f"✅ {market} 매도 신호 통과: {signal.symbol} ({signal.confidence:.2%})")
-                        else:
-                            self.logger.debug(f"추가 검증 실패: {signal.symbol}")
-                    else:
-                        self.logger.debug(f"낮은 신뢰도로 매도 신호 제외: {signal.symbol} ({signal.confidence:.2%})")
-                
-            except Exception as e:
-                self.logger.error(f"❌ 리스크 관리 중 오류 {signal.symbol}: {e}")
-        
-        # 리스크 관리 통계 로그
-        self.logger.info(f"📊 리스크 관리 결과: {len(filtered_signals)}/{len(signals)} 신호 통과")
-        self.logger.debug(f"신뢰도 분포: 높음{signal_stats['high_confidence']} "
-                         f"중간{signal_stats['medium_confidence']} 낮음{signal_stats['low_confidence']}")
-        
-        return filtered_signals
-
-    def _validate_buy_signal(self, signal: UnifiedTradingSignal) -> bool:
-        """매수 신호 추가 검증"""
-        try:
-            # 기본 검증
-            if signal.price <= 0:
-                return False
-            
-            if signal.target_price <= signal.price:
-                return False
-            
-            # 시장별 특수 검증
-            if signal.market == 'US':
-                # 미국 주식: 기본적인 재무 건전성 체크
-                if signal.buffett_score is not None and signal.buffett_score < 0.3:
-                    return False
-                    
-            elif signal.market == 'JP':
-                # 일본 주식: 엔화 신호와의 일치성 체크
-                if signal.yen_signal == 'negative' and signal.stock_type == 'export':
-                    return False
-                    
-            elif signal.market == 'COIN':
-                # 암호화폐: 프로젝트 품질 최소 기준
-                if signal.project_quality_score is not None and signal.project_quality_score < 0.4:
-                    return False
-            
-            return True
+            return QuintSignal(
+                market='india',
+                symbol=symbol,
+                action=action,
+                confidence=confidence,
+                price=current_price,
+                target_price=current_price * (1 + confidence * 0.35),
+                stop_loss=current_price * 0.85,
+                take_profit=current_price * 1.25,
+                allocation_percent=(investment_amount / portfolio_value) * 100,
+                investment_amount=investment_amount,
+                strategy_scores=legendary_scores,
+                technical_indicators=technical_scores,
+                reasoning=f"전설:{legendary_scores['total']:.2f} 기술:{technical_scores['total']:.2f}",
+                timestamp=datetime.now(),
+                market_cycle='growth' if legendary_scores['total'] > 0.6 else 'value'
+            )
             
         except Exception as e:
-            self.logger.error(f"매수 신호 검증 오류 {signal.symbol}: {e}")
-            return False
-
-    def _validate_sell_signal(self, signal: UnifiedTradingSignal) -> bool:
-        """매도 신호 추가 검증"""
+            logging.error(f"인도주식 {symbol} 분석 실패: {e}")
+            return None
+    
+    def _calculate_legendary_scores(self, info: Dict, hist: pd.DataFrame) -> Dict:
+        """5대 투자거장 스타일 점수"""
+        scores = {}
+        
+        # 준준왈라 (ROE + 배당)
+        roe = info.get('returnOnEquity', 0) or 0
+        dividend_yield = info.get('dividendYield', 0) or 0
+        scores['jhunjhunwala'] = (roe > 0.15) * 0.3 + (dividend_yield > 0.02) * 0.2
+        
+        # QGLP (품질 + 성장)
+        debt_ratio = info.get('debtToEquity', 999) or 999
+        growth = info.get('earningsQuarterlyGrowth', 0) or 0
+        scores['qglp'] = (debt_ratio < 50) * 0.25 + (growth > 0.15) * 0.25
+        
+        # 케디아 SMILE (성장 + 소형주)
+        market_cap = info.get('marketCap', 0) or 0
+        scores['kedia'] = (market_cap < 50_000_000_000) * 0.2 + (growth > 0.2) * 0.3
+        
+        # 벨리야스 (밸류 + 소외주)
+        pe = info.get('trailingPE', 999) or 999
+        scores['veliyath'] = (pe < 15) * 0.3 + (market_cap < 20_000_000_000) * 0.2
+        
+        # 카르닉 (인프라)
+        sector = info.get('sector', '')
+        scores['karnik'] = 0.4 if 'Infrastructure' in sector or 'Construction' in sector else 0.1
+        
+        total = sum(scores.values())
+        scores['total'] = total
+        
+        return scores
+    
+    def _calculate_technical_scores(self, hist: pd.DataFrame) -> Dict:
+        """기술지표 점수 (14개 중 핵심)"""
+        scores = {}
+        
+        # RSI
+        rsi = self._calculate_rsi(hist['Close'])
+        scores['rsi'] = 0.3 if 30 <= rsi <= 70 else 0.2 if rsi < 30 else 0.1
+        
+        # MACD
+        if len(hist) >= 26:
+            ema12 = hist['Close'].ewm(span=12).mean()
+            ema26 = hist['Close'].ewm(span=26).mean()
+            macd = ema12 - ema26
+            signal_line = macd.ewm(span=9).mean()
+            scores['macd'] = 0.25 if macd.iloc[-1] > signal_line.iloc[-1] else 0.1
+        else:
+            scores['macd'] = 0.15
+        
+        # 볼린저 밴드
+        if len(hist) >= 20:
+            ma20 = hist['Close'].rolling(20).mean()
+            std20 = hist['Close'].rolling(20).std()
+            current_price = hist['Close'].iloc[-1]
+            lower_band = ma20.iloc[-1] - 2 * std20.iloc[-1]
+            scores['bollinger'] = 0.25 if current_price > lower_band else 0.35  # 하단 근처 매수
+        else:
+            scores['bollinger'] = 0.2
+        
+        total = sum(scores.values())
+        scores['total'] = total
+        
+        return scores
+    
+    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
+        """RSI 계산"""
         try:
-            # 기본 검증
-            if signal.price <= 0:
-                return False
-            
-            # 급락 상황에서는 매도 신호 보수적 적용
-            if signal.confidence < 0.8 and signal.action == 'sell':
-                return False
-            
-            return True
-            
+            delta = prices.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            return float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
+        except:
+            return 50.0
+
+# ============================================================================
+# 📊 포트폴리오 관리자
+# ============================================================================
+class PortfolioManager:
+    """퀸트프로젝트 통합 포트폴리오 관리자"""
+    
+    def __init__(self):
+        self.portfolio_file = "quint_portfolio.json"
+        self.positions = {}
+        self.load_portfolio()
+        
+    def load_portfolio(self):
+        """포트폴리오 로드"""
+        try:
+            if Path(self.portfolio_file).exists():
+                with open(self.portfolio_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.positions = data.get('positions', {})
         except Exception as e:
-            self.logger.error(f"매도 신호 검증 오류 {signal.symbol}: {e}")
-            return False
-
-    async def _execute_trades(self, signals: List[UnifiedTradingSignal]) -> List[TradeExecution]:
-        """매매 신호 실행 (개선된 버전)"""
-        executed_trades = []
-        
-        # 종료 요청 확인
-        if self.shutdown_requested:
-            self.logger.info("🛑 종료 요청으로 매매 실행 중단")
-            return executed_trades
-        
-        if not self.auto_execution:
-            self.logger.info("📊 매매 신호만 생성 (자동 실행 비활성화)")
-            for signal in signals:
-                executed_trades.append(TradeExecution(
-                    signal=signal,
-                    executed=False,
-                    error_message="자동 매매 비활성화"
-                ))
-            return executed_trades
-        
-        # 거래 시간 체크
-        if not self._check_trading_time():
-            self.logger.info("⏰ 거래 시간이 아님 - 신호만 생성")
-            for signal in signals:
-                executed_trades.append(TradeExecution(
-                    signal=signal,
-                    executed=False,
-                    error_message="거래 시간 아님"
-                ))
-            return executed_trades
-        
-        # 일일 거래 한도 체크
-        remaining_trades = self.max_daily_trades - self.daily_trades_count
-        if remaining_trades <= 0:
-            self.logger.warning(f"⚠️ 일일 거래 한도 도달")
-            for signal in signals:
-                executed_trades.append(TradeExecution(
-                    signal=signal,
-                    executed=False,
-                    error_message="일일 거래 한도 초과"
-                ))
-            return executed_trades
-        
-        # 우선순위 정렬 (신뢰도 + 시장별 가중치)
-        market_priority = {'US': 1.0, 'JP': 0.9, 'COIN': 0.8}
-        signals.sort(key=lambda x: x.confidence * market_priority.get(x.market, 0.5), reverse=True)
-        
-        # 실제 매매 실행
-        for i, signal in enumerate(signals):
-            if self.shutdown_requested:
-                break
-                
-            if self.daily_trades_count >= self.max_daily_trades:
-                executed_trades.append(TradeExecution(
-                    signal=signal,
-                    executed=False,
-                    error_message="일일 거래 한도 도달"
-                ))
-                continue
-            
-            if signal.action in ['buy', 'sell']:
-                try:
-                    self.logger.info(f"💰 {signal.action.upper()} 주문 실행 시도: {signal.market}-{signal.symbol}")
-                    
-                    # 수량 계산 (개선된 버전)
-                    quantity = self._calculate_position_size(signal)
-                    
-                    # 수수료 및 슬리피지 계산
-                    commission = self._calculate_commission(signal, quantity)
-                    slippage = self._calculate_slippage(signal)
-                    
-                    # 실제 실행 가격 (슬리피지 적용)
-                    execution_price = signal.price * (1 + slippage if signal.action == 'buy' else 1 - slippage)
-                    
-                    # 모의거래 실행
-                    if self.paper_trading:
-                        execution_result = {
-                            'success': True,
-                            'price': execution_price,
-                            'quantity': quantity,
-                            'order_id': f"PAPER_{signal.market}_{datetime.now().strftime('%H%M%S')}_{i:03d}",
-                            'commission': commission,
-                            'slippage': slippage
-                        }
-                    else:
-                        # 실제 매매 (향후 구현)
-                        execution_result = await self._execute_real_trade(signal, quantity)
-                    
-                    if execution_result['success']:
-                        # 예상 수익 계산
-                        estimated_profit = self._calculate_estimated_profit(signal, execution_result)
-                        
-                        executed_trades.append(TradeExecution(
-                            signal=signal,
-                            executed=True,
-                            execution_price=execution_result['price'],
-                            execution_time=datetime.now(),
-                            quantity=execution_result['quantity'],
-                            order_id=execution_result['order_id'],
-                            commission=execution_result.get('commission', commission),
-                            slippage=execution_result.get('slippage', slippage),
-                            estimated_profit=estimated_profit
-                        ))
-                        
-                        self.daily_trades_count += 1
-                        self.session_stats['total_trades'] += 1
-                        self.session_stats['total_commission'] += commission
-                        
-                        # 성공 알림
-                        if NOTIFIER_AVAILABLE:
-                            await self._send_trade_notification(signal, execution_result, estimated_profit)
-                        
-                        self.logger.info(f"✅ 매매 완료: {signal.market}-{signal.symbol} "
-                                       f"{signal.action} @ {execution_result['price']:.4f}")
-                    else:
-                        executed_trades.append(TradeExecution(
-                            signal=signal,
-                            executed=False,
-                            error_message=execution_result.get('error', 'Unknown error')
-                        ))
-                        
-                except Exception as e:
-                    executed_trades.append(TradeExecution(
-                        signal=signal,
-                        executed=False,
-                        error_message=f"실행 오류: {str(e)}"
-                    ))
-                    self.logger.error(f"❌ 매매 실행 중 오류 {signal.symbol}: {e}")
-                    
-                # API 제한 고려
-                await asyncio.sleep(0.5)
-            else:
-                # hold 신호
-                executed_trades.append(TradeExecution(
-                    signal=signal,
-                    executed=False,
-                    error_message="HOLD 신호"
-                ))
-        
-        return executed_trades
-
-    def _calculate_position_size(self, signal: UnifiedTradingSignal) -> float:
-        """포지션 크기 계산"""
+            logging.error(f"포트폴리오 로드 실패: {e}")
+            self.positions = {}
+    
+    def save_portfolio(self):
+        """포트폴리오 저장"""
         try:
-            if signal.position_size:
-                return signal.position_size
-            
-            # 시장별 기본 포지션 크기
-            base_amounts = {
-                'US': 10000,    # $10,000
-                'JP': 1000000,  # ¥1,000,000  
-                'COIN': 1000000  # ₩1,000,000
+            data = {
+                'positions': self.positions,
+                'last_updated': datetime.now().isoformat()
             }
-            
-            base_amount = base_amounts.get(signal.market, 100000)
-            
-            # 신뢰도에 따른 조정
-            confidence_multiplier = 0.5 + (signal.confidence * 0.5)  # 0.5 ~ 1.0
-            
-            adjusted_amount = base_amount * confidence_multiplier
-            
-            if signal.market in ['US', 'JP']:
-                # 주식: 주 수 계산
-                return max(1, int(adjusted_amount / signal.price))
-            else:
-                # 암호화폐: 금액 기준
-                return adjusted_amount
-                
+            with open(self.portfolio_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            self.logger.error(f"포지션 크기 계산 오류: {e}")
-            return 100
-
-    def _calculate_commission(self, signal: UnifiedTradingSignal, quantity: float) -> float:
-        """수수료 계산"""
-        try:
-            # 시장별 수수료율
-            commission_rates = {
-                'US': 0.005,    # 0.5%
-                'JP': 0.003,    # 0.3%
-                'COIN': 0.0005  # 0.05%
+            logging.error(f"포트폴리오 저장 실패: {e}")
+    
+    def add_position(self, signal: QuintSignal, quantity: float, executed_price: float):
+        """포지션 추가"""
+        symbol = signal.symbol
+        if symbol not in self.positions:
+            self.positions[symbol] = {
+                'market': signal.market,
+                'quantity': 0,
+                'avg_price': 0,
+                'total_cost': 0,
+                'target_price': signal.target_price,
+                'stop_loss': signal.stop_loss,
+                'created_at': datetime.now().isoformat()
             }
-            
-            rate = commission_rates.get(signal.market, 0.001)
-            
-            if signal.market in ['US', 'JP']:
-                return signal.price * quantity * rate
+        
+        pos = self.positions[symbol]
+        old_total_cost = pos['total_cost']
+        new_cost = quantity * executed_price
+        
+        pos['quantity'] += quantity
+        pos['total_cost'] += new_cost
+        pos['avg_price'] = pos['total_cost'] / pos['quantity']
+        pos['last_updated'] = datetime.now().isoformat()
+        
+        self.save_portfolio()
+        logging.info(f"포지션 추가: {symbol} {quantity:.6f}개 @ {executed_price:.2f}")
+    
+    def remove_position(self, symbol: str, quantity: float = None):
+        """포지션 제거"""
+        if symbol not in self.positions:
+            return
+        
+        if quantity is None:
+            # 전체 제거
+            del self.positions[symbol]
+        else:
+            # 부분 제거
+            pos = self.positions[symbol]
+            if quantity >= pos['quantity']:
+                del self.positions[symbol]
             else:
-                return quantity * rate
-                
-        except Exception:
-            return 0.0
-
-    def _calculate_slippage(self, signal: UnifiedTradingSignal) -> float:
-        """슬리피지 계산"""
-        try:
-            # 시장별 평균 슬리피지
-            slippage_rates = {
-                'US': 0.001,    # 0.1%
-                'JP': 0.002,    # 0.2%
-                'COIN': 0.003   # 0.3%
-            }
-            
-            base_slippage = slippage_rates.get(signal.market, 0.001)
-            
-            # 신뢰도가 낮을수록 슬리피지 증가
-            confidence_factor = 2.0 - signal.confidence  # 1.0 ~ 2.0
-            
-            return base_slippage * confidence_factor
-            
-        except Exception:
-            return 0.001
-
-    def _calculate_estimated_profit(self, signal: UnifiedTradingSignal, execution_result: Dict) -> float:
-        """예상 수익 계산"""
-        try:
-            if signal.action == 'buy':
-                # 매수 시: 목표가까지의 수익
-                profit_rate = (signal.target_price - execution_result['price']) / execution_result['price']
-                return execution_result['price'] * execution_result['quantity'] * profit_rate
-            else:
-                # 매도 시: 현재 수익 (가정)
-                return execution_result['price'] * execution_result['quantity'] * 0.05  # 5% 가정
-                
-        except Exception:
-            return 0.0
-
-    async def _execute_real_trade(self, signal: UnifiedTradingSignal, quantity: float) -> Dict:
-        """실제 매매 실행 (향후 구현)"""
-        # 실제 브로커 API 연동 부분
-        await asyncio.sleep(0.1)  # API 호출 시뮬레이션
+                ratio = (pos['quantity'] - quantity) / pos['quantity']
+                pos['quantity'] -= quantity
+                pos['total_cost'] *= ratio
+        
+        self.save_portfolio()
+    
+    def get_portfolio_summary(self) -> Dict:
+        """포트폴리오 요약"""
+        total_value = 0
+        positions_by_market = {'us': 0, 'crypto': 0, 'japan': 0, 'india': 0}
+        
+        for symbol, pos in self.positions.items():
+            # 현재가 조회 (실제로는 각 마켓별 API 호출)
+            current_price = pos['avg_price']  # 간소화
+            position_value = pos['quantity'] * current_price
+            total_value += position_value
+            positions_by_market[pos['market']] += position_value
         
         return {
-            'success': True,
-            'price': signal.price,
-            'quantity': quantity,
-            'order_id': f"REAL_{signal.market}_{datetime.now().strftime('%H%M%S')}",
-            'commission': self._calculate_commission(signal, quantity),
-            'slippage': self._calculate_slippage(signal)
+            'total_positions': len(self.positions),
+            'total_value': total_value,
+            'allocation_by_market': positions_by_market,
+            'positions': self.positions
         }
 
-    async def _send_trade_notification(self, signal: UnifiedTradingSignal, execution_result: Dict, estimated_profit: float):
-        """매매 실행 알림 발송"""
-        try:
-            if NOTIFIER_AVAILABLE:
-                from notifier import send_trading_alert
-                
-                message = f"{'📈' if signal.action == 'buy' else '📉'} {signal.market} 매매 완료\n"
-                message += f"종목: {signal.symbol}\n"
-                message += f"동작: {signal.action.upper()}\n"
-                message += f"가격: {execution_result['price']:.4f}\n"
-                message += f"수량: {execution_result['quantity']:.2f}\n"
-                message += f"신뢰도: {signal.confidence:.1%}\n"
-                message += f"예상수익: {estimated_profit:,.0f}\n"
-                message += f"전략: {signal.strategy}"
-                
-                await send_trading_alert(
-                    signal.market, signal.symbol, signal.action,
-                    execution_result['price'], signal.confidence,
-                    message, signal.target_price
-                )
-                
-        except Exception as e:
-            self.logger.error(f"매매 알림 발송 실패: {e}")
-
-    async def analyze_us_market(self) -> MarketSummary:
-        """🇺🇸 미국 시장 분석 (개선된 버전)"""
-        start_time = datetime.now()
-        errors = []
-        signals = []
-        executed_trades = []
+# ============================================================================
+# 🚨 알림 시스템
+# ============================================================================
+class NotificationManager:
+    """통합 알림 관리자"""
+    
+    def __init__(self):
+        self.telegram_enabled = config.get('notifications.telegram.enabled', False)
+        self.console_only = config.get('notifications.console_only', True)
         
-        if not self.us_strategy:
-            return self._create_empty_market_summary('US', '전략 비활성화')
-        
-        try:
-            self.logger.info("🔍 미국 시장 분석 시작...")
-            
-            # 전체 시장 스캔
-            from us_strategy import USStockSignal
-            us_signals = await self.us_strategy.scan_all_selected_stocks()
-            
-            # 신호 변환
-            for signal in us_signals:
-                if self.shutdown_requested:
-                    break
-                unified_signal = self._convert_to_unified_signal(signal, 'US')
-                signals.append(unified_signal)
-            
-            if self.shutdown_requested:
-                return self._create_empty_market_summary('US', '사용자 중단')
-            
-            # 리스크 관리 및 매매 실행
-            filtered_signals = self._apply_risk_management(signals)
-            trade_signals = [s for s in filtered_signals if s.action in ['buy', 'sell']]
-            
-            if trade_signals:
-                executed_trades = await self._execute_trades(trade_signals)
-            
-            return self._create_market_summary('US', signals, executed_trades, start_time, errors)
-            
-        except Exception as e:
-            error_msg = f"미국 시장 분석 실패: {str(e)}"
-            self.logger.error(f"❌ {error_msg}")
-            errors.append(error_msg)
-            return self._create_market_summary('US', signals, executed_trades, start_time, errors)
-
-    async def analyze_jp_market(self) -> MarketSummary:
-        """🇯🇵 일본 시장 분석 (개선된 버전)"""
-        start_time = datetime.now()
-        errors = []
-        signals = []
-        executed_trades = []
-        
-        if not self.jp_strategy:
-            return self._create_empty_market_summary('JP', '전략 비활성화')
-        
-        try:
-            self.logger.info("🔍 일본 시장 분석 시작...")
-            
-            # 전체 시장 스캔
-            from jp_strategy import JPStockSignal
-            jp_signals = await self.jp_strategy.scan_all_symbols()
-            
-            # 신호 변환
-            for signal in jp_signals:
-                if self.shutdown_requested:
-                    break
-                unified_signal = self._convert_to_unified_signal(signal, 'JP')
-                signals.append(unified_signal)
-            
-            if self.shutdown_requested:
-                return self._create_empty_market_summary('JP', '사용자 중단')
-            
-            # 리스크 관리 및 매매 실행
-            filtered_signals = self._apply_risk_management(signals)
-            trade_signals = [s for s in filtered_signals if s.action in ['buy', 'sell']]
-            
-            if trade_signals:
-                executed_trades = await self._execute_trades(trade_signals)
-            
-            return self._create_market_summary('JP', signals, executed_trades, start_time, errors)
-            
-        except Exception as e:
-            error_msg = f"일본 시장 분석 실패: {str(e)}"
-            self.logger.error(f"❌ {error_msg}")
-            errors.append(error_msg)
-            return self._create_market_summary('JP', signals, executed_trades, start_time, errors)
-
-    async def analyze_coin_market(self) -> MarketSummary:
-        """🪙 암호화폐 시장 분석 (개선된 버전)"""
-        start_time = datetime.now()
-        errors = []
-        signals = []
-        executed_trades = []
-        
-        if not self.coin_strategy:
-            return self._create_empty_market_summary('COIN', '전략 비활성화')
-        
-        try:
-            self.logger.info("🔍 암호화폐 시장 분석 시작...")
-            
-            # 전체 시장 스캔
-            from coin_strategy import UltimateCoinSignal
-            coin_signals = await self.coin_strategy.scan_all_selected_coins()
-            
-            # 신호 변환
-            for signal in coin_signals:
-                if self.shutdown_requested:
-                    break
-                unified_signal = self._convert_to_unified_signal(signal, 'COIN')
-                signals.append(unified_signal)
-            
-            if self.shutdown_requested:
-                return self._create_empty_market_summary('COIN', '사용자 중단')
-            
-            # 리스크 관리 및 매매 실행
-            filtered_signals = self._apply_risk_management(signals)
-            trade_signals = [s for s in filtered_signals if s.action in ['buy', 'sell']]
-            
-            if trade_signals:
-                executed_trades = await self._execute_trades(trade_signals)
-            
-            return self._create_market_summary('COIN', signals, executed_trades, start_time, errors)
-            
-        except Exception as e:
-            error_msg = f"암호화폐 시장 분석 실패: {str(e)}"
-            self.logger.error(f"❌ {error_msg}")
-            errors.append(error_msg)
-            return self._create_market_summary('COIN', signals, executed_trades, start_time, errors)
-
-    def _create_empty_market_summary(self, market: str, reason: str) -> MarketSummary:
-        """빈 시장 요약 생성"""
-        return MarketSummary(
-            market=market,
-            total_analyzed=0,
-            buy_signals=0,
-            sell_signals=0,
-            hold_signals=0,
-            top_picks=[],
-            executed_trades=[],
-            analysis_time=0.0,
-            errors=[reason],
-            is_trading_day=market in self.today_strategies,
-            avg_confidence=0.0,
-            success_rate=0.0,
-            total_estimated_profit=0.0
-        )
-
-    def _create_market_summary(self, market: str, signals: List[UnifiedTradingSignal], 
-                             executed_trades: List[TradeExecution], start_time: datetime, 
-                             errors: List[str]) -> MarketSummary:
-        """시장 요약 생성"""
-        try:
-            # 통계 계산
-            buy_signals = len([s for s in signals if s.action == 'buy'])
-            sell_signals = len([s for s in signals if s.action == 'sell'])
-            hold_signals = len([s for s in signals if s.action == 'hold'])
-            
-            # 상위 종목 선정
-            top_picks = sorted([s for s in signals if s.action == 'buy'], 
-                             key=lambda x: x.confidence, reverse=True)[:5]
-            
-            # 성과 지표
-            avg_confidence = np.mean([s.confidence for s in signals]) if signals else 0.0
-            successful_trades = len([t for t in executed_trades if t.executed and t.estimated_profit and t.estimated_profit > 0])
-            success_rate = successful_trades / len(executed_trades) * 100 if executed_trades else 0.0
-            total_estimated_profit = sum([t.estimated_profit or 0 for t in executed_trades if t.executed])
-            
-            analysis_time = (datetime.now() - start_time).total_seconds()
-            
-            # 시장별 특화 정보
-            market_specific_info = self._get_market_specific_info(market, signals)
-            
-            self.logger.info(f"✅ {market} 시장 분석 완료 - "
-                           f"매수:{buy_signals} 매도:{sell_signals} 보유:{hold_signals} "
-                           f"실행:{len([t for t in executed_trades if t.executed])}건")
-            
-            return MarketSummary(
-                market=market,
-                total_analyzed=len(signals),
-                buy_signals=buy_signals,
-                sell_signals=sell_signals,
-                hold_signals=hold_signals,
-                top_picks=top_picks,
-                executed_trades=executed_trades,
-                analysis_time=analysis_time,
-                errors=errors,
-                is_trading_day=market in self.today_strategies,
-                avg_confidence=avg_confidence,
-                success_rate=success_rate,
-                total_estimated_profit=total_estimated_profit,
-                market_specific_info=market_specific_info
-            )
-            
-        except Exception as e:
-            self.logger.error(f"시장 요약 생성 실패 {market}: {e}")
-            return self._create_empty_market_summary(market, f"요약 생성 실패: {str(e)}")
-
-    def _get_market_specific_info(self, market: str, signals: List[UnifiedTradingSignal]) -> Dict:
-        """시장별 특화 정보 수집"""
-        try:
-            if market == 'US':
-                return {
-                    'avg_buffett_score': np.mean([s.buffett_score for s in signals if s.buffett_score is not None]),
-                    'avg_lynch_score': np.mean([s.lynch_score for s in signals if s.lynch_score is not None]),
-                    'avg_momentum_score': np.mean([s.momentum_score for s in signals if s.momentum_score is not None]),
-                    'avg_technical_score': np.mean([s.technical_score for s in signals if s.technical_score is not None]),
-                    'high_quality_count': len([s for s in signals if s.buffett_score and s.buffett_score > 0.7])
-                }
-            elif market == 'JP':
-                return {
-                    'yen_positive_signals': len([s for s in signals if s.yen_signal == 'positive']),
-                    'export_stocks': len([s for s in signals if s.stock_type == 'export']),
-                    'domestic_stocks': len([s for s in signals if s.stock_type == 'domestic']),
-                    'avg_selection_score': np.mean([s.selection_score for s in signals if s.selection_score is not None])
-                }
-            elif market == 'COIN':
-                return {
-                    'avg_project_quality': np.mean([s.project_quality_score for s in signals if s.project_quality_score is not None]),
-                    'bull_cycle_signals': len([s for s in signals if s.market_cycle == 'bull']),
-                    'high_correlation_count': len([s for s in signals if s.btc_correlation and abs(s.btc_correlation) > 0.7]),
-                    'defi_count': len([s for s in signals if s.sector and 'DeFi' in s.sector])
-                }
+        if self.telegram_enabled and TELEGRAM_AVAILABLE:
+            bot_token = config.get('notifications.telegram.bot_token')
+            if bot_token and not bot_token.startswith('${'):
+                self.telegram_bot = telegram.Bot(token=bot_token)
+                self.chat_id = config.get('notifications.telegram.chat_id')
             else:
-                return {}
+                self.telegram_enabled = False
+    
+    async def send_signal_alert(self, signals: List[QuintSignal]):
+        """시그널 알림 전송"""
+        if not signals:
+            return
+        
+        buy_signals = [s for s in signals if s.action == 'BUY']
+        if not buy_signals:
+            return
+        
+        # 콘솔 출력
+        print(f"\n🚨 매수 신호 알림: {len(buy_signals)}개")
+        for signal in buy_signals[:3]:  # 상위 3개만
+            print(f"  📈 {signal.symbol} ({signal.market}): {signal.confidence:.1%} 신뢰도")
+        
+        # 텔레그램 전송
+        if self.telegram_enabled:
+            try:
+                message = f"🚨 퀸트프로젝트 매수 신호\n\n"
+                for signal in buy_signals[:5]:
+                    message += f"📈 {signal.symbol} ({signal.market.upper()})\n"
+                    message += f"   신뢰도: {signal.confidence:.1%}\n"
+                    message += f"   현재가: {signal.price:,.0f}\n"
+                    message += f"   목표가: {signal.target_price:,.0f}\n\n"
                 
-        except Exception as e:
-            self.logger.error(f"시장 특화 정보 수집 실패 {market}: {e}")
-            return {}
+                await self.telegram_bot.send_message(
+                    chat_id=self.chat_id,
+                    text=message,
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                logging.error(f"텔레그램 알림 실패: {e}")
+    
+    async def send_portfolio_update(self, portfolio_summary: Dict):
+        """포트폴리오 업데이트 알림"""
+        if self.console_only:
+            print(f"\n💼 포트폴리오 업데이트:")
+            print(f"  총 포지션: {portfolio_summary['total_positions']}개")
+            print(f"  총 가치: {portfolio_summary['total_value']:,.0f}원")
 
-    async def run_full_analysis(self) -> Dict[str, MarketSummary]:
-        """🌍 전체 시장 통합 분석 (개선된 버전)"""
-        self.logger.info("🚀 전체 시장 통합 분석 시작...")
-        self.last_analysis_time = datetime.now()
-        self.analysis_count += 1
+# ============================================================================
+# 🏆 퀸트프로젝트 마스터 클래스
+# ============================================================================
+class QuintProjectMaster:
+    """퀸트프로젝트 4대 시장 통합 마스터 시스템"""
+    
+    def __init__(self):
+        # 설정 로드
+        self.portfolio_value = config.get('system.portfolio_value', 100_000_000)
+        self.demo_mode = config.get('system.demo_mode', True)
+        self.auto_trading = config.get('system.auto_trading', False)
         
-        # 종료 요청 확인
-        if self.shutdown_requested:
-            self.logger.info("🛑 사용자 종료 요청으로 분석 중단")
-            return {}
+        # 4대 엔진 초기화
+        self.us_engine = USStockEngine()
+        self.crypto_engine = UpbitCryptoEngine()
+        self.japan_engine = JapanStockEngine()
+        self.india_engine = IndiaStockEngine()
         
-        start_time = time.time()
+        # 관리자들
+        self.portfolio_manager = PortfolioManager()
+        self.notification_manager = NotificationManager()
         
-        # 병렬 분석 태스크 생성
-        tasks = []
-        task_names = []
+        # 상태
+        self.last_analysis_time = None
+        self.all_signals = []
         
-        if self.us_strategy:
-            tasks.append(self.analyze_us_market())
-            task_names.append('US')
-            
-        if self.jp_strategy:
-            tasks.append(self.analyze_jp_market())
-            task_names.append('JP')
-            
-        if self.coin_strategy:
-            tasks.append(self.analyze_coin_market())
-            task_names.append('COIN')
-        
-        if not tasks:
-            self.logger.warning("⚠️ 활성화된 전략이 없습니다")
-            return {}
-        
-        # 병렬 실행
-        self.logger.info(f"⚡ {len(tasks)}개 시장 병렬 분석 시작...")
+        logging.info("🏆 퀸트프로젝트 마스터 시스템 초기화 완료")
+    
+    async def run_full_analysis(self) -> Dict:
+        """4대 시장 통합 분석 실행"""
+        logging.info("🚀 퀸트프로젝트 4대 시장 통합 분석 시작")
+        start_time = datetime.now()
         
         try:
+            # 4대 시장 병렬 분석
+            tasks = []
+            
+            if config.get('markets.us_stocks.enabled', True):
+                tasks.append(self.us_engine.analyze_us_market())
+            
+            if config.get('markets.upbit_crypto.enabled', True):
+                tasks.append(self.crypto_engine.analyze_crypto_market())
+            
+            if config.get('markets.japan_stocks.enabled', True):
+                tasks.append(self.japan_engine.analyze_japan_market())
+            
+            if config.get('markets.india_stocks.enabled', True):
+                tasks.append(self.india_engine.analyze_india_market())
+            
+            # 병렬 실행
             results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # 결과 통합
+            all_signals = []
+            market_names = ['미국주식', '암호화폐', '일본주식', '인도주식']
+            enabled_markets = []
+            
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logging.error(f"{market_names[i]} 분석 실패: {result}")
+                    continue
+                
+                if result:
+                    all_signals.extend(result)
+                    enabled_markets.append(market_names[i])
+            
+            # 신뢰도 순 정렬
+            all_signals.sort(key=lambda x: x.confidence, reverse=True)
+            
+            # 최종 포트폴리오 구성
+            final_portfolio = self._optimize_portfolio(all_signals)
+            
+            # 결과 요약
+            elapsed_time = (datetime.now() - start_time).total_seconds()
+            
+            buy_signals = [s for s in all_signals if s.action == 'BUY']
+            total_investment = sum(s.investment_amount for s in buy_signals)
+            
+            analysis_result = {
+                'timestamp': start_time,
+                'elapsed_time': elapsed_time,
+                'enabled_markets': enabled_markets,
+                'total_signals': len(all_signals),
+                'buy_signals': len(buy_signals),
+                'total_investment': total_investment,
+                'portfolio_allocation': (total_investment / self.portfolio_value) * 100,
+                'signals': all_signals,
+                'optimized_portfolio': final_portfolio,
+                'market_breakdown': self._get_market_breakdown(all_signals)
+            }
+            
+            # 시그널 저장
+            self.all_signals = all_signals
+            self.last_analysis_time = start_time
+            
+            # 알림 전송
+            await self.notification_manager.send_signal_alert(buy_signals)
+            
+            logging.info(f"✅ 4대 시장 분석 완료: {elapsed_time:.1f}초, {len(buy_signals)}개 매수 신호")
+            
+            return analysis_result
+            
         except Exception as e:
-            self.logger.error(f"❌ 병렬 분석 실행 실패: {e}")
-            return {}
+            logging.error(f"4대 시장 분석 실패: {e}")
+            return {'error': str(e), 'timestamp': start_time}
+    
+    def _optimize_portfolio(self, signals: List[QuintSignal]) -> List[QuintSignal]:
+        """포트폴리오 최적화"""
+        buy_signals = [s for s in signals if s.action == 'BUY']
         
-    async def _save_analysis_results(self, market_summaries: Dict[str, MarketSummary]):
-        """분석 결과 저장 (개선된 버전)"""
+        # 시장별 할당 한도 체크
+        market_allocations = {
+            'us': config.get('markets.us_stocks.allocation', 40.0),
+            'crypto': config.get('markets.upbit_crypto.allocation', 30.0),
+            'japan': config.get('markets.japan_stocks.allocation', 20.0),
+            'india': config.get('markets.india_stocks.allocation', 10.0)
+        }
+        
+        market_totals = {'us': 0, 'crypto': 0, 'japan': 0, 'india': 0}
+        optimized_signals = []
+        
+        for signal in buy_signals:
+            market = signal.market
+            if market_totals[market] + signal.allocation_percent <= market_allocations[market]:
+                optimized_signals.append(signal)
+                market_totals[market] += signal.allocation_percent
+            
+            # 최대 20개 종목으로 제한
+            if len(optimized_signals) >= 20:
+                break
+        
+        return optimized_signals
+    
+    def _get_market_breakdown(self, signals: List[QuintSignal]) -> Dict:
+        """시장별 분석 결과"""
+        breakdown = {}
+        
+        for market in ['us', 'crypto', 'japan', 'india']:
+            market_signals = [s for s in signals if s.market == market]
+            buy_signals = [s for s in market_signals if s.action == 'BUY']
+            
+            breakdown[market] = {
+                'total_analyzed': len(market_signals),
+                'buy_signals': len(buy_signals),
+                'avg_confidence': np.mean([s.confidence for s in buy_signals]) if buy_signals else 0,
+                'total_investment': sum(s.investment_amount for s in buy_signals)
+            }
+        
+        return breakdown
+    
+    def print_analysis_results(self, analysis_result: Dict):
+        """분석 결과 출력"""
+        if 'error' in analysis_result:
+            print(f"❌ 분석 실패: {analysis_result['error']}")
+            return
+        
+        print("\n" + "="*80)
+        print("🏆 퀸트프로젝트 4대 시장 통합 분석 결과")
+        print("="*80)
+        
+        # 기본 정보
+        print(f"\n📊 분석 요약:")
+        print(f"   소요시간: {analysis_result['elapsed_time']:.1f}초")
+        print(f"   활성시장: {', '.join(analysis_result['enabled_markets'])}")
+        print(f"   총 분석: {analysis_result['total_signals']}개 종목")
+        print(f"   매수신호: {analysis_result['buy_signals']}개")
+        print(f"   총 투자: {analysis_result['total_investment']:,.0f}원")
+        print(f"   포트폴리오 비중: {analysis_result['portfolio_allocation']:.1f}%")
+        print(f"   운영모드: {'시뮬레이션' if self.demo_mode else '실거래'}")
+        
+        # 시장별 분석
+        print(f"\n🌍 시장별 분석:")
+        market_names = {'us': '🇺🇸 미국주식', 'crypto': '🪙 암호화폐', 'japan': '🇯🇵 일본주식', 'india': '🇮🇳 인도주식'}
+        breakdown = analysis_result['market_breakdown']
+        
+        for market, data in breakdown.items():
+            if data['total_analyzed'] > 0:
+                print(f"   {market_names[market]}: {data['buy_signals']}/{data['total_analyzed']} "
+                      f"(신뢰도 {data['avg_confidence']:.1%}, 투자 {data['total_investment']:,.0f}원)")
+        
+        # 상위 매수 추천
+        optimized_portfolio = analysis_result['optimized_portfolio']
+        if optimized_portfolio:
+            print(f"\n💎 최적화된 포트폴리오 ({len(optimized_portfolio)}개):")
+            
+            for i, signal in enumerate(optimized_portfolio[:10], 1):  # 상위 10개
+                market_emoji = {'us': '🇺🇸', 'crypto': '🪙', 'japan': '🇯🇵', 'india': '🇮🇳'}
+                print(f"\n   [{i:2d}] {market_emoji[signal.market]} {signal.symbol}")
+                print(f"        신뢰도: {signal.confidence:.1%} | 현재가: {signal.price:,.0f}")
+                print(f"        투자액: {signal.investment_amount:,.0f}원 ({signal.allocation_percent:.1f}%)")
+                print(f"        목표가: {signal.target_price:,.0f} | 손절: {signal.stop_loss:,.0f}")
+                print(f"        전략: {signal.reasoning[:50]}...")
+        
+        print("\n" + "="*80)
+        print("🚀 퀸트프로젝트 - 4대 시장 완전 정복!")
+        print("="*80)
+    
+    async def start_real_time_monitoring(self, interval_minutes: int = 30):
+        """실시간 모니터링 시작"""
+        logging.info(f"📡 실시간 모니터링 시작 (간격: {interval_minutes}분)")
+        
+        while True:
+            try:
+                # 전체 분석 실행
+                result = await self.run_full_analysis()
+                
+                # 포트폴리오 업데이트
+                portfolio_summary = self.portfolio_manager.get_portfolio_summary()
+                await self.notification_manager.send_portfolio_update(portfolio_summary)
+                
+                # 다음 분석까지 대기
+                await asyncio.sleep(interval_minutes * 60)
+                
+            except KeyboardInterrupt:
+                logging.info("⏹️ 실시간 모니터링 중지")
+                break
+            except Exception as e:
+                logging.error(f"모니터링 오류: {e}")
+                await asyncio.sleep(60)  # 1분 후 재시도
+
+# ============================================================================
+# 🛠️ 유틸리티 함수들
+# ============================================================================
+class QuintUtils:
+    """퀸트프로젝트 유틸리티"""
+    
+    @staticmethod
+    def setup_logging():
+        """로깅 설정"""
+        log_level = config.get('system.log_level', 'INFO')
+        
+        logging.basicConfig(
+            level=getattr(logging, log_level),
+            format='%(asctime)s | %(levelname)s | %(message)s',
+            handlers=[
+                logging.StreamHandler(sys.stdout),
+                logging.FileHandler('quint_project.log', encoding='utf-8') 
+                if config.get('system.backup_enabled', True) else logging.NullHandler()
+            ]
+        )
+    
+    @staticmethod
+    def validate_environment():
+        """환경 검증"""
+        issues = []
+        
+        # API 키 체크 (데모 모드가 아닐 때)
+        if not config.get('system.demo_mode', True):
+            if config.get('markets.upbit_crypto.enabled') and not os.getenv('UPBIT_ACCESS_KEY'):
+                issues.append("업비트 API 키 누락")
+            
+            if config.get('us_stocks.ibkr.enabled') and not IBKR_AVAILABLE:
+                issues.append("IBKR 모듈 누락 (pip install ib_insync)")
+        
+        # 필수 라이브러리 체크
+        required_libs = ['yfinance', 'pyupbit', 'pandas', 'numpy']
+        for lib in required_libs:
+            try:
+                __import__(lib)
+            except ImportError:
+                issues.append(f"{lib} 라이브러리 누락")
+        
+        return issues
+    
+    @staticmethod
+    def backup_data():
+        """데이터 백업"""
+        if not config.get('system.backup_enabled', True):
+            return
+        
         try:
+            backup_dir = Path('backups')
+            backup_dir.mkdir(exist_ok=True)
+            
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
-            # 데이터 디렉토리 확인
-            data_dir = Path('data')
-            data_dir.mkdir(exist_ok=True)
+            # 설정 파일 백업
+            if Path('quint_config.yaml').exists():
+                import shutil
+                shutil.copy('quint_config.yaml', backup_dir / f'config_{timestamp}.yaml')
             
-            # 파일명 생성
-            filename = data_dir / f"analysis_{timestamp}.json"
+            # 포트폴리오 백업
+            if Path('quint_portfolio.json').exists():
+                import shutil
+                shutil.copy('quint_portfolio.json', backup_dir / f'portfolio_{timestamp}.json')
             
-            # 저장할 데이터 구성
-            save_data = {
-                'metadata': {
-                    'timestamp': timestamp,
-                    'analysis_time': self.last_analysis_time.isoformat() if self.last_analysis_time else None,
-                    'analysis_count': self.analysis_count,
-                    'version': '6.0.0',
-                    'force_test_mode': self.force_test
-                },
-                'session_info': {
-                    'start_time': self.session_start_time.isoformat(),
-                    'uptime_hours': (datetime.now() - self.session_start_time).total_seconds() / 3600,
-                    'total_signals_generated': self.total_signals_generated,
-                    'daily_trades_count': self.daily_trades_count,
-                    'max_daily_trades': self.max_daily_trades,
-                    'today_strategies': self.today_strategies,
-                    'market_allocation': self.market_allocation,
-                    'session_stats': self.session_stats
-                },
-                'system_status': {
-                    'auto_execution': self.auto_execution,
-                    'paper_trading': self.paper_trading,
-                    'shutdown_requested': self.shutdown_requested,
-                    'module_availability': {
-                        'us_strategy': US_STRATEGY_AVAILABLE,
-                        'jp_strategy': JP_STRATEGY_AVAILABLE,
-                        'coin_strategy': COIN_STRATEGY_AVAILABLE,
-                        'notifier': NOTIFIER_AVAILABLE,
-                        'scheduler': SCHEDULER_AVAILABLE,
-                        'trading': TRADING_AVAILABLE
-                    }
-                },
-                'market_summaries': {}
-            }
-            
-            # 시장별 요약 데이터 변환
-            for market, summary in market_summaries.items():
-                # top_picks 직렬화
-                top_picks_data = []
-                for signal in summary.top_picks:
-                    signal_dict = asdict(signal)
-                    signal_dict['timestamp'] = signal.timestamp.isoformat()
-                    top_picks_data.append(signal_dict)
-                
-                # executed_trades 직렬화
-                executed_trades_data = []
-                for trade in summary.executed_trades:
-                    trade_dict = {
-                        'symbol': trade.signal.symbol,
-                        'market': trade.signal.market,
-                        'action': trade.signal.action,
-                        'executed': trade.executed,
-                        'execution_price': trade.execution_price,
-                        'execution_time': trade.execution_time.isoformat() if trade.execution_time else None,
-                        'quantity': trade.quantity,
-                        'order_id': trade.order_id,
-                        'error_message': trade.error_message,
-                        'commission': trade.commission,
-                        'slippage': trade.slippage,
-                        'estimated_profit': trade.estimated_profit
-                    }
-                    executed_trades_data.append(trade_dict)
-                
-                save_data['market_summaries'][market] = {
-                    'market': summary.market,
-                    'total_analyzed': summary.total_analyzed,
-                    'buy_signals': summary.buy_signals,
-                    'sell_signals': summary.sell_signals,
-                    'hold_signals': summary.hold_signals,
-                    'analysis_time': summary.analysis_time,
-                    'errors': summary.errors,
-                    'is_trading_day': summary.is_trading_day,
-                    'avg_confidence': summary.avg_confidence,
-                    'success_rate': summary.success_rate,
-                    'total_estimated_profit': summary.total_estimated_profit,
-                    'top_picks': top_picks_data,
-                    'executed_trades': executed_trades_data,
-                    'market_specific_info': summary.market_specific_info or {}
-                }
-            
-            # JSON 파일로 저장
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(save_data, f, ensure_ascii=False, indent=2, default=str)
-            
-            self.logger.info(f"💾 분석 결과 저장 완료: {filename}")
-            
-            # 오래된 파일 정리 (30일 이상)
-            await self._cleanup_old_files(data_dir, days=30)
+            logging.info(f"백업 완료: {timestamp}")
             
         except Exception as e:
-            self.logger.error(f"❌ 분석 결과 저장 실패: {e}")
+            logging.error(f"백업 실패: {e}")
 
-    async def _cleanup_old_files(self, directory: Path, days: int = 30):
-        """오래된 파일 정리"""
-        try:
-            cutoff_date = datetime.now() - timedelta(days=days)
-            deleted_count = 0
-            
-            for file_path in directory.glob("analysis_*.json"):
-                if file_path.stat().st_mtime < cutoff_date.timestamp():
-                    file_path.unlink()
-                    deleted_count += 1
-            
-            if deleted_count > 0:
-                self.logger.info(f"🗑️ 오래된 파일 {deleted_count}개 정리 완료")
-                
-        except Exception as e:
-            self.logger.error(f"파일 정리 실패: {e}")
+# ============================================================================
+# 🎮 편의 함수들 (외부 호출용)
+# ============================================================================
+async def run_quint_analysis():
+    """퀸트프로젝트 전체 분석 실행"""
+    master = QuintProjectMaster()
+    result = await master.run_full_analysis()
+    master.print_analysis_results(result)
+    return result
 
-    async def _send_analysis_notification(self, market_summaries: Dict[str, MarketSummary]):
-        """분석 결과 알림 발송 (개선된 버전)"""
-        try:
-            # 알림 설정 확인
-            notification_config = self.config.get('notifications', {})
-            telegram_config = notification_config.get('telegram', {})
-            
-            if not telegram_config.get('enabled', False):
-                return
-            
-            # 요약 메시지 생성
-            total_signals = sum([s.total_analyzed for s in market_summaries.values()])
-            total_buy = sum([s.buy_signals for s in market_summaries.values()])
-            total_executed = sum([len([t for t in s.executed_trades if t.executed]) for s in market_summaries.values()])
-            
-            message = f"🎯 전체 시장 분석 완료\n\n"
-            message += f"📊 전체 요약:\n"
-            message += f"• 분석 종목: {total_signals}개\n"
-            message += f"• 매수 신호: {total_buy}개\n"
-            message += f"• 실행 거래: {total_executed}개\n"
-            message += f"• 분석 시간: {datetime.now().strftime('%H:%M:%S')}\n\n"
-            
-            # 시장별 요약
-            market_emojis = {'US': '🇺🇸', 'JP': '🇯🇵', 'COIN': '🪙'}
-            for market, summary in market_summaries.items():
-                emoji = market_emojis.get(market, '❓')
-                executed_count = len([t for t in summary.executed_trades if t.executed])
-                
-                message += f"{emoji} {market}:\n"
-                message += f"  분석 {summary.total_analyzed}개 → 매수 {summary.buy_signals}개 → 실행 {executed_count}개\n"
-                
-                if summary.top_picks:
-                    top_pick = summary.top_picks[0]
-                    message += f"  🏆 {top_pick.symbol} ({top_pick.confidence:.1%})\n"
-                message += "\n"
-            
-            # 세션 통계
-            uptime_hours = (datetime.now() - self.session_start_time).total_seconds() / 3600
-            message += f"📈 세션 통계:\n"
-            message += f"• 가동시간: {uptime_hours:.1f}시간\n"
-            message += f"• 총 신호: {self.total_signals_generated}개\n"
-            message += f"• 일일 거래: {self.daily_trades_count}/{self.max_daily_trades}\n"
-            message += f"• 예상 수익: {self.session_stats['total_profit']:,.0f}원\n"
-            
-            # 알림 발송
-            from notifier import send_telegram_message
-            await send_telegram_message(message)
-            
-            self.logger.info("📱 알림 발송 완료")
-            
-        except Exception as e:
-            self.logger.error(f"❌ 알림 발송 실패: {e}")
+async def analyze_single_market(market: str):
+    """단일 시장 분석"""
+    master = QuintProjectMaster()
+    
+    if market.lower() == 'us':
+        signals = await master.us_engine.analyze_us_market()
+        print(f"\n🇺🇸 미국주식 분석 결과: {len([s for s in signals if s.action == 'BUY'])}개 매수 신호")
+    elif market.lower() == 'crypto':
+        signals = await master.crypto_engine.analyze_crypto_market()
+        print(f"\n🪙 암호화폐 분석 결과: {len([s for s in signals if s.action == 'BUY'])}개 매수 신호")
+    elif market.lower() == 'japan':
+        signals = await master.japan_engine.analyze_japan_market()
+        print(f"\n🇯🇵 일본주식 분석 결과: {len([s for s in signals if s.action == 'BUY'])}개 매수 신호")
+    elif market.lower() == 'india':
+        signals = await master.india_engine.analyze_india_market()
+        print(f"\n🇮🇳 인도주식 분석 결과: {len([s for s in signals if s.action == 'BUY'])}개 매수 신호")
+    else:
+        print("❌ 지원되는 시장: us, crypto, japan, india")
+        return []
+    
+    for signal in [s for s in signals if s.action == 'BUY'][:5]:
+        print(f"  📈 {signal.symbol}: {signal.confidence:.1%} 신뢰도")
+    
+    return signals
 
-    async def get_quick_analysis(self, symbols: List[str]) -> List[UnifiedTradingSignal]:
-        """빠른 개별 종목 분석 (개선된 버전)"""
-        signals = []
-        
-        if self.shutdown_requested:
-            return signals
-        
-        self.logger.info(f"⚡ 빠른 분석 시작: {len(symbols)}개 종목")
-        
-        for symbol in symbols:
-            if self.shutdown_requested:
-                break
-                
-            try:
-                # 시장 판별 개선
-                market = self._detect_market(symbol)
-                
-                if market == 'JP' and self.jp_strategy:
-                    from jp_strategy import analyze_jp
-                    result = await analyze_jp(symbol)
-                    signal = self._create_unified_signal_from_result(result, 'JP', symbol)
-                    
-                elif market == 'COIN' and self.coin_strategy:
-                    from coin_strategy import analyze_coin
-                    result = await analyze_coin(symbol)
-                    signal = self._create_unified_signal_from_result(result, 'COIN', symbol)
-                    
-                elif market == 'US' and self.us_strategy:
-                    from us_strategy import analyze_us
-                    result = await analyze_us(symbol)
-                    signal = self._create_unified_signal_from_result(result, 'US', symbol)
-                    
-                else:
-                    # 알 수 없는 시장이거나 전략 비활성화
-                    signal = UnifiedTradingSignal(
-                        market='UNKNOWN',
-                        symbol=symbol,
-                        action='hold',
-                        confidence=0.0,
-                        price=0.0,
-                        strategy='unknown_market',
-                        reasoning=f"시장 판별 실패 또는 전략 비활성화: {market}",
-                        target_price=0.0,
-                        timestamp=datetime.now()
-                    )
-                
-                signals.append(signal)
-                
-            except Exception as e:
-                self.logger.error(f"❌ {symbol} 빠른 분석 실패: {e}")
-                
-                # 오류 신호 생성
-                error_signal = UnifiedTradingSignal(
-                    market='ERROR',
-                    symbol=symbol,
-                    action='hold',
-                    confidence=0.0,
-                    price=0.0,
-                    strategy='analysis_error',
-                    reasoning=f"분석 오류: {str(e)}",
-                    target_price=0.0,
-                    timestamp=datetime.now()
-                )
-                signals.append(error_signal)
-        
-        self.logger.info(f"⚡ 빠른 분석 완료: {len(signals)}개 신호 생성")
-        return signals
+async def start_monitoring(interval_minutes: int = 30):
+    """실시간 모니터링 시작"""
+    master = QuintProjectMaster()
+    await master.start_real_time_monitoring(interval_minutes)
 
-    def _detect_market(self, symbol: str) -> str:
-        """시장 판별 로직"""
-        symbol_upper = symbol.upper()
-        
-        # 일본 주식
-        if symbol_upper.endswith('.T') or symbol_upper.endswith('.JP'):
-            return 'JP'
-        
-        # 암호화폐
-        if 'KRW-' in symbol_upper or 'USDT-' in symbol_upper or 'BTC-' in symbol_upper:
-            return 'COIN'
-        
-        # 기타 암호화폐 패턴
-        crypto_patterns = ['BTC', 'ETH', 'XRP', 'ADA', 'DOT', 'SOL', 'AVAX', 'MATIC', 'LINK', 'UNI']
-        if any(pattern in symbol_upper for pattern in crypto_patterns):
-            return 'COIN'
-        
-        # 기본값: 미국 주식
-        return 'US'
+def get_portfolio_status():
+    """포트폴리오 현황 조회"""
+    manager = PortfolioManager()
+    summary = manager.get_portfolio_summary()
+    
+    print("\n💼 포트폴리오 현황:")
+    print(f"   총 포지션: {summary['total_positions']}개")
+    print(f"   총 가치: {summary['total_value']:,.0f}원")
+    
+    allocation = summary['allocation_by_market']
+    market_names = {'us': '🇺🇸 미국', 'crypto': '🪙 암호화폐', 'japan': '🇯🇵 일본', 'india': '🇮🇳 인도'}
+    
+    for market, value in allocation.items():
+        if value > 0:
+            percent = (value / summary['total_value']) * 100 if summary['total_value'] > 0 else 0
+            print(f"   {market_names[market]}: {value:,.0f}원 ({percent:.1f}%)")
+    
+    return summary
 
-    def _create_unified_signal_from_result(self, result: Dict, market: str, symbol: str) -> UnifiedTradingSignal:
-        """분석 결과를 통합 신호로 변환"""
-        try:
-            return UnifiedTradingSignal(
-                market=market,
-                symbol=symbol,
-                action=result.get('decision', 'hold'),
-                confidence=result.get('confidence_score', 0) / 100,
-                price=result.get('price', result.get('current_price', 0)),
-                strategy=f"{market.lower()}_quick",
-                reasoning=result.get('reasoning', ''),
-                target_price=result.get('target_price', result.get('price', result.get('current_price', 0))),
-                timestamp=datetime.now(),
-                sector=result.get('sector'),
-                
-                # 시장별 특수 필드
-                buffett_score=result.get('buffett_score', 0) / 100 if market == 'US' else None,
-                lynch_score=result.get('lynch_score', 0) / 100 if market == 'US' else None,
-                yen_signal=result.get('yen_signal') if market == 'JP' else None,
-                stock_type=result.get('stock_type') if market == 'JP' else None,
-                project_quality_score=result.get('project_quality_score', 0) / 100 if market == 'COIN' else None,
-                market_cycle=result.get('market_cycle') if market == 'COIN' else None,
-                btc_correlation=result.get('btc_correlation') if market == 'COIN' else None
-            )
-            
-        except Exception as e:
-            self.logger.error(f"결과 변환 실패 {symbol}: {e}")
-            return UnifiedTradingSignal(
-                market=market, symbol=symbol, action='hold', confidence=0.0,
-                price=0.0, strategy='conversion_error', reasoning=f"변환 실패: {str(e)}",
-                target_price=0.0, timestamp=datetime.now()
-            )
+def update_config(key: str, value):
+    """설정 업데이트"""
+    config.update(key, value)
+    print(f"✅ 설정 업데이트: {key} = {value}")
 
-    async def generate_unified_portfolio_report(self, market_summaries: Dict[str, MarketSummary]) -> Dict:
-        """📊 통합 포트폴리오 리포트 생성 (개선된 버전)"""
-        if not market_summaries:
-            return {"error": "분석된 시장이 없습니다", "timestamp": datetime.now().isoformat()}
+def get_system_status():
+    """시스템 상태 조회"""
+    issues = QuintUtils.validate_environment()
+    
+    status = {
+        'config_loaded': Path('quint_config.yaml').exists(),
+        'portfolio_loaded': Path('quint_portfolio.json').exists(),
+        'demo_mode': config.get('system.demo_mode', True),
+        'auto_trading': config.get('system.auto_trading', False),
+        'environment_issues': issues,
+        'enabled_markets': {
+            'us_stocks': config.get('markets.us_stocks.enabled', True),
+            'upbit_crypto': config.get('markets.upbit_crypto.enabled', True),
+            'japan_stocks': config.get('markets.japan_stocks.enabled', True),
+            'india_stocks': config.get('markets.india_stocks.enabled', True)
+        }
+    }
+    
+    print("\n🔧 시스템 상태:")
+    print(f"   설정 파일: {'✅' if status['config_loaded'] else '❌'}")
+    print(f"   포트폴리오: {'✅' if status['portfolio_loaded'] else '❌'}")
+    print(f"   운영 모드: {'시뮬레이션' if status['demo_mode'] else '실거래'}")
+    print(f"   자동매매: {'활성화' if status['auto_trading'] else '비활성화'}")
+    
+    if issues:
+        print(f"   ⚠️ 이슈: {', '.join(issues)}")
+    else:
+        print(f"   환경 검증: ✅")
+    
+    enabled_count = sum(status['enabled_markets'].values())
+    print(f"   활성 시장: {enabled_count}/4개")
+    
+    return status
+
+# ============================================================================
+# 🎯 메인 실행 함수
+# ============================================================================
+async def main():
+    """퀸트프로젝트 메인 실행"""
+    # 로깅 설정
+    QuintUtils.setup_logging()
+    
+    print("🏆" + "="*78)
+    print("🚀 퀸트프로젝트 - 4대 시장 통합 핵심 시스템 CORE.PY")
+    print("="*80)
+    print("🇺🇸 미국주식 | 🪙 암호화폐 | 🇯🇵 일본주식 | 🇮🇳 인도주식")
+    print("⚡ 혼자 보수유지 가능한 완전 자동화 아키텍처")
+    print("="*80)
+    
+    # 시스템 상태 확인
+    print("\n🔧 시스템 초기화 중...")
+    status = get_system_status()
+    
+    if status['environment_issues']:
+        print(f"\n⚠️ 환경 이슈 발견: {len(status['environment_issues'])}개")
+        for issue in status['environment_issues']:
+            print(f"   - {issue}")
+        print("\n💡 데모 모드에서는 대부분의 기능이 정상 작동합니다.")
+    
+    # 백업 실행
+    QuintUtils.backup_data()
+    
+    try:
+        # 전체 분석 실행
+        print(f"\n🚀 4대 시장 통합 분석 시작...")
+        result = await run_quint_analysis()
         
-        try:
-            # 전체 통계 계산
-            total_analyzed = sum([summary.total_analyzed for summary in market_summaries.values()])
-            total_buy_signals = sum([summary.buy_signals for summary in market_summaries.values()])
-            total_sell_signals = sum([summary.sell_signals for summary in market_summaries.values()])
-            total_hold_signals = sum([summary.hold_signals for summary in market_summaries.values()])
-            total_executed = sum([len([t for t in summary.executed_trades if t.executed]) for summary in market_summaries.values()])
-            total_estimated_profit = sum([summary.total_estimated_profit for summary in market_summaries.values()])
+        if 'error' not in result:
+            print(f"\n💡 퀸트프로젝트 사용법:")
+            print(f"   - run_quint_analysis(): 전체 4대 시장 분석")
+            print(f"   - analyze_single_market('crypto'): 단일 시장 분석")
+            print(f"   - start_monitoring(30): 실시간 모니터링 (30분 간격)")
+            print(f"   - get_portfolio_status(): 포트폴리오 현황")
+            print(f"   - update_config('system.demo_mode', False): 설정 변경")
+            print(f"   - get_system_status(): 시스템 상태 확인")
+        
+        return result
+        
+    except KeyboardInterrupt:
+        print(f"\n👋 퀸트프로젝트를 종료합니다.")
+    except Exception as e:
+        print(f"\n❌ 실행 중 오류: {e}")
+        logging.error(f"메인 실행 실패: {e}")
+
+# ============================================================================
+# 🎮 CLI 인터페이스
+# ============================================================================
+def cli_interface():
+    """간단한 CLI 인터페이스"""
+    if len(sys.argv) > 1:
+        command = sys.argv[1].lower()
+        
+        if command == 'analyze':
+            # 전체 분석
+            asyncio.run(run_quint_analysis())
             
-            # 시장별 성과 분석
-            market_performance = {}
-            all_top_picks = []
+        elif command.startswith('analyze:'):
+            # 단일 시장 분석
+            market = command.split(':')[1]
+            asyncio.run(analyze_single_market(market))
             
-            for market, summary in market_summaries.items():
-                executed_trades = [t for t in summary.executed_trades if t.executed]
-                
-                market_performance[market] = {
-                    'analyzed': summary.total_analyzed,
-                    'buy_signals': summary.buy_signals,
-                    'sell_signals': summary.sell_signals,
-                    'hold_signals': summary.hold_signals,
-                    'buy_rate': summary.buy_signals / summary.total_analyzed * 100 if summary.total_analyzed > 0 else 0,
-                    'executed_trades': len(executed_trades),
-                    'execution_rate': len(executed_trades) / max(1, summary.buy_signals + summary.sell_signals) * 100,
-                    'avg_confidence': summary.avg_confidence,
-                    'success_rate': summary.success_rate,
-                    'estimated_profit': summary.total_estimated_profit,
-                    'analysis_time': summary.analysis_time,
-                    'errors': len(summary.errors),
-                    'error_rate': len(summary.errors) / max(1, summary.total_analyzed) * 100,
-                    'specific_info': summary.market_specific_info or {}
-                }
-                
-                # 상위 종목들 통합
-                all_top_picks.extend(summary.top_picks)
+        elif command == 'monitor':
+            # 실시간 모니터링
+            interval = int(sys.argv[2]) if len(sys.argv) > 2 else 30
+            asyncio.run(start_monitoring(interval))
             
-            # 글로벌 상위 종목 (신뢰도 순)
-            all_top_picks.sort(key=lambda x: x.confidence, reverse=True)
-            global_top_picks = all_top_picks[:10]
+        elif command == 'status':
+            # 시스템 상태
+            get_system_status()
             
-            # 섹터별 분포
-            sector_distribution = {}
-            for summary in market_summaries.values():
-                for signal in summary.top_picks:
-                    sector = signal.sector or 'Unknown'
-                    sector_distribution[sector] = sector_distribution.get(sector, 0) + 1
+        elif command == 'portfolio':
+            # 포트폴리오 현황
+            get_portfolio_status()
             
-            # 리스크 분석
-            if PANDAS_AVAILABLE:
-                confidences = [signal.confidence for summary in market_summaries.values() for signal in summary.top_picks]
-                avg_confidence = np.mean(confidences) if confidences else 0
-                confidence_std = np.std(confidences) if confidences else 0
+        elif command == 'config':
+            # 설정 변경
+            if len(sys.argv) >= 4:
+                key, value = sys.argv[2], sys.argv[3]
+                # 타입 추론
+                if value.lower() in ['true', 'false']:
+                    value = value.lower() == 'true'
+                elif value.replace('.', '').isdigit():
+                    value = float(value) if '.' in value else int(value)
+                update_config(key, value)
             else:
-                avg_confidence = sum([s.avg_confidence for s in market_summaries.values()]) / len(market_summaries)
-                confidence_std = 0
-            
-            # 다양성 점수
-            market_diversity = len(market_summaries) / 3  # 최대 3개 시장
-            sector_diversity = len(sector_distribution) / max(1, total_buy_signals)
-            
-            # 세션 성과
-            uptime_hours = (datetime.now() - self.session_start_time).total_seconds() / 3600
-            trades_per_hour = self.daily_trades_count / max(0.1, uptime_hours)
-            
-            # 최종 리포트 구성
-            report = {
-                'metadata': {
-                    'report_time': datetime.now().isoformat(),
-                    'analysis_time': self.last_analysis_time.isoformat() if self.last_analysis_time else None,
-                    'analysis_count': self.analysis_count,
-                    'version': '6.0.0',
-                    'force_test_mode': self.force_test
-                },
-                'summary': {
-                    'total_markets': len(market_summaries),
-                    'active_strategies': self.today_strategies,
-                    'total_analyzed': total_analyzed,
-                    'total_buy_signals': total_buy_signals,
-                    'total_sell_signals': total_sell_signals,
-                    'total_hold_signals': total_hold_signals,
-                    'total_executed': total_executed,
-                    'overall_buy_rate': total_buy_signals / total_analyzed * 100 if total_analyzed > 0 else 0,
-                    'overall_execution_rate': total_executed / max(1, total_buy_signals + total_sell_signals) * 100,
-                    'total_estimated_profit': total_estimated_profit,
-                    'session_duration_hours': uptime_hours,
-                    'daily_trades_count': self.daily_trades_count,
-                    'max_daily_trades': self.max_daily_trades,
-                    'trades_per_hour': trades_per_hour
-                },
-                'market_performance': market_performance,
-                'global_top_picks': [
-                    {
-                        'rank': i + 1,
-                        'market': signal.market,
-                        'symbol': signal.symbol,
-                        'sector': signal.sector,
-                        'confidence': signal.confidence,
-                        'total_score': signal.total_score or signal.confidence,
-                        'price': signal.price,
-                        'target_price': signal.target_price,
-                        'potential_return': (signal.target_price - signal.price) / signal.price * 100 if signal.price > 0 else 0,
-                        'strategy': signal.strategy,
-                        'reasoning_summary': signal.reasoning[:150] + "..." if len(signal.reasoning) > 150 else signal.reasoning,
-                        'market_specific': {
-                            'buffett_score': signal.buffett_score,
-                            'lynch_score': signal.lynch_score,
-                            'yen_signal': signal.yen_signal,
-                            'stock_type': signal.stock_type,
-                            'project_quality_score': signal.project_quality_score,
-                            'market_cycle': signal.market_cycle,
-                            'btc_correlation': signal.btc_correlation
-                        }
-                    }
-                    for i, signal in enumerate(global_top_picks)
-                ],
-                'diversification_analysis': {
-                    'market_diversification_score': market_diversity,
-                    'sector_diversification_score': sector_diversity,
-                    'sector_distribution': sector_distribution,
-                    'market_allocation': self.market_allocation,
-                    'concentration_risk': max(sector_distribution.values()) / max(1, sum(sector_distribution.values())) if sector_distribution else 0
-                },
-                'risk_metrics': {
-                    'avg_confidence': avg_confidence,
-                    'confidence_volatility': confidence_std,
-                    'max_position_size': self.max_position_size,
-                    'daily_trades_utilization': self.daily_trades_count / self.max_daily_trades * 100,
-                    'error_rate': sum([len(summary.errors) for summary in market_summaries.values()]) / len(market_summaries) * 100,
-                    'auto_execution': self.auto_execution,
-                    'paper_trading': self.paper_trading,
-                    'estimated_portfolio_risk': avg_confidence * market_diversity  # 간단한 리스크 점수
-                },
-                'session_statistics': {
-                    'start_time': self.session_start_time.isoformat(),
-                    'uptime_hours': uptime_hours,
-                    'total_signals_generated': self.total_signals_generated,
-                    'analysis_frequency': self.analysis_count / max(0.1, uptime_hours),
-                    'session_stats': self.session_stats,
-                    'win_rate': self.session_stats['winning_trades'] / max(1, self.session_stats['total_trades']) * 100
-                },
-                'system_health': {
-                    'shutdown_requested': self.shutdown_requested,
-                    'module_availability': {
-                        'us_strategy': US_STRATEGY_AVAILABLE and self.us_strategy is not None,
-                        'jp_strategy': JP_STRATEGY_AVAILABLE and self.jp_strategy is not None,
-                        'coin_strategy': COIN_STRATEGY_AVAILABLE and self.coin_strategy is not None,
-                        'notifier': NOTIFIER_AVAILABLE,
-                        'scheduler': SCHEDULER_AVAILABLE,
-                        'trading': TRADING_AVAILABLE
-                    },
-                    'config_status': {
-                        'config_file': self.config_path,
-                        'yaml_available': YAML_AVAILABLE,
-                        'pandas_available': PANDAS_AVAILABLE,
-                        'dotenv_available': DOTENV_AVAILABLE
-                    }
-                }
-            }
-            
-            return report
-            
-        except Exception as e:
-            self.logger.error(f"❌ 통합 리포트 생성 실패: {e}")
-            return {
-                "error": f"리포트 생성 실패: {str(e)}",
-                "timestamp": datetime.now().isoformat(),
-                "basic_summary": {
-                    "markets": len(market_summaries),
-                    "total_analyzed": sum([s.total_analyzed for s in market_summaries.values()]),
-                    "total_buy_signals": sum([s.buy_signals for s in market_summaries.values()])
-                }
-            }
+                print("사용법: python core.py config <key> <value>")
+                
+        else:
+            print("퀸트프로젝트 CLI 사용법:")
+            print("  python core.py analyze              # 전체 4대 시장 분석")
+            print("  python core.py analyze:crypto       # 암호화폐만 분석")
+            print("  python core.py analyze:us           # 미국주식만 분석")
+            print("  python core.py monitor 30           # 30분 간격 실시간 모니터링")
+            print("  python core.py status               # 시스템 상태 확인")
+            print("  python core.py portfolio            # 포트폴리오 현황")
+            print("  python core.py config demo_mode false  # 설정 변경")
+    else:
+        # 기본 실행
+        asyncio.run(main())
 
-    def get_system_status(self) -> Dict:
-        """시스템 상태 조회 (개선된 버전)"""
-        try:
-            uptime = (datetime.now() - self.session_start_time).total_seconds()
-            
-            return {
-                'system_info': {
-                    'status': 'running' if not self.shutdown_requested else 'shutting_down',
-                    'version': '6.0.0',
-                    'uptime_seconds': uptime,
-                    'uptime_hours': uptime / 3600,
-                    'start_time': self.session_start_time.isoformat(),
-                    'current_time': datetime.now().isoformat(),
-                    'current_weekday': datetime.now().strftime('%A'),
-                    'force_test_mode': self.force_test
-                },
-                'strategies': {
-                    'enabled_strategies': {
-                        'us_strategy': self.us_strategy is not None,
-                        'jp_strategy': self.jp_strategy is not None,
-                        'coin_strategy': self.coin_strategy is not None
-                    },
-                    'today_strategies': self.today_strategies,
-                    'available_modules': {
-                        'us_strategy_module': US_STRATEGY_AVAILABLE,
-                        'jp_strategy_module': JP_STRATEGY_AVAILABLE,
-                        'coin_strategy_module': COIN_STRATEGY_AVAILABLE,
-                        'notifier_module': NOTIFIER_AVAILABLE,
-                        'scheduler_module': SCHEDULER_AVAILABLE,
-                        'trading_module': TRADING_AVAILABLE
-                    }
-                },
-                'trading_status': {
-                    'auto_execution': self.auto_execution,
-                    'paper_trading': self.paper_trading,
-                    'daily_trades_count': self.daily_trades_count,
-                    'max_daily_trades': self.max_daily_trades,
-                    'trades_remaining': self.max_daily_trades - self.daily_trades_count,
-                    'trading_utilization': self.daily_trades_count / self.max_daily_trades * 100
-                },
-                'analysis_status': {
-                    'total_signals_generated': self.total_signals_generated,
-                    'analysis_count': self.analysis_count,
-                    'last_analysis_time': self.last_analysis_time.isoformat() if self.last_analysis_time else None,
-                    'signals_per_analysis': self.total_signals_generated / max(1, self.analysis_count)
-                },
-                'portfolio_config': {
-                    'market_allocation': self.market_allocation,
-                    'max_position_size': self.max_position_size,
-                    'stop_loss': self.stop_loss,
-                    'take_profit': self.take_profit
-                },
-                'session_performance': self.session_stats,
-                'system_dependencies': {
-                    'yaml_available': YAML_AVAILABLE,
-                    'pandas_available': PANDAS_AVAILABLE,
-                    'dotenv_available': DOTENV_AVAILABLE,
-                    'config_file_exists': Path(self.config_path).exists()
-                },
-                'health_indicators': {
-                    'memory_usage_ok': True,  # 향후 구현
-                    'disk_space_ok': True,    # 향후 구현
-                    'network_ok': True,       # 향후 구현
-                    'all_systems_ok': not self.shutdown_requested
-                }
-            }
-            
-        except Exception as e:
-            self.logger.error(f"시스템 상태 조회 실패: {e}")
-            return {
-                'error': str(e),
-                'timestamp': datetime.now().isoformat(),
-                'basic_status': {
-                    'uptime_hours': (datetime.now() - self.session_start_time).total_seconds() / 3600,
-                    'daily_trades': self.daily_trades_count,
-                    'shutdown_requested': self.shutdown_requested
-                }
-            }
+# ============================================================================
+# 🎯 실행부
+# ============================================================================
+if __name__ == "__main__":
+    # CLI 모드 실행
+    cli_interface()
+
+# ============================================================================
+# 📋 퀸트프로젝트 CORE.PY 특징 요약
+# ============================================================================
+"""
+🏆 퀸트프로젝트 CORE.PY 완전체 특징:
+
+🔧 혼자 보수유지 가능한 아키텍처:
+   ✅ 설정 기반 모듈화 (quint_config.yaml)
+   ✅ 자동 설정 생성 및 백업
+   ✅ 런타임 설정 변경 지원
+   ✅ 환경 검증 및 이슈 진단
+
+🌍 4대 시장 완전 통합:
+   ✅ 🇺🇸 미국주식: 전설적 퀸트 V6.0 (IBKR 호환)
+   ✅ 🪙 업비트: 전설급 5대 시스템 (Neural Quality + Quantum Cycle)
+   ✅ 🇯🇵 일본주식: YEN-HUNTER (TOPIX+JPX400 통합)
+   ✅ 🇮🇳 인도주식: 5대 투자거장 + 14개 기술지표
+
+⚡ 완전 자동화 시스템:
+   ✅ 병렬 시장 분석 (asyncio 기반)
+   ✅ 포트폴리오 최적화 및 리밸런싱
+   ✅ 실시간 모니터링 및 알림
+   ✅ 자동 백업 및 복구
+
+🛡️ 통합 리스크 관리:
+   ✅ 시장별 할당 한도 관리
+   ✅ 종목별 집중도 제한
+   ✅ 동적 손절/익절 시스템
+   ✅ 상관관계 기반 분산투자
+
+💎 사용법:
+   - 설치: pip install -r requirements.txt
+   - 실행: python core.py analyze
+   - 모니터링: python core.py monitor 30
+   - 설정: python core.py config demo_mode false
+
+🚀 확장성:
+   ✅ 새로운 시장 추가 용이
+   ✅ 전략 가중치 실시간 조정
+   ✅ API 연동 모듈화
+   ✅ 백테스팅 및 성과 분석 준비
+
+🎯 핵심 철학:
+   - 단순함이 최고다 (Simple is Best)
+   - 설정으로 모든 것을 제어한다
+   - 장애시 자동 복구한다
+   - 혼자서도 충분히 관리할 수 있다
+
+🏆 퀸트프로젝트 = 4대 시장 완전 정복!
+"""
