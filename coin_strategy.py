@@ -154,15 +154,15 @@ class QuantumCycleMatrix:
             return self._default_cycle_state()
     
     def _detect_macro_cycle(self, data: pd.DataFrame) -> str:
-        """거시 사이클 (60일 기준)"""
+        """거시 사이클 (14일 기준)"""
         try:
-            ma30 = data['close'].rolling(30).mean()
-            ma60 = data['close'].rolling(60).mean()
+            ma7 = data['close'].rolling(7).mean()
+            ma14 = data['close'].rolling(14).mean()
             current_price = data['close'].iloc[-1]
             
-            if current_price > ma30.iloc[-1] > ma60.iloc[-1]:
+            if current_price > ma7.iloc[-1] > ma14.iloc[-1]:
                 return 'bull'
-            elif current_price < ma30.iloc[-1] < ma60.iloc[-1]:
+            elif current_price < ma7.iloc[-1] < ma14.iloc[-1]:
                 return 'bear'
             else:
                 return 'sideways'
@@ -170,16 +170,16 @@ class QuantumCycleMatrix:
             return 'sideways'
     
     def _detect_meso_cycle(self, data: pd.DataFrame) -> str:
-        """중기 사이클 (14일 기준)"""
+        """중기 사이클 (7일 기준)"""
         try:
-            high_14 = data['high'].rolling(14).max().iloc[-1]
-            low_14 = data['low'].rolling(14).min().iloc[-1]
+            high_7 = data['high'].rolling(7).max().iloc[-1]
+            low_7 = data['low'].rolling(7).min().iloc[-1]
             current_price = data['close'].iloc[-1]
             
-            if high_14 == low_14:  # 0으로 나누기 방지
+            if high_7 == low_7:  # 0으로 나누기 방지
                 return 'range'
                 
-            position = (current_price - low_14) / (high_14 - low_14)
+            position = (current_price - low_7) / (high_7 - low_7)
             
             if position > 0.7:
                 return 'uptrend'
