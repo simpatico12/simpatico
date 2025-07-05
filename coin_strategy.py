@@ -461,30 +461,30 @@ class DiamondHandAlgorithm:
                 price * 0.90     # -10% 추가 진입
             ]
             
-# ✅ 2주 40% 전략 (품질 점수 반영)
-if quality_score >= 0.8:  # 고품질 (BTC, ETH급)
-    take_profits = [
-        price * 1.18,  # 1차 익절 (+18%)
-        price * 1.30,  # 2차 익절 (+30%)
-        price * 1.50   # 3차 익절 (+50%)
-    ]
-    stop_loss = price * 0.90  # -10% 손절
+            # ✅ 2주 40% 전략 (품질 점수 반영)
+            if quality_score >= 0.8:  # 고품질 (BTC, ETH급)
+                take_profits = [
+                    price * 1.18,  # 1차 익절 (+18%)
+                    price * 1.30,  # 2차 익절 (+30%)
+                    price * 1.50   # 3차 익절 (+50%)
+            ]
+            stop_loss = price * 0.90  # -10% 손절
 
-elif quality_score >= 0.6:  # 중품질
-    take_profits = [
-        price * 1.15,  # 1차 익절 (+15%)
-        price * 1.25,  # 2차 익절 (+25%)
-        price * 1.40   # 3차 익절 (+40%)
-    ]
-    stop_loss = price * 0.92  # -8% 손절
+            elif quality_score >= 0.6:  # 중품질
+                take_profits = [
+                    price * 1.15,  # 1차 익절 (+15%)
+                    price * 1.25,  # 2차 익절 (+25%)
+                    price * 1.40   # 3차 익절 (+40%)
+            ]
+            stop_loss = price * 0.92  # -8% 손절
 
-else:  # 저품질 (보수적)
-    take_profits = [
-        price * 1.12,  # 1차 익절 (+12%)
-        price * 1.20,  # 2차 익절 (+20%)
-        price * 1.30   # 3차 익절 (+30%)
-    ]
-    stop_loss = price * 0.92  # -8% 손절
+            else:  # 저품질
+                take_profits = [
+                    price * 1.12,  # 1차 익절 (+12%)
+                    price * 1.20,  # 2차 익절 (+20%)
+                    price * 1.30   # 3차 익절 (+30%)
+            ]
+            stop_loss = price * 0.95  # -5% 손절
             
             return {
                 'symbol': symbol,
