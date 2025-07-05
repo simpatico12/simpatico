@@ -746,8 +746,27 @@ class ExitStrategyEngine:
                 'quantity': position.total_quantity,
                 'details': f'손절 실행: {current_price} <= {position.stop_loss}'
             }
-        
-        # 2. 익절 체크 (단계별)
+           # 2. 시간 기반 매도 (2주 = 14일)
+    holding_days = (datetime.now() - position.created_at).days
+    if holding_days >= 14:
+        if profit_ratio > 0.05:  # 5% 이상 수익시
+            return {
+                'action': 'sell_all',
+                'reason': 'time_limit_profit',
+                'price': current_price,
+                'quantity': position.total_quantity,
+                'details': f'2주 완료: {holding_days}일, {profit_ratio*100:.1f}% 수익으로 매도'
+            }
+        elif holding_days >= 16:  # 2주 초과시 무조건
+            return {
+                'action': 'sell_all',
+                'reason': 'time_limit_force',
+                'price': current_price,
+                'quantity': position.total_quantity,
+                'details': f'강제매도: {holding_days}일 초과'
+            }
+
+        # 3. 익절 체크 (단계별)
         profit_ratio = (current_price - position.avg_price) / position.avg_price
         
         # 1차 익절 (20% 매도)
