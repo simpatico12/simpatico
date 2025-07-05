@@ -1,1535 +1,2079 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-# =====================================
-# 🏆 최고퀸트프로젝트 - 통합 스케줄링 시스템
-# =====================================
-# 
-# 완전 통합 스케줄러:
-# - 📅 APScheduler 기반 작업 스케줄링
-# - 🌍 글로벌 시장 시간대 관리 (US/JP/COIN)
-# - 📊 백테스팅 자동 실행 연동
-# - ⏰ 크론/인터벌/단발성 작업 지원
-# - 🔔 텔레그램/슬랙 알림 통합
-# - 🛡️ 오류 방지 및 자동 복구
-# - ⚙️ 설정 파일 완전 연동
-#
-# 설정 파일: settings.yaml 
-# 백테스팅 연동: unified_backtester.py
-#
-# Author: 최고퀸트팀
-# Version: 3.0.0 (통합 + 안정성 강화)
-# Project: 최고퀸트프로젝트
-# =====================================
+🕐 퀸트프로젝트 - 4대 시장 통합 스케줄러 SCHEDULER.PY
+================================================================
+
+🌟 핵심 특징:
+- 📊 시장별 최적 시간 자동 스캔 (미국/한국/일본/인도)
+- 🔄 포트폴리오 자동 리밸런싱 시스템
+- 🛡️ 실시간 리스크 모니터링 & 긴급 정지
+- 📈 성과 분석 & 일일/주간 리포트 자동 생성
+- 🚨 텔레그램/이메일 자동 알림 시스템
+- 💾 자동 백업 & 시스템 헬스체크
+
+⚡ 혼자 보수유지 가능한 완전 자동화 아키텍처
+💎 cron 표현식 + 시장별 최적 타이밍
+🛡️ 장애 감지 및 자동 복구 시스템
+
+Author: 퀸트팀 | Version: ULTIMATE
+Date: 2024.12
 """
 
 import asyncio
 import logging
-import warnings
-import yaml
 import os
-import pytz
+import sys
 from datetime import datetime, timedelta, time
-from typing import Dict, List, Optional, Any, Tuple, Union, Callable
-from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Callable, Any
+from dataclasses import dataclass, asdict
+import json
+import yaml
 from pathlib import Path
-import traceback
+import pytz
+import schedule
+import threading
+import time as time_module
+from crontab import CronTab
+from collections import defaultdict
 
-# APScheduler 임포트
+# 퀸트프로젝트 모듈
 try:
-    from apscheduler.schedulers.background import BackgroundScheduler
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    from apscheduler.triggers.cron import CronTrigger
-    from apscheduler.triggers.interval import IntervalTrigger
-    from apscheduler.triggers.date import DateTrigger
-    from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
-    APSCHEDULER_AVAILABLE = True
+    from core import QuintProjectMaster, config
+    from utils import QuintLogger, notification, backup, performance_analyzer
+    from notifier import QuintNotificationManager
+    QUINT_MODULES_AVAILABLE = True
 except ImportError:
-    APSCHEDULER_AVAILABLE = False
+    QUINT_MODULES_AVAILABLE = False
+    logging.warning("퀸트프로젝트 모듈 일부 누락 - 기본 기능만 사용")
 
-# 경고 숨기기
-warnings.filterwarnings('ignore')
-
-# 설정 로드
+# 선택적 import
 try:
-    from dotenv import load_dotenv
-    load_dotenv()
+    import telegram
+    TELEGRAM_AVAILABLE = True
 except ImportError:
-    pass
-
-# 프로젝트 모듈들 (선택적)
-try:
-    from utils import TimeZoneManager, ScheduleUtils, get_config
-    UTILS_AVAILABLE = True
-except ImportError:
-    UTILS_AVAILABLE = False
+    TELEGRAM_AVAILABLE = False
 
 try:
-    from notifier import send_schedule_notification, send_system_alert
-    NOTIFIER_AVAILABLE = True
+    import pandas as pd
+    import numpy as np
+    PANDAS_AVAILABLE = True
 except ImportError:
-    NOTIFIER_AVAILABLE = False
+    PANDAS_AVAILABLE = False
 
-try:
-    from unified_backtester import UnifiedBacktestEngine, BacktestConfig
-    BACKTESTER_AVAILABLE = True
-except ImportError:
-    BACKTESTER_AVAILABLE = False
-
-# 로깅 설정
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('scheduler.log', encoding='utf-8')
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# ================================================================================================
-# 📊 데이터 모델 및 설정
-# ================================================================================================
-
+# ============================================================================
+# 📊 스케줄 작업 데이터 클래스
+# ============================================================================
 @dataclass
-class TradingSession:
-    """거래 세션 정보"""
-    market: str
-    start_time: time
-    end_time: time
-    timezone: str
-    is_active: bool = True
-    session_type: str = "regular"  # regular, premarket, aftermarket, 24/7
+class ScheduledTask:
+    """스케줄된 작업 정보"""
+    name: str
+    description: str
+    cron_expression: str
+    function: Callable
+    enabled: bool = True
+    last_run: Optional[datetime] =         result = await self.executor.execute_task(task)
+        logging.info(f"수동 실행 완료: {task_name} - {result.success}")
+        return result
     
-    def __post_init__(self):
-        """데이터 검증"""
-        if self.session_type != "24/7" and self.start_time >= self.end_time:
-            logger.warning(f"⚠️ {self.market} 세션 시간 오류: {self.start_time} >= {self.end_time}")
-
-@dataclass
-class ScheduleEvent:
-    """스케줄 이벤트"""
-    event_type: str  # market_open, market_close, strategy_start, backtest, notification
-    market: str = ""
-    timestamp: datetime = field(default_factory=datetime.now)
-    strategies: List[str] = field(default_factory=list)
-    description: str = ""
-    priority: str = "normal"  # low, normal, high, critical
-    callback: Optional[Callable] = None
+    def get_task_status(self, task_name: str = None) -> Dict:
+        """작업 상태 조회"""
+        if task_name:
+            if task_name not in self.tasks:
+                return {'error': f'작업 없음: {task_name}'}
+            
+            task = self.tasks[task_name]
+            stats = self.executor.get_task_statistics(task_name)
+            
+            return {
+                'task': task.to_dict(),
+                'statistics': stats,
+                'is_running': task_name in self.executor.running_tasks
+            }
+        else:
+            # 전체 작업 상태
+            all_status = {}
+            for name, task in self.tasks.items():
+                stats = self.executor.get_task_statistics(name)
+                all_status[name] = {
+                    'enabled': task.enabled,
+                    'last_run': task.last_run.isoformat() if task.last_run else None,
+                    'run_count': task.run_count,
+                    'error_count': task.error_count,
+                    'success_rate': stats.get('success_rate', 0),
+                    'is_running': name in self.executor.running_tasks
+                }
+            
+            return {
+                'total_tasks': len(self.tasks),
+                'running_tasks': len(self.executor.running_tasks),
+                'enabled_tasks': sum(1 for t in self.tasks.values() if t.enabled),
+                'tasks': all_status
+            }
     
-    def __post_init__(self):
-        """기본값 설정"""
-        if not self.description:
-            self.description = f"{self.market} {self.event_type}"
-
-class SafeSchedulerConfig:
-    """안전한 스케줄러 설정 로더"""
+    def start(self):
+        """스케줄러 시작"""
+        if self.running:
+            logging.warning("스케줄러가 이미 실행 중입니다")
+            return
+        
+        self.running = True
+        
+        def scheduler_worker():
+            logging.info("🚀 퀸트프로젝트 스케줄러 시작")
+            
+            while self.running:
+                try:
+                    schedule.run_pending()
+                    time_module.sleep(1)
+                except Exception as e:
+                    logging.error(f"스케줄러 워커 오류: {e}")
+                    time_module.sleep(5)
+            
+            logging.info("⏹️ 퀸트프로젝트 스케줄러 중지")
+        
+        self.scheduler_thread = threading.Thread(target=scheduler_worker, daemon=True)
+        self.scheduler_thread.start()
+        
+        logging.info(f"✅ 스케줄러 시작 완료 ({len(self.tasks)}개 작업 등록)")
     
-    def __init__(self, config_path: str = "settings.yaml"):
-        self.config_path = Path(config_path)
-        self.config = self._load_config()
-        self.schedule_config = self.config.get('schedule', {})
-        self.trading_config = self.config.get('trading', {})
+    def stop(self):
+        """스케줄러 중지"""
+        self.running = False
+        
+        if self.scheduler_thread:
+            self.scheduler_thread.join(timeout=5)
+        
+        # 실행 중인 작업들 정리
+        schedule.clear()
+        
+        logging.info("🛑 스케줄러 중지 완료")
     
-    def _load_config(self) -> Dict:
-        """설정 파일 안전 로드"""
-        try:
-            if self.config_path.exists():
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f)
-                logger.info(f"✅ 스케줄러 설정 로드: {self.config_path}")
-                return config or {}
-            else:
-                logger.warning(f"⚠️ 설정 파일 없음: {self.config_path}, 기본값 사용")
-                return self._get_default_config()
-        except Exception as e:
-            logger.error(f"❌ 설정 파일 로드 실패: {e}")
-            return self._get_default_config()
-    
-    def _get_default_config(self) -> Dict:
-        """기본 설정값"""
+    def get_scheduler_statistics(self) -> Dict:
+        """스케줄러 전체 통계"""
+        total_executions = sum(len([r for r in self.executor.task_history if r.task_name == name]) 
+                              for name in self.tasks.keys())
+        
+        successful_executions = sum(len([r for r in self.executor.task_history 
+                                       if r.task_name == name and r.success]) 
+                                  for name in self.tasks.keys())
+        
         return {
-            'schedule': {
-                'weekly_schedule': {
-                    'monday': ['COIN'],
-                    'tuesday': ['US', 'JP'],
-                    'wednesday': [],
-                    'thursday': ['US', 'JP'],
-                    'friday': ['COIN'],
-                    'saturday': [],
-                    'sunday': []
-                },
-                'force_enabled_strategies': [],
-                'force_disabled_strategies': [],
-                'global_trading_hours': {
-                    'start_hour': 0,
-                    'end_hour': 24
-                },
-                'strategy_restrictions': {},
-                'auto_backtest': {
+            'scheduler_running': self.running,
+            'total_tasks': len(self.tasks),
+            'enabled_tasks': sum(1 for t in self.tasks.values() if t.enabled),
+            'running_tasks': len(self.executor.running_tasks),
+            'total_executions': total_executions,
+            'successful_executions': successful_executions,
+            'success_rate': (successful_executions / total_executions * 100) if total_executions > 0 else 0,
+            'history_size': len(self.executor.task_history)
+        }
+
+# ============================================================================
+# 🛠️ 유틸리티 및 헬퍼 함수들
+# ============================================================================
+class SchedulerUtils:
+    """스케줄러 유틸리티"""
+    
+    @staticmethod
+    def validate_cron_expression(cron: str) -> bool:
+        """cron 표현식 유효성 검증"""
+        try:
+            parts = cron.split()
+            if len(parts) != 5:
+                return False
+            
+            # 간단한 검증 (실제로는 더 정교한 검증 필요)
+            return True
+        except:
+            return False
+    
+    @staticmethod
+    def get_next_run_time(cron: str) -> Optional[datetime]:
+        """다음 실행 시간 계산"""
+        try:
+            # python-crontab 사용
+            from crontab import CronTab
+            cron_obj = CronTab(cron)
+            return datetime.now() + timedelta(seconds=cron_obj.next())
+        except:
+            return None
+    
+    @staticmethod
+    def export_scheduler_config(file_path: str) -> bool:
+        """스케줄러 설정 내보내기"""
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                yaml.dump(scheduler_config.config, f, default_flow_style=False, allow_unicode=True, indent=2)
+            return True
+        except Exception as e:
+            logging.error(f"설정 내보내기 실패: {e}")
+            return False
+    
+    @staticmethod
+    def import_scheduler_config(file_path: str) -> bool:
+        """스케줄러 설정 가져오기"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                new_config = yaml.safe_load(f)
+            
+            if new_config:
+                scheduler_config.config = new_config
+                scheduler_config._save_config()
+                return True
+            
+            return False
+        except Exception as e:
+            logging.error(f"설정 가져오기 실패: {e}")
+            return False
+
+# ============================================================================
+# 🎮 편의 함수들 (외부 호출용)
+# ============================================================================
+async def run_market_scan_now(market: str = 'all'):
+    """시장 스캔 즉시 실행"""
+    scheduler = QuintScheduler()
+    
+    if market == 'all':
+        tasks = ['scan_us_stocks', 'scan_crypto_market', 'scan_japan_stocks', 'scan_india_stocks']
+    elif market == 'us':
+        tasks = ['scan_us_stocks']
+    elif market == 'crypto':
+        tasks = ['scan_crypto_market']
+    elif market == 'japan':
+        tasks = ['scan_japan_stocks']
+    elif market == 'india':
+        tasks = ['scan_india_stocks']
+    else:
+        print(f"❌ 지원되지 않는 시장: {market}")
+        return
+    
+    results = {}
+    for task_name in tasks:
+        if task_name in scheduler.tasks:
+            try:
+                result = await scheduler.run_task_now(task_name)
+                results[task_name] = result.success
+                print(f"{'✅' if result.success else '❌'} {task_name}: {result.execution_time:.1f}초")
+            except Exception as e:
+                results[task_name] = False
+                print(f"❌ {task_name}: {e}")
+    
+    return results
+
+def get_scheduler_status():
+    """스케줄러 상태 조회"""
+    scheduler = QuintScheduler()
+    status = scheduler.get_scheduler_statistics()
+    
+    print("\n🕐 퀸트프로젝트 스케줄러 상태:")
+    print(f"   실행 상태: {'🟢 실행중' if status['scheduler_running'] else '🔴 중지'}")
+    print(f"   등록된 작업: {status['total_tasks']}개")
+    print(f"   활성화된 작업: {status['enabled_tasks']}개")
+    print(f"   실행중인 작업: {status['running_tasks']}개")
+    print(f"   성공률: {status['success_rate']:.1f}%")
+    print(f"   총 실행 횟수: {status['total_executions']}회")
+    
+    return status
+
+def list_scheduled_tasks():
+    """스케줄된 작업 목록"""
+    scheduler = QuintScheduler()
+    all_status = scheduler.get_task_status()
+    
+    print("\n📋 스케줄된 작업 목록:")
+    
+    # 카테고리별 그룹화
+    categories = {
+        '시장 스캔': ['scan_us_stocks', 'scan_crypto_market', 'scan_japan_stocks', 'scan_india_stocks'],
+        '포트폴리오': ['rebalance_portfolio', 'check_portfolio_performance'],
+        '리스크 관리': ['monitor_real_time_risk', 'generate_daily_risk_report'],
+        '리포트': ['generate_daily_report', 'generate_weekly_report', 'generate_monthly_report'],
+        '시스템 유지보수': ['system_backup', 'system_cleanup', 'health_check']
+    }
+    
+    for category, task_names in categories.items():
+        print(f"\n📊 {category}:")
+        for task_name in task_names:
+            if task_name in all_status['tasks']:
+                task_info = all_status['tasks'][task_name]
+                status_icon = '🟢' if task_info['enabled'] else '🔴'
+                run_info = f"({task_info['run_count']}회 실행)" if task_info['run_count'] > 0 else "(미실행)"
+                print(f"   {status_icon} {task_name} {run_info}")
+
+def enable_task(task_name: str):
+    """작업 활성화"""
+    scheduler = QuintScheduler()
+    scheduler.enable_task(task_name)
+    print(f"✅ 작업 활성화: {task_name}")
+
+def disable_task(task_name: str):
+    """작업 비활성화"""
+    scheduler = QuintScheduler()
+    scheduler.disable_task(task_name)
+    print(f"🔴 작업 비활성화: {task_name}")
+
+def update_schedule(task_name: str, new_cron: str):
+    """작업 스케줄 변경"""
+    if not SchedulerUtils.validate_cron_expression(new_cron):
+        print(f"❌ 잘못된 cron 표현식: {new_cron}")
+        return
+    
+    scheduler = QuintScheduler()
+    if task_name in scheduler.tasks:
+        scheduler.tasks[task_name].cron_expression = new_cron
+        print(f"✅ 스케줄 변경: {task_name} -> {new_cron}")
+        
+        # 설정 파일에도 반영
+        config_key = f"market_scan.{task_name.replace('scan_', '').replace('_stocks', '').replace('_market', '')}.cron"
+        scheduler_config.update(config_key, new_cron)
+    else:
+        print(f"❌ 존재하지 않는 작업: {task_name}")
+
+def backup_scheduler_config():
+    """스케줄러 설정 백업"""
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_file = f"scheduler_config_backup_{timestamp}.yaml"
+    
+    if SchedulerUtils.export_scheduler_config(backup_file):
+        print(f"✅ 스케줄러 설정 백업 완료: {backup_file}")
+    else:
+        print("❌ 스케줄러 설정 백업 실패")
+
+# ============================================================================
+# 🎯 메인 실행 함수
+# ============================================================================
+async def main():
+    """스케줄러 메인 실행"""
+    print("🕐" + "="*78)
+    print("🚀 퀸트프로젝트 - 4대 시장 통합 스케줄러 SCHEDULER.PY")
+    print("="*80)
+    print("📊 시장별 최적 시간 자동 스캔 | 🔄 포트폴리오 자동 리밸런싱")
+    print("🛡️ 실시간 리스크 모니터링 | 📈 성과 분석 & 리포트 자동 생성")
+    print("="*80)
+    
+    # 스케줄러 초기화 및 시작
+    print("\n🔧 스케줄러 초기화 중...")
+    scheduler = QuintScheduler()
+    
+    # 상태 확인
+    print(f"\n📊 스케줄러 설정:")
+    print(f"   🇺🇸 미국주식: 화요일, 목요일 오후 11시 (장시작 30분 전)")
+    print(f"   🪙 암호화폐: 월요일, 금요일 오전9시, 밤9시")
+    print(f"   🇯🇵 일본주식: 화요일, 목요일 오전 8시")
+    print(f"   🇮🇳 인도주식: 수요일 낮 12시")
+    
+    try:
+        # 스케줄러 시작
+        scheduler.start()
+        
+        # 테스트 실행 (선택적)
+        print(f"\n🧪 테스트 실행을 하시겠습니까? (y/n): ", end="")
+        
+        # 실제 운영에서는 테스트 없이 바로 시작
+        test_run = False  # CLI에서는 False로 설정
+        
+        if test_run:
+            print("🧪 시장 스캔 테스트 실행 중...")
+            test_results = await run_market_scan_now('crypto')  # 암호화폐만 테스트
+            
+            success_count = sum(1 for success in test_results.values() if success)
+            print(f"✅ 테스트 완료: {success_count}/{len(test_results)}개 성공")
+        
+        print(f"\n✅ 스케줄러가 정상적으로 시작되었습니다")
+        print(f"📊 상태 확인: get_scheduler_status()")
+        print(f"📋 작업 목록: list_scheduled_tasks()")
+        print(f"🚨 즉시 실행: run_market_scan_now('crypto')")
+        
+        # 무한 실행 (실제 운영)
+        print(f"\n🔄 스케줄러가 백그라운드에서 실행 중입니다...")
+        print(f"   Ctrl+C로 종료하세요\n")
+        
+        while True:
+            await asyncio.sleep(60)  # 1분마다 체크
+            
+            # 주기적 상태 로그
+            status = scheduler.get_scheduler_statistics()
+            if status['total_executions'] > 0:
+                logging.info(f"스케줄러 상태 - 성공률: {status['success_rate']:.1f}%, "
+                           f"실행중: {status['running_tasks']}개")
+        
+    except KeyboardInterrupt:
+        print(f"\n👋 스케줄러를 종료합니다...")
+        scheduler.stop()
+        
+    except Exception as e:
+        print(f"\n❌ 스케줄러 실행 오류: {e}")
+        logging.error(f"스케줄러 메인 실행 실패: {e}")
+        scheduler.stop()
+
+# ============================================================================
+# 🎮 CLI 인터페이스
+# ============================================================================
+def cli_interface():
+    """간단한 CLI 인터페이스"""
+    if len(sys.argv) > 1:
+        command = sys.argv[1].lower()
+        
+        if command == 'start':
+            # 스케줄러 시작
+            asyncio.run(main())
+            
+        elif command == 'status':
+            # 스케줄러 상태 확인
+            get_scheduler_status()
+            
+        elif command == 'list':
+            # 작업 목록
+            list_scheduled_tasks()
+            
+        elif command == 'scan':
+            # 즉시 시장 스캔
+            market = sys.argv[2] if len(sys.argv) > 2 else 'all'
+            asyncio.run(run_market_scan_now(market))
+            
+        elif command == 'enable':
+            # 작업 활성화
+            if len(sys.argv) > 2:
+                enable_task(sys.argv[2])
+            else:
+                print("사용법: python scheduler.py enable <task_name>")
+                
+        elif command == 'disable':
+            # 작업 비활성화
+            if len(sys.argv) > 2:
+                disable_task(sys.argv[2])
+            else:
+                print("사용법: python scheduler.py disable <task_name>")
+                
+        elif command == 'schedule':
+            # 스케줄 변경
+            if len(sys.argv) >= 4:
+                task_name, new_cron = sys.argv[2], ' '.join(sys.argv[3:])
+                update_schedule(task_name, new_cron)
+            else:
+                print("사용법: python scheduler.py schedule <task_name> <cron_expression>")
+                
+        elif command == 'backup':
+            # 설정 백업
+            backup_scheduler_config()
+            
+        elif command == 'test':
+            # 테스트 모드
+            async def test_mode():
+                print("🧪 퀸트프로젝트 스케줄러 테스트 모드")
+                
+                # 각 시장별 스캔 테스트
+                markets = ['crypto', 'us', 'japan', 'india']
+                for market in markets:
+                    print(f"\n📊 {market.upper()} 시장 스캔 테스트...")
+                    result = await run_market_scan_now(market)
+                    await asyncio.sleep(2)  # 2초 간격
+                
+                print("\n✅ 전체 테스트 완료")
+            
+            asyncio.run(test_mode())
+            
+        else:
+            print("퀸트프로젝트 스케줄러 CLI 사용법:")
+            print("  python scheduler.py start              # 스케줄러 시작")
+            print("  python scheduler.py status             # 상태 확인")
+            print("  python scheduler.py list               # 작업 목록")
+            print("  python scheduler.py scan crypto        # 즉시 스캔 (crypto/us/japan/india/all)")
+            print("  python scheduler.py enable <task>      # 작업 활성화")
+            print("  python scheduler.py disable <task>     # 작업 비활성화")
+            print("  python scheduler.py schedule <task> <cron>  # 스케줄 변경")
+            print("  python scheduler.py backup             # 설정 백업")
+            print("  python scheduler.py test               # 테스트 모드")
+            print("\n📊 최적화된 스케줄:")
+            print("  🇺🇸 미국주식: 화목 23시 | 🪙 암호화폐: 월금 9시,21시")
+            print("  🇯🇵 일본주식: 화목 8시  | 🇮🇳 인도주식: 수요일 12시")
+    else:
+        # 기본 실행 - 스케줄러 시작
+        asyncio.run(main())
+
+# ============================================================================
+# 📊 스케줄러 모니터링 대시보드 (간단 버전)
+# ============================================================================
+class SchedulerDashboard:
+    """스케줄러 모니터링 대시보드"""
+    
+    def __init__(self, scheduler: QuintScheduler):
+        self.scheduler = scheduler
+    
+    def print_live_status(self):
+        """실시간 상태 출력"""
+        import os
+        
+        while True:
+            try:
+                # 화면 클리어 (크로스 플랫폼)
+                os.system('cls' if os.name == 'nt' else 'clear')
+                
+                print("🕐" + "="*60)
+                print("🏆 퀸트프로젝트 스케줄러 실시간 모니터링")
+                print("="*62)
+                
+                # 현재 시간
+                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print(f"⏰ 현재 시간: {current_time}")
+                
+                # 전체 상태
+                stats = self.scheduler.get_scheduler_statistics()
+                print(f"📊 스케줄러: {'🟢 실행중' if stats['scheduler_running'] else '🔴 중지'}")
+                print(f"📋 작업: {stats['enabled_tasks']}/{stats['total_tasks']}개 활성화")
+                print(f"⚡ 실행중: {stats['running_tasks']}개")
+                print(f"📈 성공률: {stats['success_rate']:.1f}%")
+                
+                # 다음 실행 예정 작업들
+                print(f"\n🔜 다음 실행 예정:")
+                
+                # 요일별 스케줄 표시
+                today = datetime.now().weekday()  # 0=월요일
+                weekdays = ['월', '화', '수', '목', '금', '토', '일']
+                
+                schedule_info = {
+                    1: "🇺🇸🇯🇵 미국/일본 스캔 (23시/8시)",  # 화요일
+                    2: "🇮🇳 인도 스캔 (12시)",            # 수요일  
+                    3: "🇺🇸🇯🇵 미국/일본 스캔 (23시/8시)",  # 목요일
+                    0: "🪙 암호화폐 스캔 (9시/21시)",       # 월요일
+                    4: "🪙 암호화폐 스캔 (9시/21시)"        # 금요일
+                }
+                
+                for i in range(7):
+                    day_idx = (today + i) % 7
+                    day_name = weekdays[day_idx]
+                    marker = "👉" if i == 0 else "  "
+                    
+                    if day_idx in schedule_info:
+                        print(f"{marker} {day_name}요일: {schedule_info[day_idx]}")
+                    else:
+                        print(f"{marker} {day_name}요일: 휴무")
+                
+                # 최근 실행 결과
+                print(f"\n📊 최근 실행 결과:")
+                recent_tasks = self.scheduler.executor.task_history[-5:] if self.scheduler.executor.task_history else []
+                
+                for task_result in recent_tasks:
+                    status_icon = "✅" if task_result.success else "❌"
+                    time_str = task_result.timestamp.strftime('%H:%M:%S')
+                    print(f"   {status_icon} {time_str} {task_result.task_name} ({task_result.execution_time:.1f}s)")
+                
+                if not recent_tasks:
+                    print("   (아직 실행된 작업이 없습니다)")
+                
+                print(f"\n💡 명령어: Ctrl+C로 종료")
+                print("="*62)
+                
+                time_module.sleep(30)  # 30초마다 업데이트
+                
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                print(f"대시보드 오류: {e}")
+                time_module.sleep(5)
+
+# ============================================================================
+# 🔧 성능 최적화 및 안정성 강화
+# ============================================================================
+class SchedulerOptimizer:
+    """스케줄러 성능 최적화"""
+    
+    def __init__(self, scheduler: QuintScheduler):
+        self.scheduler = scheduler
+        self.performance_metrics = []
+    
+    def analyze_performance(self) -> Dict:
+        """성능 분석"""
+        task_stats = {}
+        
+        for task_name, task in self.scheduler.tasks.items():
+            stats = self.scheduler.executor.get_task_statistics(task_name)
+            
+            if stats:
+                task_stats[task_name] = {
+                    'avg_execution_time': stats.get('avg_execution_time', 0),
+                    'success_rate': stats.get('success_rate', 0),
+                    'failure_count': stats.get('failure_count', 0)
+                }
+        
+        # 성능 이슈 감지
+        issues = []
+        for task_name, stats in task_stats.items():
+            if stats['avg_execution_time'] > 120:  # 2분 이상
+                issues.append(f"{task_name}: 실행시간 과다 ({stats['avg_execution_time']:.1f}초)")
+            
+            if stats['success_rate'] < 80:  # 성공률 80% 미만
+                issues.append(f"{task_name}: 낮은 성공률 ({stats['success_rate']:.1f}%)")
+        
+        return {
+            'task_statistics': task_stats,
+            'performance_issues': issues,
+            'optimization_suggestions': self._get_optimization_suggestions(task_stats)
+        }
+    
+    def _get_optimization_suggestions(self, task_stats: Dict) -> List[str]:
+        """최적화 제안"""
+        suggestions = []
+        
+        slow_tasks = [name for name, stats in task_stats.items() 
+                     if stats['avg_execution_time'] > 60]
+        
+        if slow_tasks:
+            suggestions.append(f"느린 작업들의 타임아웃 증가 고려: {', '.join(slow_tasks)}")
+        
+        failing_tasks = [name for name, stats in task_stats.items() 
+                        if stats['success_rate'] < 90]
+        
+        if failing_tasks:
+            suggestions.append(f"실패율 높은 작업들의 재시도 로직 검토: {', '.join(failing_tasks)}")
+        
+        return suggestions
+
+# ============================================================================
+# 🎯 실행부
+# ============================================================================
+if __name__ == "__main__":
+    # 로깅 설정
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s | %(levelname)s | %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler('scheduler.log', encoding='utf-8')
+        ]
+    )
+    
+    # CLI 모드 실행
+    cli_interface()
+
+# ============================================================================
+# 📋 퀸트프로젝트 SCHEDULER.PY 특징 요약
+# ============================================================================
+"""
+🕐 퀸트프로젝트 SCHEDULER.PY 완전체 특징:
+
+🔧 혼자 보수유지 가능한 아키텍처:
+   ✅ YAML 기반 설정 관리 (scheduler_config.yaml)
+   ✅ cron 표현식 지원 + 요일별 최적화
+   ✅ 자동 에러 복구 및 재시도 시스템
+   ✅ 작업별 타임아웃 및 실행 제한
+
+📊 4대 시장 최적 스케줄링:
+   ✅ 🇺🇸 미국주식: 화목 21시 (장시작 전 최적)
+   ✅ 🪙 암호화폐: 월금 9시,21시 (변동성 고려)
+   ✅ 🇯🇵 일본주식: 화목 8시 (장시작 전 최적)
+   ✅ 🇮🇳 인도주식: 수요일 12시 (장중 최적)
+
+⚡ 완전 자동화 시스템:
+   ✅ 비동기 작업 실행 (TaskExecutor)
+   ✅ 실시간 리스크 모니터링 (5분마다)
+   ✅ 자동 포트폴리오 리밸런싱 (주간)
+   ✅ 일일/주간/월간 리포트 자동 생성
+
+🛡️ 통합 리스크 관리:
+   ✅ 손실률 기반 긴급 정지 시스템
+   ✅ 실시간 성과 모니터링 및 알림
+   ✅ 시스템 헬스체크 (10분마다)
+   ✅ 자동 백업 및 데이터 정리
+
+📱 통합 알림 시스템:
+   ✅ 텔레그램 즉시 알림 (긴급 신호)
+   ✅ 일일/주간 리포트 자동 전송
+   ✅ 리스크 경고 및 긴급 정지 알림
+   ✅ 성과 변동 알림 (±5% 이상)
+
+🎮 사용법:
+   - 시작: python scheduler.py start
+   - 상태: python scheduler.py status
+   - 즉시스캔: python scheduler.py scan crypto
+   - 테스트: python scheduler.py test
+
+🚀 고급 기능:
+   ✅ 실시간 모니터링 대시보드
+   ✅ 성능 분석 및 최적화 제안
+   ✅ CLI 기반 작업 관리
+   ✅ 설정 백업 및 복원
+
+🎯 핵심 철학:
+   - 시장별 최적 타이밍에 자동 실행
+   - 에러 발생시 자동 복구
+   - 중요한 상황은 즉시 알림
+   - 혼자서도 충분히 관리 가능
+
+💎 스케줄 예시:
+   월요일 09:00 - 🪙 암호화폐 스캔
+   화요일 08:00 - 🇯🇵 일본주식 스캔
+   화요일 23:00 - 🇺🇸 미국주식 스캔 (장시작 30분 전)
+   수요일 12:00 - 🇮🇳 인도주식 스캔
+   목요일 08:00 - 🇯🇵 일본주식 스캔
+   목요일 23:00 - 🇺🇸 미국주식 스캔 (장시작 30분 전)
+   금요일 09:00 - 🪙 암호화폐 스캔
+   금요일 21:00 - 🪙 암호화폐 스캔
+   금요일 22:00 - 📊 주간 리밸런싱
+
+🏆 퀸트프로젝트 = 완벽한 자동화 스케줄링!
+"""
+    next_run: Optional[datetime] = None
+    run_count: int = 0
+    error_count: int = 0
+    max_errors: int = 5
+    timeout_seconds: int = 300
+    retry_count: int = 3
+    
+    def to_dict(self) -> Dict:
+        return {
+            'name': self.name,
+            'description': self.description,
+            'cron_expression': self.cron_expression,
+            'enabled': self.enabled,
+            'last_run': self.last_run.isoformat() if self.last_run else None,
+            'next_run': self.next_run.isoformat() if self.next_run else None,
+            'run_count': self.run_count,
+            'error_count': self.error_count,
+            'max_errors': self.max_errors
+        }
+
+@dataclass
+class TaskResult:
+    """작업 실행 결과"""
+    task_name: str
+    success: bool
+    execution_time: float
+    result_data: Any = None
+    error_message: str = ""
+    timestamp: datetime = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now()
+
+# ============================================================================
+# 🔧 스케줄러 설정 관리자
+# ============================================================================
+class SchedulerConfig:
+    """스케줄러 설정 관리"""
+    
+    def __init__(self):
+        self.config_file = "scheduler_config.yaml"
+        self.config = {}
+        self._initialize_config()
+    
+    def _initialize_config(self):
+        """설정 초기화"""
+        if Path(self.config_file).exists():
+            with open(self.config_file, 'r', encoding='utf-8') as f:
+                self.config = yaml.safe_load(f) or {}
+        else:
+            self._create_default_config()
+            self._save_config()
+    
+    def _create_default_config(self):
+        """기본 설정 생성"""
+        self.config = {
+            # 전체 시스템 설정
+            'system': {
+                'timezone': 'Asia/Seoul',
+                'max_concurrent_tasks': 3,
+                'task_timeout_default': 300,
+                'error_notification_threshold': 3,
+                'health_check_interval': 600,  # 10분
+                'backup_enabled': True
+            },
+            
+            # 시장 스캔 스케줄 (요일별 최적화)
+            'market_scan': {
+                'enabled': True,
+                'us_stocks': {
+                    'cron': '0 23 * * 2,4',     # 화요일, 목요일 오후 11시 (미국 장시작 30분 전)
                     'enabled': True,
-                    'cron': '0 18 * * 1-5',  # 평일 오후 6시
-                    'strategies': ['US', 'JP', 'COIN']
+                    'timeout': 180
                 },
-                'notifications': {
-                    'market_open': True,
-                    'market_close': True,
-                    'backtest_complete': True,
-                    'errors': True
+                'upbit_crypto': {
+                    'cron': '0 9,21 * * 1,5',  # 월요일, 금요일 오전9시, 밤9시 (변동성 높은 시간)
+                    'enabled': True,
+                    'timeout': 120
+                },
+                'japan_stocks': {
+                    'cron': '0 8 * * 2,4',     # 화요일, 목요일 오전 8시 (일본 장시작 전)
+                    'enabled': True,
+                    'timeout': 150
+                },
+                'india_stocks': {
+                    'cron': '0 12 * * 3',      # 수요일 낮 12시 (인도 장중, 주중 최적)
+                    'enabled': True,
+                    'timeout': 150
                 }
             },
-            'trading': {},
-            'backtest': {
-                'initial_capital': 100000.0,
-                'start_date': '2023-01-01',
-                'end_date': '2024-12-31'
+            
+            # 포트폴리오 관리
+            'portfolio': {
+                'rebalancing': {
+                    'cron': '0 22 * * 5',      # 매주 금요일 밤 10시
+                    'enabled': True,
+                    'threshold_percent': 5.0,
+                    'timeout': 300
+                },
+                'performance_check': {
+                    'cron': '0 9,15,21 * * *', # 하루 3번 (오전9시, 오후3시, 밤9시)
+                    'enabled': True,
+                    'timeout': 60
+                }
+            },
+            
+            # 리스크 관리
+            'risk_management': {
+                'real_time_monitoring': {
+                    'cron': '*/5 * * * *',     # 5분마다
+                    'enabled': True,
+                    'max_loss_percent': 10.0,
+                    'circuit_breaker': True,
+                    'timeout': 30
+                },
+                'daily_risk_report': {
+                    'cron': '0 20 * * *',      # 매일 밤 8시
+                    'enabled': True,
+                    'timeout': 120
+                }
+            },
+            
+            # 리포트 생성
+            'reports': {
+                'daily_report': {
+                    'cron': '0 19 * * *',      # 매일 저녁 7시
+                    'enabled': True,
+                    'timeout': 180
+                },
+                'weekly_report': {
+                    'cron': '0 18 * * 0',      # 매주 일요일 오후 6시
+                    'enabled': True,
+                    'timeout': 300
+                },
+                'monthly_report': {
+                    'cron': '0 10 1 * *',      # 매월 1일 오전 10시
+                    'enabled': True,
+                    'timeout': 600
+                }
+            },
+            
+            # 시스템 유지보수
+            'maintenance': {
+                'backup': {
+                    'cron': '0 2 * * *',       # 매일 새벽 2시
+                    'enabled': True,
+                    'retention_days': 30,
+                    'timeout': 120
+                },
+                'cleanup': {
+                    'cron': '0 3 * * 0',       # 매주 일요일 새벽 3시
+                    'enabled': True,
+                    'cleanup_days': 90,
+                    'timeout': 180
+                },
+                'health_check': {
+                    'cron': '*/10 * * * *',    # 10분마다
+                    'enabled': True,
+                    'timeout': 60
+                }
+            },
+            
+            # 알림 설정
+            'notifications': {
+                'telegram': {
+                    'enabled': True,
+                    'error_alerts': True,
+                    'daily_summary': True,
+                    'performance_alerts': True
+                },
+                'email': {
+                    'enabled': False,
+                    'weekly_reports': True,
+                    'monthly_reports': True,
+                    'error_alerts': True
+                }
             }
         }
     
-    def get(self, key: str, default=None):
-        """설정값 안전 조회"""
-        keys = key.split('.')
-        value = self.config
+    def _save_config(self):
+        """설정 저장"""
         try:
-            for k in keys:
-                value = value[k]
-            return value
-        except (KeyError, TypeError):
-            return default
-
-# ================================================================================================
-# 📅 기본 스케줄러 (APScheduler 래퍼)
-# ================================================================================================
-
-class BasicScheduler:
-    """APScheduler 기반 기본 스케줄러 (원본 코드 호환)"""
-    
-    def __init__(self, use_async: bool = False):
-        """스케줄러 초기화"""
-        if not APSCHEDULER_AVAILABLE:
-            logger.error("❌ APScheduler가 설치되지 않음")
-            raise ImportError("APScheduler 설치 필요: pip install apscheduler")
-        
-        self.use_async = use_async
-        
-        if use_async:
-            self.scheduler = AsyncIOScheduler()
-        else:
-            self.scheduler = BackgroundScheduler()
-        
-        # 이벤트 리스너 등록
-        self.scheduler.add_listener(self._job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED)
-        
-        # 시작
-        try:
-            self.scheduler.start()
-            logger.info(f"✅ {'비동기' if use_async else '동기'} 스케줄러 시작")
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True, indent=2)
         except Exception as e:
-            logger.error(f"❌ 스케줄러 시작 실패: {e}")
-            raise
+            logging.error(f"일일 리스크 리포트 생성 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
     
-    def _job_listener(self, event):
-        """작업 이벤트 리스너"""
+    # ========================================================================
+    # 📊 리포트 생성 작업들
+    # ========================================================================
+    async def generate_daily_report(self) -> Dict:
+        """일일 성과 리포트 생성"""
         try:
-            if event.code == EVENT_JOB_EXECUTED:
-                logger.debug(f"✅ 작업 완료: {event.job_id}")
-            elif event.code == EVENT_JOB_ERROR:
-                logger.error(f"❌ 작업 오류: {event.job_id} - {event.exception}")
-            elif event.code == EVENT_JOB_MISSED:
-                logger.warning(f"⚠️ 작업 누락: {event.job_id}")
-        except Exception as e:
-            logger.error(f"❌ 작업 이벤트 처리 실패: {e}")
-    
-    def add_interval_job(self, func: Callable, seconds: int, job_id: str = None, 
-                        args: list = None, kwargs: dict = None, **scheduler_kwargs):
-        """초 단위 반복 작업 추가 (원본 호환)"""
-        try:
-            self.scheduler.add_job(
-                func,
-                IntervalTrigger(seconds=seconds),
-                id=job_id,
-                args=args or [],
-                kwargs=kwargs or {},
-                replace_existing=True,
-                **scheduler_kwargs
-            )
-            logger.info(f"📅 인터벌 작업 등록: {job_id} (매 {seconds}초)")
-        except Exception as e:
-            logger.error(f"❌ 인터벌 작업 등록 실패: {e}")
-    
-    def add_cron_job(self, func: Callable, cron_expr: str, job_id: str = None,
-                    args: list = None, kwargs: dict = None, **scheduler_kwargs):
-        """cron 표현식으로 작업 추가 (원본 호환)"""
-        try:
-            trigger = CronTrigger.from_crontab(cron_expr)
-            self.scheduler.add_job(
-                func,
-                trigger,
-                id=job_id,
-                args=args or [],
-                kwargs=kwargs or {},
-                replace_existing=True,
-                **scheduler_kwargs
-            )
-            logger.info(f"📅 크론 작업 등록: {job_id} ({cron_expr})")
-        except Exception as e:
-            logger.error(f"❌ 크론 작업 등록 실패: {e}")
-    
-    def add_date_job(self, func: Callable, run_date: datetime, job_id: str = None,
-                    args: list = None, kwargs: dict = None, **scheduler_kwargs):
-        """특정 날짜에 한 번 실행되는 작업 추가 (원본 호환)"""
-        try:
-            self.scheduler.add_job(
-                func,
-                DateTrigger(run_date=run_date),
-                id=job_id,
-                args=args or [],
-                kwargs=kwargs or {},
-                replace_existing=True,
-                **scheduler_kwargs
-            )
-            logger.info(f"📅 단발 작업 등록: {job_id} ({run_date})")
-        except Exception as e:
-            logger.error(f"❌ 단발 작업 등록 실패: {e}")
-    
-    def list_jobs(self):
-        """등록된 모든 작업 나열 (원본 호환)"""
-        try:
-            jobs = self.scheduler.get_jobs()
-            logger.info(f"📋 등록된 작업 수: {len(jobs)}개")
-            for job in jobs:
-                logger.info(f"  - {job.id}: {job.next_run_time}")
-            return jobs
-        except Exception as e:
-            logger.error(f"❌ 작업 목록 조회 실패: {e}")
-            return []
-    
-    def remove_job(self, job_id: str):
-        """특정 작업 제거 (원본 호환)"""
-        try:
-            self.scheduler.remove_job(job_id)
-            logger.info(f"🗑️ 작업 제거: {job_id}")
-        except Exception as e:
-            logger.error(f"❌ 작업 제거 실패: {e}")
-    
-    def shutdown(self, wait: bool = True):
-        """스케줄러 종료 (원본 호환)"""
-        try:
-            self.scheduler.shutdown(wait=wait)
-            logger.info("🛑 스케줄러 종료 완료")
-        except Exception as e:
-            logger.error(f"❌ 스케줄러 종료 실패: {e}")
-
-# ================================================================================================
-# 🏆 통합 거래 스케줄러
-# ================================================================================================
-
-class UnifiedTradingScheduler:
-    """🏆 통합 거래 스케줄러 (고급 기능 + 기본 스케줄러 통합)"""
-    
-    def __init__(self, config_path: str = "settings.yaml", use_async: bool = True):
-        """통합 스케줄러 초기화"""
-        try:
-            # 설정 로드
-            self.config = SafeSchedulerConfig(config_path)
+            today = datetime.now().strftime('%Y-%m-%d')
             
-            # 기본 스케줄러 초기화
-            self.basic_scheduler = BasicScheduler(use_async=use_async)
-            
-            # 시간대 관리
-            self.tz_manager = TimeZoneManager() if UTILS_AVAILABLE else None
-            
-            # 거래 세션 정의
-            self.trading_sessions = self._define_trading_sessions()
-            
-            # 백테스팅 엔진 (선택적)
-            self.backtest_engine = None
-            if BACKTESTER_AVAILABLE:
-                try:
-                    self.backtest_engine = UnifiedBacktestEngine(config_path)
-                    logger.info("✅ 백테스팅 엔진 연동 완료")
-                except Exception as e:
-                    logger.warning(f"⚠️ 백테스팅 엔진 연동 실패: {e}")
-            
-            # 상태 관리
-            self.session_start_time = datetime.now()
-            self.last_run_cache = {}
-            self.notification_cache = {}
-            self.is_running = True
-            
-            # 자동 작업 등록
-            self._register_auto_jobs()
-            
-            logger.info("🏆 통합 거래 스케줄러 초기화 완료")
-            
-        except Exception as e:
-            logger.error(f"❌ 통합 스케줄러 초기화 실패: {e}")
-            raise
-    
-    def _define_trading_sessions(self) -> Dict[str, List[TradingSession]]:
-        """시장별 거래 세션 정의"""
-        try:
-            sessions = {
-                'US': [
-                    TradingSession('US', time(4, 0), time(9, 30), 'US/Eastern', True, 'premarket'),
-                    TradingSession('US', time(9, 30), time(16, 0), 'US/Eastern', True, 'regular'),
-                    TradingSession('US', time(16, 0), time(20, 0), 'US/Eastern', True, 'aftermarket')
-                ],
-                'JP': [
-                    TradingSession('JP', time(9, 0), time(11, 30), 'Asia/Tokyo', True, 'morning'),
-                    TradingSession('JP', time(12, 30), time(15, 0), 'Asia/Tokyo', True, 'afternoon')
-                ],
-                'COIN': [
-                    TradingSession('COIN', time(0, 0), time(23, 59), 'UTC', True, '24/7')
-                ]
-            }
-            
-            # 세션 검증
-            for market, market_sessions in sessions.items():
-                for session in market_sessions:
-                    try:
-                        pytz.timezone(session.timezone)
-                    except pytz.exceptions.UnknownTimeZoneError:
-                        logger.warning(f"⚠️ 알 수 없는 시간대: {session.timezone}, UTC로 대체")
-                        session.timezone = 'UTC'
-            
-            return sessions
-            
-        except Exception as e:
-            logger.error(f"❌ 거래 세션 정의 실패: {e}")
-            return {
-                'US': [TradingSession('US', time(9, 30), time(16, 0), 'US/Eastern')],
-                'JP': [TradingSession('JP', time(9, 0), time(15, 0), 'Asia/Tokyo')],
-                'COIN': [TradingSession('COIN', time(0, 0), time(23, 59), 'UTC', True, '24/7')]
-            }
-    
-    def _register_auto_jobs(self):
-        """자동 작업 등록"""
-        try:
-            # 1. 자동 백테스팅
-            if self.config.get('schedule.auto_backtest.enabled', True):
-                cron_expr = self.config.get('schedule.auto_backtest.cron', '0 18 * * 1-5')
-                self.basic_scheduler.add_cron_job(
-                    self._run_auto_backtest,
-                    cron_expr,
-                    job_id='auto_backtest',
-                    max_instances=1
-                )
-                logger.info(f"📊 자동 백테스팅 등록: {cron_expr}")
-            
-            # 2. 시장 개장 알림
-            if self.config.get('schedule.notifications.market_open', True):
-                self.basic_scheduler.add_cron_job(
-                    self._send_market_open_notification,
-                    '0 9 * * 1-5',  # 평일 오전 9시
-                    job_id='market_open_notification'
-                )
-            
-            # 3. 시장 마감 알림
-            if self.config.get('schedule.notifications.market_close', True):
-                self.basic_scheduler.add_cron_job(
-                    self._send_market_close_notification,
-                    '0 18 * * 1-5',  # 평일 오후 6시
-                    job_id='market_close_notification'
-                )
-            
-            # 4. 상태 체크 (10분마다)
-            self.basic_scheduler.add_interval_job(
-                self._health_check,
-                seconds=600,
-                job_id='health_check'
-            )
-            
-            # 5. 캐시 정리 (매일 자정)
-            self.basic_scheduler.add_cron_job(
-                self._cleanup_cache,
-                '0 0 * * *',
-                job_id='cache_cleanup'
-            )
-            
-        except Exception as e:
-            logger.error(f"❌ 자동 작업 등록 실패: {e}")
-    
-    # ============================================================================================
-    # 🎯 핵심 스케줄링 기능 (개선된 원본 코드 기반)
-    # ============================================================================================
-    
-    def get_today_strategies(self, config: Optional[Dict] = None) -> List[str]:
-        """오늘 실행할 전략 목록 조회"""
-        try:
-            if config is None:
-                config = self.config.config
-            
-            current_time = datetime.now()
-            weekday = current_time.weekday()
-            
-            # 요일별 스케줄 조회
-            schedule_config = config.get('schedule', {})
-            weekly_schedule = schedule_config.get('weekly_schedule', {})
-            
-            weekday_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-            today_key = weekday_names[weekday]
-            today_strategies = weekly_schedule.get(today_key, []).copy()
-            
-            # 공휴일 체크 (UTILS 모듈이 있는 경우)
-            if UTILS_AVAILABLE:
-                for strategy in today_strategies.copy():
-                    try:
-                        if not ScheduleUtils.is_trading_day(strategy, current_time.strftime('%Y-%m-%d')):
-                            today_strategies.remove(strategy)
-                            logger.info(f"📅 {strategy} 시장 휴장일로 제외")
-                    except Exception:
-                        pass  # 에러시 무시하고 계속
-            
-            # 강제 설정 적용
-            force_enabled = schedule_config.get('force_enabled_strategies', [])
-            force_disabled = schedule_config.get('force_disabled_strategies', [])
-            
-            for strategy in force_enabled:
-                if strategy not in today_strategies:
-                    today_strategies.append(strategy)
-                    logger.info(f"⚡ {strategy} 전략 강제 활성화")
-            
-            for strategy in force_disabled:
-                if strategy in today_strategies:
-                    today_strategies.remove(strategy)
-                    logger.info(f"🚫 {strategy} 전략 강제 비활성화")
-            
-            weekday_str = ["월", "화", "수", "목", "금", "토", "일"][weekday]
-            logger.info(f"📊 오늘({weekday_str}) 활성 전략: {today_strategies}")
-            return today_strategies
-            
-        except Exception as e:
-            logger.error(f"❌ 오늘 전략 조회 실패: {e}")
-            # Fallback: 기본 스케줄
-            weekday = datetime.now().weekday()
-            default_schedule = {
-                0: ['COIN'], 1: ['US', 'JP'], 2: [], 3: ['US', 'JP'], 
-                4: ['COIN'], 5: [], 6: []
-            }
-            return default_schedule.get(weekday, [])
-    
-    def is_trading_time(self, config: Optional[Dict] = None, market: Optional[str] = None) -> bool:
-        """현재 시간이 거래 시간인지 확인"""
-        try:
-            if config is None:
-                config = self.config.config
-            
-            current_time = datetime.now()
-            
-            # 글로벌 거래 시간 제한 체크
-            schedule_config = config.get('schedule', {})
-            global_hours = schedule_config.get('global_trading_hours', {})
-            
-            if global_hours:
-                start_hour = global_hours.get('start_hour', 0)
-                end_hour = global_hours.get('end_hour', 24)
-                current_hour = current_time.hour
+            # 포트폴리오 현황
+            if self.quint_master:
+                portfolio_summary = self.quint_master.portfolio_manager.get_portfolio_summary()
                 
-                if not (start_hour <= current_hour < end_hour):
-                    logger.debug(f"⏰ 글로벌 거래 시간 외: {current_hour}시")
-                    return False
-            
-            # 특정 시장 지정된 경우
-            if market:
-                return self._is_market_trading_time(market, current_time)
-            
-            # 오늘 활성화된 전략들 중 하나라도 거래 시간이면 True
-            today_strategies = self.get_today_strategies(config)
-            
-            if not today_strategies:
-                return False
-            
-            for strategy in today_strategies:
-                if self._is_market_trading_time(strategy, current_time):
-                    return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"❌ 거래 시간 확인 실패: {e}")
-            return True  # 에러시 기본적으로 허용
-    
-    def _is_market_trading_time(self, market: str, check_time: Optional[datetime] = None) -> bool:
-        """특정 시장의 거래 시간 확인"""
-        try:
-            if check_time is None:
-                check_time = datetime.now()
-            
-            if market not in self.trading_sessions:
-                logger.warning(f"⚠️ 알 수 없는 시장: {market}")
-                return True
-            
-            sessions = self.trading_sessions[market]
-            
-            for session in sessions:
-                if not session.is_active:
-                    continue
-                
-                # 24/7 시장 (암호화폐)
-                if session.session_type == "24/7":
-                    return True
-                
-                # 시간대 변환 및 체크
-                try:
-                    market_tz = pytz.timezone(session.timezone)
-                    market_time = check_time.astimezone(market_tz)
-                    current_time_only = market_time.time()
-                    
-                    if session.start_time <= current_time_only <= session.end_time:
-                        return True
-                        
-                except Exception as e:
-                    logger.warning(f"⚠️ {market} 시간대 변환 실패: {e}")
-                    # 로컬 시간으로 대략 체크
-                    current_time_only = check_time.time()
-                    if session.start_time <= current_time_only <= session.end_time:
-                        return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"❌ {market} 시장 거래 시간 확인 실패: {e}")
-            return True
-    
-    def should_run_strategy(self, strategy: str, check_time: Optional[datetime] = None) -> bool:
-        """특정 전략을 실행해야 하는지 확인"""
-        try:
-            if check_time is None:
-                check_time = datetime.now()
-            
-            # 1. 오늘 활성화된 전략인지 확인
-            today_strategies = self.get_today_strategies()
-            if strategy not in today_strategies:
-                return False
-            
-            # 2. 해당 시장의 거래 시간인지 확인
-            if not self._is_market_trading_time(strategy, check_time):
-                return False
-            
-            # 3. 전략별 설정 확인
-            strategy_config = self.config.config.get(f'{strategy.lower()}_strategy', {})
-            if not strategy_config.get('enabled', True):
-                return False
-            
-            # 4. 실행 제한 확인
-            restrictions = self.config.get('schedule.strategy_restrictions', {})
-            if strategy in restrictions:
-                restriction = restrictions[strategy]
-                
-                # 허용 시간대 체크
-                if 'allowed_hours' in restriction:
-                    allowed_hours = restriction['allowed_hours']
-                    if check_time.hour not in allowed_hours:
-                        return False
-                
-                # 최소 실행 간격 체크
-                if 'min_interval_minutes' in restriction:
-                    min_interval = restriction['min_interval_minutes']
-                    last_run = self.last_run_cache.get(strategy)
-                    
-                    if last_run:
-                        time_since_last = (check_time - last_run).total_seconds() / 60
-                        if time_since_last < min_interval:
-                            return False
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ {strategy} 전략 실행 가능성 확인 실패: {e}")
-            return False
-    
-    def get_schedule_status(self) -> Dict:
-        """스케줄러 상태 조회"""
-        try:
-            current_time = datetime.now()
-            today_strategies = self.get_today_strategies()
-            
-            status = {
-                'scheduler_status': 'running' if self.is_running else 'stopped',
-                'current_time': current_time.isoformat(),
-                'session_uptime': str(current_time - self.session_start_time).split('.')[0],
-                'today_strategies': today_strategies,
-                'trading_day': len(today_strategies) > 0,
-                'trading_time': self.is_trading_time(),
-                'market_status': {},
-                'next_session': None,
-                'job_count': len(self.basic_scheduler.list_jobs()),
-                'config_status': {
-                    'config_file_exists': self.config.config_path.exists(),
-                    'utils_available': UTILS_AVAILABLE,
-                    'notifier_available': NOTIFIER_AVAILABLE,
-                    'backtester_available': BACKTESTER_AVAILABLE,
-                    'apscheduler_available': APSCHEDULER_AVAILABLE
-                }
-            }
-            
-            # 시장별 상태
-            for strategy in ['US', 'JP', 'COIN']:
-                is_active = strategy in today_strategies
-                is_trading = self._is_market_trading_time(strategy, current_time)
-                should_run = self.should_run_strategy(strategy, current_time)
-                
-                sessions_info = []
-                if strategy in self.trading_sessions:
-                    for session in self.trading_sessions[strategy]:
-                        sessions_info.append({
-                            'type': session.session_type,
-                            'start': session.start_time.strftime('%H:%M'),
-                            'end': session.end_time.strftime('%H:%M'),
-                            'timezone': session.timezone,
-                            'is_active': session.is_active
-                        })
-                
-                status['market_status'][strategy] = {
-                    'active_today': is_active,
-                    'trading_now': is_trading,
-                    'should_run': should_run,
-                    'sessions': sessions_info,
-                    'last_run': self.last_run_cache.get(strategy, {}).get('timestamp') if isinstance(self.last_run_cache.get(strategy), dict) else str(self.last_run_cache.get(strategy)) if self.last_run_cache.get(strategy) else None
-                }
-            
-            return status
-            
-        except Exception as e:
-            logger.error(f"❌ 스케줄러 상태 조회 실패: {e}")
-            return {
-                'scheduler_status': 'error',
-                'error': str(e),
-                'current_time': datetime.now().isoformat()
-            }
-    
-    def update_last_run(self, strategy: str, run_time: Optional[datetime] = None):
-        """전략 마지막 실행 시간 업데이트"""
-        if run_time is None:
-            run_time = datetime.now()
-        self.last_run_cache[strategy] = run_time
-        logger.debug(f"📝 {strategy} 전략 마지막 실행 시간 업데이트: {run_time}")
-    
-    # ============================================================================================
-    # 🚀 자동 작업 함수들
-    # ============================================================================================
-    
-    def _run_auto_backtest(self):
-        """자동 백테스팅 실행"""
-        try:
-            if not self.backtest_engine:
-                logger.warning("⚠️ 백테스팅 엔진이 없어 자동 백테스팅 건너뜀")
-                return
-            
-            logger.info("🚀 자동 백테스팅 시작")
-            
-            # 비동기 백테스팅을 동기 함수에서 실행
-            import asyncio
-            
-            async def run_backtest():
-                try:
-                    # 백테스팅 설정 생성
-                    config = BacktestConfig(
-                        start_date=self.config.get('backtest.start_date', '2023-01-01'),
-                        end_date=self.config.get('backtest.end_date', '2024-12-31'),
-                        initial_capital=self.config.get('backtest.initial_capital', 100000.0)
-                    )
-                    
-                    result = await self.backtest_engine.run_backtest(config)
-                    
-                    # 결과 저장
-                    self.backtest_engine.save_results(result)
-                    
-                    # 알림 발송
-                    if NOTIFIER_AVAILABLE and self.config.get('schedule.notifications.backtest_complete', True):
-                        await self._send_backtest_complete_notification(result)
-                    
-                    logger.info("✅ 자동 백테스팅 완료")
-                    
-                except Exception as e:
-                    logger.error(f"❌ 자동 백테스팅 실행 실패: {e}")
-                    
-                    # 오류 알림
-                    if NOTIFIER_AVAILABLE and self.config.get('schedule.notifications.errors', True):
-                        await send_system_alert("error", f"자동 백테스팅 실패: {str(e)}", "high")
-            
-            # 현재 이벤트 루프가 있는지 확인
-            try:
-                loop = asyncio.get_running_loop()
-                # 이미 실행 중인 루프가 있으면 태스크로 추가
-                asyncio.create_task(run_backtest())
-            except RuntimeError:
-                # 실행 중인 루프가 없으면 새로 실행
-                asyncio.run(run_backtest())
-                
-        except Exception as e:
-            logger.error(f"❌ 자동 백테스팅 함수 실패: {e}")
-    
-    def _send_market_open_notification(self):
-        """시장 개장 알림 발송"""
-        try:
-            if not NOTIFIER_AVAILABLE:
-                return
-            
-            today_strategies = self.get_today_strategies()
-            
-            if not today_strategies:
-                logger.info("📅 오늘 활성 전략이 없어 개장 알림 생략")
-                return
-            
-            async def send_notification():
-                try:
-                    await send_schedule_notification(today_strategies, "start")
-                    logger.info("📱 시장 개장 알림 발송 완료")
-                except Exception as e:
-                    logger.error(f"❌ 시장 개장 알림 발송 실패: {e}")
-            
-            # 비동기 함수 실행
-            try:
-                loop = asyncio.get_running_loop()
-                asyncio.create_task(send_notification())
-            except RuntimeError:
-                asyncio.run(send_notification())
-                
-        except Exception as e:
-            logger.error(f"❌ 시장 개장 알림 함수 실패: {e}")
-    
-    def _send_market_close_notification(self):
-        """시장 마감 알림 발송"""
-        try:
-            if not NOTIFIER_AVAILABLE:
-                return
-            
-            today_strategies = self.get_today_strategies()
-            
-            if not today_strategies:
-                return
-            
-            async def send_notification():
-                try:
-                    await send_schedule_notification(today_strategies, "end")
-                    logger.info("📱 시장 마감 알림 발송 완료")
-                except Exception as e:
-                    logger.error(f"❌ 시장 마감 알림 발송 실패: {e}")
-            
-            # 비동기 함수 실행
-            try:
-                loop = asyncio.get_running_loop()
-                asyncio.create_task(send_notification())
-            except RuntimeError:
-                asyncio.run(send_notification())
-                
-        except Exception as e:
-            logger.error(f"❌ 시장 마감 알림 함수 실패: {e}")
-    
-    async def _send_backtest_complete_notification(self, result):
-        """백테스팅 완료 알림"""
-        try:
-            if not NOTIFIER_AVAILABLE:
-                return
-            
-            metrics = result.performance_metrics
-            message = f"📊 자동 백테스팅 완료\n\n"
-            message += f"💰 총 수익률: {metrics.total_return*100:+.2f}%\n"
-            message += f"📈 연간 수익률: {metrics.annual_return*100:+.2f}%\n"
-            message += f"⚡ 샤프 비율: {metrics.sharpe_ratio:.3f}\n"
-            message += f"📉 최대 손실폭: {metrics.max_drawdown*100:.2f}%\n"
-            message += f"💼 총 거래: {metrics.total_trades}건\n"
-            message += f"🎯 승률: {metrics.win_rate*100:.1f}%"
-            
-            await send_system_alert("info", message, "normal")
-            logger.info("📱 백테스팅 완료 알림 발송")
-            
-        except Exception as e:
-            logger.error(f"❌ 백테스팅 완료 알림 실패: {e}")
-    
-    def _health_check(self):
-        """스케줄러 상태 체크"""
-        try:
-            current_time = datetime.now()
-            
-            # 기본 상태 체크
-            jobs = self.basic_scheduler.list_jobs()
-            job_count = len(jobs)
-            
-            # 실행 중인 작업 확인
-            running_jobs = [job for job in jobs if job.next_run_time]
-            
-            logger.info(f"💓 스케줄러 상태 체크: {job_count}개 작업 등록, {len(running_jobs)}개 대기 중")
-            
-            # 메모리 사용량 체크 (선택적)
-            try:
-                import psutil
-                process = psutil.Process()
-                memory_mb = process.memory_info().rss / 1024 / 1024
-                
-                if memory_mb > 500:  # 500MB 초과시 경고
-                    logger.warning(f"⚠️ 메모리 사용량 높음: {memory_mb:.1f}MB")
-                    
-            except ImportError:
-                pass  # psutil이 없으면 건너뜀
-            
-            # 에러 알림 (필요시)
-            if job_count == 0:
-                logger.warning("⚠️ 등록된 작업이 없음")
-                
-        except Exception as e:
-            logger.error(f"❌ 상태 체크 실패: {e}")
-    
-    def _cleanup_cache(self):
-        """캐시 정리"""
-        try:
-            current_time = datetime.now()
-            
-            # 1일 이전 캐시 정리
-            cutoff_time = current_time - timedelta(days=1)
-            
-            # 마지막 실행 시간 캐시 정리
-            for strategy, last_run in list(self.last_run_cache.items()):
-                if isinstance(last_run, datetime) and last_run < cutoff_time:
-                    del self.last_run_cache[strategy]
-                    logger.debug(f"🧹 {strategy} 캐시 정리")
-            
-            # 알림 캐시 정리
-            for key, timestamp in list(self.notification_cache.items()):
-                if isinstance(timestamp, datetime) and timestamp < cutoff_time:
-                    del self.notification_cache[key]
-                    logger.debug(f"🧹 알림 캐시 정리: {key}")
-            
-            logger.info("🧹 캐시 정리 완료")
-            
-        except Exception as e:
-            logger.error(f"❌ 캐시 정리 실패: {e}")
-    
-    # ============================================================================================
-    # 📅 고급 스케줄링 기능
-    # ============================================================================================
-    
-    def add_strategy_job(self, strategy: str, func: Callable, cron_expr: str, 
-                        job_id: Optional[str] = None, **kwargs):
-        """전략별 작업 등록"""
-        try:
-            if job_id is None:
-                job_id = f"strategy_{strategy}_{func.__name__}"
-            
-            # 전략 실행 가능성 체크 래퍼
-            def strategy_wrapper(*args, **func_kwargs):
-                if self.should_run_strategy(strategy):
-                    logger.info(f"🚀 {strategy} 전략 작업 실행: {func.__name__}")
-                    result = func(*args, **func_kwargs)
-                    self.update_last_run(strategy)
-                    return result
-                else:
-                    logger.debug(f"⏸️ {strategy} 전략 작업 건너뜀: {func.__name__}")
-                    return None
-            
-            self.basic_scheduler.add_cron_job(
-                strategy_wrapper,
-                cron_expr,
-                job_id,
-                **kwargs
-            )
-            
-            logger.info(f"📊 {strategy} 전략 작업 등록: {job_id} ({cron_expr})")
-            
-        except Exception as e:
-            logger.error(f"❌ {strategy} 전략 작업 등록 실패: {e}")
-    
-    def add_market_session_job(self, market: str, session_type: str, event_type: str,
-                              func: Callable, job_id: Optional[str] = None):
-        """시장 세션별 작업 등록"""
-        try:
-            if market not in self.trading_sessions:
-                logger.error(f"❌ 알 수 없는 시장: {market}")
-                return
-            
-            # 해당 세션 찾기
-            target_session = None
-            for session in self.trading_sessions[market]:
-                if session.session_type == session_type:
-                    target_session = session
-                    break
-            
-            if not target_session:
-                logger.error(f"❌ {market}에서 {session_type} 세션을 찾을 수 없음")
-                return
-            
-            if job_id is None:
-                job_id = f"{market}_{session_type}_{event_type}"
-            
-            # 시간 설정
-            if event_type == "open":
-                target_time = target_session.start_time
-            elif event_type == "close":
-                target_time = target_session.end_time
+                # 전체 분석 실행
+                analysis_result = await self.quint_master.run_full_analysis()
             else:
-                logger.error(f"❌ 알 수 없는 이벤트 타입: {event_type}")
-                return
+                portfolio_summary = {'total_value': 0}
+                analysis_result = {'buy_signals': 0, 'total_signals': 0}
             
-            # 24/7 시장은 세션 작업 불가
-            if target_session.session_type == "24/7":
-                logger.warning(f"⚠️ {market}은 24/7 시장으로 세션 작업 등록 불가")
-                return
+            # 리포트 데이터 구성
+            report_data = {
+                'date': today,
+                'portfolio_value': portfolio_summary.get('total_value', 0),
+                'daily_signals': analysis_result.get('total_signals', 0),
+                'buy_signals': analysis_result.get('buy_signals', 0),
+                'market_summary': analysis_result.get('market_breakdown', {}),
+                'top_opportunities': analysis_result.get('optimized_portfolio', [])[:5]
+            }
             
-            # 크론 표현식 생성 (평일만)
-            cron_expr = f"{target_time.minute} {target_time.hour} * * 1-5"
-            
-            self.basic_scheduler.add_cron_job(
-                func,
-                cron_expr,
-                job_id
-            )
-            
-            logger.info(f"🌍 {market} {session_type} {event_type} 작업 등록: {cron_expr}")
-            
-        except Exception as e:
-            logger.error(f"❌ 시장 세션 작업 등록 실패: {e}")
-    
-    def schedule_backtest(self, cron_expr: str, strategies: List[str] = None,
-                         config: Optional[Dict] = None, job_id: str = "custom_backtest"):
-        """사용자 정의 백테스팅 스케줄"""
-        try:
-            if not self.backtest_engine:
-                logger.error("❌ 백테스팅 엔진이 없어 스케줄 등록 불가")
-                return
-            
-            if strategies is None:
-                strategies = ['US', 'JP', 'COIN']
-            
-            def backtest_job():
-                logger.info(f"🚀 사용자 정의 백테스팅 시작: {strategies}")
-                self._run_auto_backtest()
-            
-            self.basic_scheduler.add_cron_job(
-                backtest_job,
-                cron_expr,
-                job_id
-            )
-            
-            logger.info(f"📊 사용자 정의 백테스팅 스케줄 등록: {cron_expr}")
-            
-        except Exception as e:
-            logger.error(f"❌ 백테스팅 스케줄 등록 실패: {e}")
-    
-    def add_conditional_job(self, condition_func: Callable, action_func: Callable,
-                           check_interval: int = 60, job_id: Optional[str] = None):
-        """조건부 작업 등록"""
-        try:
-            if job_id is None:
-                job_id = f"conditional_{action_func.__name__}"
-            
-            def conditional_wrapper():
-                try:
-                    if condition_func():
-                        logger.info(f"✅ 조건 충족, 작업 실행: {action_func.__name__}")
-                        return action_func()
-                    else:
-                        logger.debug(f"⏸️ 조건 미충족, 작업 건너뜀: {action_func.__name__}")
-                        return None
-                except Exception as e:
-                    logger.error(f"❌ 조건부 작업 실행 실패: {e}")
-            
-            self.basic_scheduler.add_interval_job(
-                conditional_wrapper,
-                check_interval,
-                job_id
-            )
-            
-            logger.info(f"🔍 조건부 작업 등록: {job_id} (매 {check_interval}초 체크)")
-            
-        except Exception as e:
-            logger.error(f"❌ 조건부 작업 등록 실패: {e}")
-    
-    # ============================================================================================
-    # 🛠️ 유틸리티 및 관리 기능
-    # ============================================================================================
-    
-    def get_job_status(self, job_id: str) -> Dict:
-        """특정 작업 상태 조회"""
-        try:
-            jobs = self.basic_scheduler.list_jobs()
-            target_job = None
-            
-            for job in jobs:
-                if job.id == job_id:
-                    target_job = job
-                    break
-            
-            if not target_job:
-                return {'found': False, 'error': f'작업을 찾을 수 없음: {job_id}'}
+            # 일일 리포트 알림 전송
+            if self.notification_manager:
+                await self._send_daily_report_notification(report_data)
             
             return {
-                'found': True,
-                'id': target_job.id,
-                'name': target_job.name,
-                'func': str(target_job.func),
-                'trigger': str(target_job.trigger),
-                'next_run_time': target_job.next_run_time.isoformat() if target_job.next_run_time else None,
-                'coalesce': target_job.coalesce,
-                'max_instances': target_job.max_instances,
-                'misfire_grace_time': target_job.misfire_grace_time
+                'status': 'success',
+                'report': report_data
             }
             
         except Exception as e:
-            logger.error(f"❌ 작업 상태 조회 실패: {e}")
-            return {'found': False, 'error': str(e)}
+            logging.error(f"일일 리포트 생성 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
     
-    def pause_job(self, job_id: str) -> bool:
-        """작업 일시정지"""
+    async def generate_weekly_report(self) -> Dict:
+        """주간 성과 리포트 생성"""
         try:
-            self.basic_scheduler.scheduler.pause_job(job_id)
-            logger.info(f"⏸️ 작업 일시정지: {job_id}")
-            return True
-        except Exception as e:
-            logger.error(f"❌ 작업 일시정지 실패: {e}")
-            return False
-    
-    def resume_job(self, job_id: str) -> bool:
-        """작업 재개"""
-        try:
-            self.basic_scheduler.scheduler.resume_job(job_id)
-            logger.info(f"▶️ 작업 재개: {job_id}")
-            return True
-        except Exception as e:
-            logger.error(f"❌ 작업 재개 실패: {e}")
-            return False
-    
-    def modify_job(self, job_id: str, **changes) -> bool:
-        """작업 수정"""
-        try:
-            self.basic_scheduler.scheduler.modify_job(job_id, **changes)
-            logger.info(f"✏️ 작업 수정: {job_id}")
-            return True
-        except Exception as e:
-            logger.error(f"❌ 작업 수정 실패: {e}")
-            return False
-    
-    def get_all_jobs_summary(self) -> Dict:
-        """모든 작업 요약"""
-        try:
-            jobs = self.basic_scheduler.list_jobs()
+            # 주간 성과 분석 (QUINT_MODULES_AVAILABLE일 때만)
+            if QUINT_MODULES_AVAILABLE and performance_analyzer:
+                weekly_performance = performance_analyzer.generate_performance_report(7)
+            else:
+                weekly_performance = {'overview': {}}
             
-            summary = {
-                'total_jobs': len(jobs),
-                'running_jobs': 0,
-                'paused_jobs': 0,
-                'jobs_by_type': {'cron': 0, 'interval': 0, 'date': 0},
-                'next_execution': None,
-                'jobs': []
+            # 기본 주간 리포트
+            report_data = {
+                'week_start': (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'),
+                'week_end': datetime.now().strftime('%Y-%m-%d'),
+                'performance_summary': weekly_performance.get('overview', {}),
+                'market_analysis': '주간 시장 분석 완료',
+                'recommendation': '포트폴리오 검토 권장'
             }
             
-            next_times = []
+            # 주간 리포트 알림
+            if self.notification_manager:
+                await self._send_weekly_report_notification(report_data)
             
-            for job in jobs:
-                job_info = {
-                    'id': job.id,
-                    'name': job.name or job.id,
-                    'trigger_type': type(job.trigger).__name__,
-                    'next_run': job.next_run_time.isoformat() if job.next_run_time else None,
-                    'is_paused': hasattr(job, '_scheduler') and job._scheduler.state == 2
-                }
-                
-                summary['jobs'].append(job_info)
-                
-                # 통계 업데이트
-                if job.next_run_time:
-                    summary['running_jobs'] += 1
-                    next_times.append(job.next_run_time)
-                else:
-                    summary['paused_jobs'] += 1
-                
-                # 트리거 타입별 통계
-                trigger_type = type(job.trigger).__name__.lower()
-                if 'cron' in trigger_type:
-                    summary['jobs_by_type']['cron'] += 1
-                elif 'interval' in trigger_type:
-                    summary['jobs_by_type']['interval'] += 1
-                elif 'date' in trigger_type:
-                    summary['jobs_by_type']['date'] += 1
-            
-            # 다음 실행 시간
-            if next_times:
-                summary['next_execution'] = min(next_times).isoformat()
-            
-            return summary
-            
-        except Exception as e:
-            logger.error(f"❌ 작업 요약 생성 실패: {e}")
-            return {'error': str(e)}
-    
-    def export_schedule_config(self, output_path: str = "schedule_export.yaml") -> bool:
-        """스케줄 설정 내보내기"""
-        try:
-            jobs = self.basic_scheduler.list_jobs()
-            
-            export_data = {
-                'export_timestamp': datetime.now().isoformat(),
-                'scheduler_config': self.config.config,
-                'active_jobs': [],
-                'market_sessions': {}
+            return {
+                'status': 'success',
+                'report': report_data
             }
             
-            # 활성 작업 정보
-            for job in jobs:
-                job_data = {
-                    'id': job.id,
-                    'name': job.name,
-                    'trigger': str(job.trigger),
-                    'next_run_time': job.next_run_time.isoformat() if job.next_run_time else None
-                }
-                export_data['active_jobs'].append(job_data)
+        except Exception as e:
+            logging.error(f"주간 리포트 생성 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    async def generate_monthly_report(self) -> Dict:
+        """월간 성과 리포트 생성"""
+        try:
+            # 월간 성과 분석
+            if QUINT_MODULES_AVAILABLE and performance_analyzer:
+                monthly_performance = performance_analyzer.generate_performance_report(30)
+            else:
+                monthly_performance = {'overview': {}}
             
-            # 시장 세션 정보
-            for market, sessions in self.trading_sessions.items():
-                export_data['market_sessions'][market] = []
-                for session in sessions:
-                    session_data = {
-                        'session_type': session.session_type,
-                        'start_time': session.start_time.strftime('%H:%M'),
-                        'end_time': session.end_time.strftime('%H:%M'),
-                        'timezone': session.timezone,
-                        'is_active': session.is_active
+            report_data = {
+                'month': datetime.now().strftime('%Y-%m'),
+                'performance_summary': monthly_performance.get('overview', {}),
+                'recommendations': monthly_performance.get('recommendations', []),
+                'next_month_strategy': '지속적인 분산투자 전략'
+            }
+            
+            return {
+                'status': 'success',
+                'report': report_data
+            }
+            
+        except Exception as e:
+            logging.error(f"월간 리포트 생성 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    # ========================================================================
+    # 🔧 시스템 유지보수 작업들
+    # ========================================================================
+    async def system_backup(self) -> Dict:
+        """시스템 백업"""
+        try:
+            if QUINT_MODULES_AVAILABLE and backup:
+                backup_result = backup.create_backup('scheduled')
+                
+                if backup_result:
+                    # 오래된 백업 정리
+                    cleanup_count = backup.cleanup_old_backups()
+                    
+                    return {
+                        'status': 'success',
+                        'backup_file': str(backup_result),
+                        'cleanup_count': cleanup_count
                     }
-                    export_data['market_sessions'][market].append(session_data)
-            
-            # 파일 저장
-            with open(output_path, 'w', encoding='utf-8') as f:
-                yaml.dump(export_data, f, default_flow_style=False, allow_unicode=True)
-            
-            logger.info(f"📤 스케줄 설정 내보내기 완료: {output_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ 스케줄 설정 내보내기 실패: {e}")
-            return False
-    
-    # ============================================================================================
-    # 🔧 기본 스케줄러 인터페이스 (원본 호환)
-    # ============================================================================================
-    
-    def add_interval_job(self, func: Callable, seconds: int, job_id: str = None, **kwargs):
-        """인터벌 작업 추가 (원본 호환)"""
-        return self.basic_scheduler.add_interval_job(func, seconds, job_id, **kwargs)
-    
-    def add_cron_job(self, func: Callable, cron_expr: str, job_id: str = None, **kwargs):
-        """크론 작업 추가 (원본 호환)"""
-        return self.basic_scheduler.add_cron_job(func, cron_expr, job_id, **kwargs)
-    
-    def add_date_job(self, func: Callable, run_date: datetime, job_id: str = None, **kwargs):
-        """단발 작업 추가 (원본 호환)"""
-        return self.basic_scheduler.add_date_job(func, run_date, job_id, **kwargs)
-    
-    def list_jobs(self):
-        """작업 목록 조회 (원본 호환)"""
-        return self.basic_scheduler.list_jobs()
-    
-    def remove_job(self, job_id: str):
-        """작업 제거 (원본 호환)"""
-        return self.basic_scheduler.remove_job(job_id)
-    
-    def shutdown(self, wait: bool = True):
-        """스케줄러 종료 (원본 호환)"""
-        try:
-            self.is_running = False
-            self.basic_scheduler.shutdown(wait)
-            logger.info("🛑 통합 스케줄러 종료 완료")
-        except Exception as e:
-            logger.error(f"❌ 통합 스케줄러 종료 실패: {e}")
-
-# ================================================================================================
-# 📚 편의 함수들 (전역 접근)
-# ================================================================================================
-
-_unified_scheduler_instance = None
-
-def get_unified_scheduler() -> UnifiedTradingScheduler:
-    """통합 스케줄러 싱글톤 인스턴스"""
-    global _unified_scheduler_instance
-    if _unified_scheduler_instance is None:
-        _unified_scheduler_instance = UnifiedTradingScheduler()
-    return _unified_scheduler_instance
-
-def get_today_strategies() -> List[str]:
-    """오늘 실행할 전략 목록 (편의 함수)"""
-    try:
-        scheduler = get_unified_scheduler()
-        return scheduler.get_today_strategies()
-    except Exception as e:
-        logger.error(f"❌ 오늘 전략 조회 실패: {e}")
-        weekday = datetime.now().weekday()
-        default = {0: ['COIN'], 1: ['US', 'JP'], 2: [], 3: ['US', 'JP'], 4: ['COIN'], 5: [], 6: []}
-        return default.get(weekday, [])
-
-def is_trading_time(market: str = None) -> bool:
-    """거래 시간 확인 (편의 함수)"""
-    try:
-        scheduler = get_unified_scheduler()
-        return scheduler.is_trading_time(market=market)
-    except Exception as e:
-        logger.error(f"❌ 거래 시간 확인 실패: {e}")
-        return True
-
-def should_run_strategy(strategy: str) -> bool:
-    """전략 실행 가능성 확인 (편의 함수)"""
-    try:
-        scheduler = get_unified_scheduler()
-        return scheduler.should_run_strategy(strategy)
-    except Exception as e:
-        logger.error(f"❌ 전략 실행 가능성 확인 실패: {e}")
-        return False
-
-def get_schedule_status() -> Dict:
-    """스케줄러 상태 조회 (편의 함수)"""
-    try:
-        scheduler = get_unified_scheduler()
-        return scheduler.get_schedule_status()
-    except Exception as e:
-        logger.error(f"❌ 스케줄러 상태 조회 실패: {e}")
-        return {'error': str(e)}
-
-# ================================================================================================
-# 🧪 테스트 및 데모 함수
-# ================================================================================================
-
-def demo_task():
-    """데모 작업 함수"""
-    current_time = datetime.now()
-    logger.info(f"🎯 데모 작업 실행: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    # 현재 활성 전략 출력
-    strategies = get_today_strategies()
-    logger.info(f"📊 현재 활성 전략: {strategies}")
-    
-    # 거래 시간 체크
-    trading = is_trading_time()
-    logger.info(f"⏰ 거래 시간: {'Yes' if trading else 'No'}")
-
-async def test_unified_scheduler():
-    """🧪 통합 스케줄러 종합 테스트"""
-    print("\n" + "="*80)
-    print("🧪 최고퀸트프로젝트 - 통합 스케줄러 테스트")
-    print("="*80)
-    
-    try:
-        # 1. 스케줄러 초기화
-        print("1️⃣ 통합 스케줄러 초기화...")
-        scheduler = UnifiedTradingScheduler()
-        print(f"   ✅ 완료 - 기본 스케줄러: {APSCHEDULER_AVAILABLE}")
-        print(f"   ✅ 백테스팅 연동: {BACKTESTER_AVAILABLE}")
-        print(f"   ✅ 알림 시스템: {NOTIFIER_AVAILABLE}")
-        
-        # 2. 현재 상태 확인
-        print("\n2️⃣ 현재 스케줄 상태...")
-        status = scheduler.get_schedule_status()
-        print(f"   📅 오늘 전략: {status['today_strategies']}")
-        print(f"   ⏰ 거래 시간: {status['trading_time']}")
-        print(f"   💼 등록된 작업: {status['job_count']}개")
-        
-        # 3. 시장별 상세 상태
-        print("\n3️⃣ 시장별 상세 상태...")
-        for market, market_status in status['market_status'].items():
-            market_name = {'US': '🇺🇸미국', 'JP': '🇯🇵일본', 'COIN': '🪙암호화폐'}.get(market, market)
-            active = "🟢" if market_status['should_run'] else "🔴"
-            print(f"   {market_name}: {active} 활성({market_status['active_today']}) 개장({market_status['trading_now']}) 실행가능({market_status['should_run']})")
-            
-            # 세션 정보
-            for session in market_status['sessions'][:1]:  # 첫 번째 세션만
-                print(f"        └─ {session['type']}: {session['start']}-{session['end']} ({session['timezone']})")
-        
-        # 4. 데모 작업 등록
-        print("\n4️⃣ 데모 작업 등록...")
-        
-        # 간단한 인터벌 작업
-        scheduler.add_interval_job(demo_task, seconds=5, job_id='demo_interval')
-        print("   ✅ 5초 간격 데모 작업 등록")
-        
-        # 크론 작업 (매분 0초에 실행)
-        scheduler.add_cron_job(demo_task, '0 * * * *', job_id='demo_cron')
-        print("   ✅ 매시간 0분 데모 작업 등록")
-        
-        # 5분 후 단발 작업
-        future_time = datetime.now() + timedelta(minutes=5)
-        scheduler.add_date_job(demo_task, future_time, job_id='demo_date')
-        print(f"   ✅ 5분 후 단발 작업 등록: {future_time.strftime('%H:%M:%S')}")
-        
-        # 5. 작업 목록 확인
-        print("\n5️⃣ 등록된 작업 목록...")
-        jobs_summary = scheduler.get_all_jobs_summary()
-        print(f"   📊 총 작업: {jobs_summary['total_jobs']}개")
-        print(f"   ▶️ 실행 중: {jobs_summary['running_jobs']}개")
-        print(f"   ⏸️ 일시정지: {jobs_summary['paused_jobs']}개")
-        print(f"   📅 다음 실행: {jobs_summary['next_execution']}")
-        
-        # 작업 상세 정보
-        for job in jobs_summary['jobs'][:5]:  # 처음 5개만
-            print(f"     - {job['id']}: {job['next_run'] or 'N/A'}")
-        
-        # 6. 전략별 작업 등록 데모
-        print("\n6️⃣ 전략별 작업 등록 데모...")
-        
-        def us_strategy_demo():
-            if should_run_strategy('US'):
-                logger.info("🇺🇸 미국 전략 데모 실행")
+                else:
+                    return {'status': 'error', 'message': '백업 생성 실패'}
             else:
-                logger.info("🇺🇸 미국 전략 실행 조건 미충족")
-        
-        def jp_strategy_demo():
-            if should_run_strategy('JP'):
-                logger.info("🇯🇵 일본 전략 데모 실행")
-            else:
-                logger.info("🇯🇵 일본 전략 실행 조건 미충족")
-        
-        def coin_strategy_demo():
-            if should_run_strategy('COIN'):
-                logger.info("🪙 코인 전략 데모 실행")
-            else:
-                logger.info("🪙 코인 전략 실행 조건 미충족")
-        
-        # 전략별 작업 등록
-        scheduler.add_strategy_job('US', us_strategy_demo, '0 9 * * 1-5', 'us_demo')
-        scheduler.add_strategy_job('JP', jp_strategy_demo, '0 9 * * 1-5', 'jp_demo')
-        scheduler.add_strategy_job('COIN', coin_strategy_demo, '0 */4 * * *', 'coin_demo')
-        
-        print("   ✅ 미국 전략 작업: 평일 오전 9시")
-        print("   ✅ 일본 전략 작업: 평일 오전 9시")
-        print("   ✅ 코인 전략 작업: 4시간마다")
-        
-        # 7. 조건부 작업 데모
-        print("\n7️⃣ 조건부 작업 데모...")
-        
-        def market_condition():
-            """시장이 열려있으면 True"""
-            return is_trading_time()
-        
-        def market_action():
-            """시장이 열려있을 때 실행되는 작업"""
-            logger.info("📈 시장 개장 중 - 조건부 작업 실행")
-        
-        scheduler.add_conditional_job(market_condition, market_action, 30, 'market_conditional')
-        print("   ✅ 시장 개장시에만 실행되는 조건부 작업 등록 (30초마다 체크)")
-        
-        # 8. 최종 상태 확인
-        print("\n8️⃣ 최종 상태 확인...")
-        final_summary = scheduler.get_all_jobs_summary()
-        print(f"   📊 최종 등록 작업: {final_summary['total_jobs']}개")
-        print(f"   🕒 다음 실행: {final_summary['next_execution']}")
-        
-        # 작업 타입별 분포
-        types = final_summary['jobs_by_type']
-        print(f"   📋 작업 타입: 크론({types['cron']}) 인터벌({types['interval']}) 단발({types['date']})")
-        
-        print("\n✅ 모든 테스트 완료!")
-        print("\n⏰ 데모 작업들이 백그라운드에서 실행됩니다...")
-        print("⚠️ 종료하려면 Ctrl+C를 누르세요")
-        
-        return scheduler
-        
-    except Exception as e:
-        print(f"❌ 테스트 중 오류: {e}")
-        traceback.print_exc()
-        return None
-
-def run_scheduler_demo():
-    """스케줄러 데모 실행"""
-    print("🚀 최고퀸트프로젝트 - 통합 스케줄러 데모 시작")
-    
-    async def demo_main():
-        scheduler = await test_unified_scheduler()
-        
-        if scheduler:
-            try:
-                # 무한 대기 (Ctrl+C로 종료)
-                while True:
-                    await asyncio.sleep(1)
-            except KeyboardInterrupt:
-                print("\n🛑 사용자에 의해 중단됨")
-                scheduler.shutdown()
-                print("✅ 스케줄러 정상 종료")
-    
-    try:
-        asyncio.run(demo_main())
-    except KeyboardInterrupt:
-        print("\n🛑 프로그램 종료")
-
-# ================================================================================================
-# 🔧 CLI 인터페이스
-# ================================================================================================
-
-def run_scheduler_cli():
-    """CLI 인터페이스"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='최고퀸트프로젝트 통합 스케줄러')
-    parser.add_argument('--mode', choices=['test', 'demo', 'status', 'export'], 
-                       default='demo', help='실행 모드')
-    parser.add_argument('--config', default='settings.yaml', 
-                       help='설정 파일 경로')
-    parser.add_argument('--output', default='schedule_export.yaml',
-                       help='내보내기 파일 경로')
-    
-    args = parser.parse_args()
-    
-    try:
-        if args.mode == 'test':
-            # 테스트만 실행
-            asyncio.run(test_unified_scheduler())
-            
-        elif args.mode == 'demo':
-            # 데모 실행
-            run_scheduler_demo()
-            
-        elif args.mode == 'status':
-            # 상태 조회만
-            scheduler = UnifiedTradingScheduler(args.config)
-            status = scheduler.get_schedule_status()
-            
-            print("\n📊 스케줄러 상태")
-            print("="*50)
-            print(f"상태: {status['scheduler_status']}")
-            print(f"가동 시간: {status['session_uptime']}")
-            print(f"오늘 전략: {status['today_strategies']}")
-            print(f"거래 시간: {status['trading_time']}")
-            print(f"등록 작업: {status['job_count']}개")
-            
-            scheduler.shutdown(wait=False)
-            
-        elif args.mode == 'export':
-            # 설정 내보내기
-            scheduler = UnifiedTradingScheduler(args.config)
-            success = scheduler.export_schedule_config(args.output)
-            
-            if success:
-                print(f"✅ 스케줄 설정 내보내기 완료: {args.output}")
-            else:
-                print("❌ 내보내기 실패")
+                # 기본 백업 (설정 파일만)
+                backup_dir = Path('backups')
+                backup_dir.mkdir(exist_ok=True)
                 
-            scheduler.shutdown(wait=False)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                
+                files_to_backup = [
+                    'quint_config.yaml',
+                    'scheduler_config.yaml',
+                    'quint_portfolio.json'
+                ]
+                
+                backup_count = 0
+                for file_name in files_to_backup:
+                    if Path(file_name).exists():
+                        import shutil
+                        shutil.copy(file_name, backup_dir / f"{file_name}_{timestamp}")
+                        backup_count += 1
+                
+                return {
+                    'status': 'success',
+                    'backup_files': backup_count,
+                    'timestamp': timestamp
+                }
+            
+        except Exception as e:
+            logging.error(f"시스템 백업 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
     
-    except KeyboardInterrupt:
-        print("\n⚠️ 사용자에 의해 중단됨")
-    except Exception as e:
-        print(f"❌ 실행 오류: {e}")
+    async def system_cleanup(self) -> Dict:
+        """시스템 정리"""
+        try:
+            cleanup_results = {}
+            
+            # 로그 파일 정리
+            logs_cleaned = self._cleanup_old_logs()
+            cleanup_results['logs_cleaned'] = logs_cleaned
+            
+            # 임시 파일 정리
+            temp_cleaned = self._cleanup_temp_files()
+            cleanup_results['temp_files_cleaned'] = temp_cleaned
+            
+            # 데이터베이스 정리 (QUINT_MODULES_AVAILABLE일 때)
+            if QUINT_MODULES_AVAILABLE:
+                try:
+                    from utils import database
+                    db_cleaned = database.cleanup_old_data(90)
+                    cleanup_results['database_records_cleaned'] = db_cleaned
+                except:
+                    cleanup_results['database_records_cleaned'] = 0
+            
+            return {
+                'status': 'success',
+                'cleanup_results': cleanup_results
+            }
+            
+        except Exception as e:
+            logging.error(f"시스템 정리 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    async def health_check(self) -> Dict:
+        """시스템 헬스 체크"""
+        try:
+            health_status = {
+                'timestamp': datetime.now().isoformat(),
+                'overall_status': 'healthy',
+                'components': {}
+            }
+            
+            # 기본 시스템 체크
+            health_status['components']['config'] = {
+                'status': 'ok' if Path('quint_config.yaml').exists() else 'warning',
+                'details': 'Configuration file check'
+            }
+            
+            health_status['components']['portfolio'] = {
+                'status': 'ok' if Path('quint_portfolio.json').exists() else 'info',
+                'details': 'Portfolio file check'
+            }
+            
+            # 디스크 공간 체크
+            import shutil
+            disk_usage = shutil.disk_usage('.')
+            free_space_gb = disk_usage.free / (1024**3)
+            
+            health_status['components']['disk_space'] = {
+                'status': 'ok' if free_space_gb > 1.0 else 'warning',
+                'details': f'{free_space_gb:.1f}GB free space'
+            }
+            
+            # 퀸트 모듈 체크
+            health_status['components']['quint_modules'] = {
+                'status': 'ok' if QUINT_MODULES_AVAILABLE else 'warning',
+                'details': 'Quint modules availability'
+            }
+            
+            # 전체 상태 결정
+            component_statuses = [comp['status'] for comp in health_status['components'].values()]
+            if 'error' in component_statuses:
+                health_status['overall_status'] = 'error'
+            elif 'warning' in component_statuses:
+                health_status['overall_status'] = 'warning'
+            
+            return {
+                'status': 'success',
+                'health_status': health_status
+            }
+            
+        except Exception as e:
+            logging.error(f"헬스 체크 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    # ========================================================================
+    # 📱 알림 헬퍼 메서드들
+    # ========================================================================
+    async def _send_urgent_signal_alert(self, market: str, signals: List) -> None:
+        """긴급 시그널 알림"""
+        try:
+            if self.notification_manager:
+                message = f"🚨 {market} 긴급 매수 신호!\n\n"
+                for signal in signals:
+                    message += f"📈 {signal.symbol}: {signal.confidence:.1%} 신뢰도\n"
+                
+                await self.notification_manager.send_system_alert(
+                    "긴급 매수 신호", message, "high"
+                )
+        except Exception as e:
+            logging.error(f"긴급 시그널 알림 실패: {e}")
+    
+    async def _send_performance_alert(self, performance: float, total_value: float) -> None:
+        """성과 알림"""
+        try:
+            if self.notification_manager:
+                status = "상승" if performance > 0 else "하락"
+                message = f"💼 포트폴리오 {status}: {abs(performance):.1f}%\n"
+                message += f"현재 가치: {total_value:,.0f}원"
+                
+                priority = "high" if abs(performance) > 10 else "medium"
+                
+                await self.notification_manager.send_system_alert(
+                    "포트폴리오 성과 알림", message, priority
+                )
+        except Exception as e:
+            logging.error(f"성과 알림 실패: {e}")
+    
+    async def _send_rebalancing_alert(self, reason: str, allocation: float) -> None:
+        """리밸런싱 알림"""
+        try:
+            if self.notification_manager:
+                message = f"🔄 리밸런싱 필요\n사유: {reason}\n현재 할당: {allocation:.1f}%"
+                
+                await self.notification_manager.send_system_alert(
+                    "포트폴리오 리밸런싱", message, "medium"
+                )
+        except Exception as e:
+            logging.error(f"리밸런싱 알림 실패: {e}")
+    
+    async def _trigger_emergency_stop(self, loss_percent: float) -> None:
+        """긴급 정지 트리거"""
+        try:
+            if self.notification_manager:
+                message = f"🛑 긴급 정지 발동!\n손실률: {loss_percent:.1f}%\n즉시 확인 필요"
+                
+                await self.notification_manager.send_system_alert(
+                    "긴급 정지", message, "critical"
+                )
+            
+            # 추가 안전 조치 (자동매매 중지 등)
+            if config:
+                config.update('system.auto_trading', False)
+                
+            logging.critical(f"🛑 긴급 정지 발동: {loss_percent:.1f}% 손실")
+            
+        except Exception as e:
+            logging.error(f"긴급 정지 처리 실패: {e}")
+    
+    async def _send_risk_warning(self, loss_percent: float, warning_level: float) -> None:
+        """리스크 경고"""
+        try:
+            if self.notification_manager:
+                message = f"⚠️ 리스크 경고\n손실률: {loss_percent:.1f}%\n경고 수준: {warning_level}%"
+                
+                await self.notification_manager.send_system_alert(
+                    "리스크 경고", message, "high"
+                )
+        except Exception as e:
+            logging.error(f"리스크 경고 실패: {e}")
+    
+    async def _send_daily_report_notification(self, report_data: Dict) -> None:
+        """일일 리포트 알림"""
+        try:
+            if self.notification_manager:
+                await self.notification_manager.send_daily_report()
+        except Exception as e:
+            logging.error(f"일일 리포트 알림 실패: {e}")
+    
+    async def _send_weekly_report_notification(self, report_data: Dict) -> None:
+        """주간 리포트 알림"""
+        try:
+            if self.notification_manager:
+                await self.notification_manager.send_weekly_report()
+        except Exception as e:
+            logging.error(f"주간 리포트 알림 실패: {e}")
+    
+    async def _send_risk_report_notification(self, risk_report: Dict) -> None:
+        """리스크 리포트 알림"""
+        try:
+            if self.notification_manager:
+                message = f"📊 일일 리스크 리포트\n"
+                message += f"포트폴리오: {risk_report['portfolio_value']:,.0f}원\n"
+                message += f"분산도: {risk_report['diversification_score']:.0f}점\n"
+                message += f"리스크 수준: {risk_report['risk_level']}"
+                
+                await self.notification_manager.send_system_alert(
+                    "일일 리스크 리포트", message, "medium"
+                )
+        except Exception as e:
+            logging.error(f"리스크 리포트 알림 실패: {e}")
+    
+    # ========================================================================
+    # 🧹 정리 헬퍼 메서드들
+    # ========================================================================
+    def _cleanup_old_logs(self) -> int:
+        """오래된 로그 파일 정리"""
+        try:
+            logs_dir = Path('logs')
+            if not logs_dir.exists():
+                return 0
+            
+            cutoff_date = datetime.now() - timedelta(days=30)
+            cleaned_count = 0
+            
+            for log_file in logs_dir.glob('*.log*'):
+                if log_file.stat().st_mtime < cutoff_date.timestamp():
+                    log_file.unlink()
+                    cleaned_count += 1
+            
+            return cleaned_count
+            
+        except Exception as e:
+            logging.error(f"로그 정리 실패: {e}")
+            return 0
+    
+    def _cleanup_temp_files(self) -> int:
+        """임시 파일 정리"""
+        try:
+            temp_patterns = ['*.tmp', '*.temp', '*~', '.DS_Store']
+            cleaned_count = 0
+            
+            for pattern in temp_patterns:
+                for temp_file in Path('.').glob(pattern):
+                    if temp_file.is_file():
+                        temp_file.unlink()
+                        cleaned_count += 1
+            
+            return cleaned_count
+            
+        except Exception as e:
+            logging.error(f"임시 파일 정리 실패: {e}")
+            return 0
 
-# ================================================================================================
-# 🚀 메인 실행
-# ================================================================================================
+# ============================================================================
+# 🕐 퀸트프로젝트 마스터 스케줄러
+# ============================================================================
+class QuintScheduler:
+    """퀸트프로젝트 통합 스케줄러"""
+    
+    def __init__(self):
+        self.tasks = {}
+        self.executor = TaskExecutor()
+        self.scheduled_tasks = QuintScheduledTasks()
+        self.timing_calculator = MarketTimingCalculator()
+        self.running = False
+        self.scheduler_thread = None
+        
+        # 스케줄러 초기화
+        self._initialize_tasks()
+        self._setup_scheduler()
+        
+        logging.info("🕐 퀸트프로젝트 스케줄러 초기화 완료")
+    
+    def _initialize_tasks(self):
+        """기본 작업들 등록"""
+        # 시장 스캔 작업들 (요일별 최적화)
+        if scheduler_config.get('market_scan.us_stocks.enabled', True):
+            self.register_task(ScheduledTask(
+                name="scan_us_stocks",
+                description="미국 주식 시장 스캔 (화목 23시)",
+                cron_expression=scheduler_config.get('market_scan.us_stocks.cron', '0 23 * * 2,4'),
+                function=self.scheduled_tasks.scan_us_stocks,
+                timeout_seconds=scheduler_config.get('market_scan.us_stocks.timeout', 180)
+            ))
+        
+        if scheduler_config.get('market_scan.upbit_crypto.enabled', True):
+            self.register_task(ScheduledTask(
+                name="scan_crypto_market",
+                description="암호화폐 시장 스캔 (월금)",
+                cron_expression=scheduler_config.get('market_scan.upbit_crypto.cron', '0 9,21 * * 1,5'),
+                function=self.scheduled_tasks.scan_crypto_market,
+                timeout_seconds=scheduler_config.get('market_scan.upbit_crypto.timeout', 120)
+            ))
+        
+        if scheduler_config.get('market_scan.japan_stocks.enabled', True):
+            self.register_task(ScheduledTask(
+                name="scan_japan_stocks",
+                description="일본 주식 시장 스캔 (화목)",
+                cron_expression=scheduler_config.get('market_scan.japan_stocks.cron', '0 8 * * 2,4'),
+                function=self.scheduled_tasks.scan_japan_stocks,
+                timeout_seconds=scheduler_config.get('market_scan.japan_stocks.timeout', 150)
+            ))
+        
+        if scheduler_config.get('market_scan.india_stocks.enabled', True):
+            self.register_task(ScheduledTask(
+                name="scan_india_stocks",
+                description="인도 주식 시장 스캔 (수)",
+                cron_expression=scheduler_config.get('market_scan.india_stocks.cron', '0 12 * * 3'),
+                function=self.scheduled_tasks.scan_india_stocks,
+                timeout_seconds=scheduler_config.get('market_scan.india_stocks.timeout', 150)
+            ))
+        
+        # 포트폴리오 관리 작업들
+        if scheduler_config.get('portfolio.rebalancing.enabled', True):
+            self.register_task(ScheduledTask(
+                name="rebalance_portfolio",
+                description="포트폴리오 리밸런싱",
+                cron_expression=scheduler_config.get('portfolio.rebalancing.cron', '0 22 * * 5'),
+                function=self.scheduled_tasks.rebalance_portfolio,
+                timeout_seconds=scheduler_config.get('portfolio.rebalancing.timeout', 300)
+            ))
+        
+        if scheduler_config.get('portfolio.performance_check.enabled', True):
+            self.register_task(ScheduledTask(
+                name="check_portfolio_performance",
+                description="포트폴리오 성과 체크",
+                cron_expression=scheduler_config.get('portfolio.performance_check.cron', '0 9,15,21 * * *'),
+                function=self.scheduled_tasks.check_portfolio_performance,
+                timeout_seconds=scheduler_config.get('portfolio.performance_check.timeout', 60)
+            ))
+        
+        # 리스크 관리 작업들
+        if scheduler_config.get('risk_management.real_time_monitoring.enabled', True):
+            self.register_task(ScheduledTask(
+                name="monitor_real_time_risk",
+                description="실시간 리스크 모니터링",
+                cron_expression=scheduler_config.get('risk_management.real_time_monitoring.cron', '*/5 * * * *'),
+                function=self.scheduled_tasks.monitor_real_time_risk,
+                timeout_seconds=scheduler_config.get('risk_management.real_time_monitoring.timeout', 30),
+                max_errors=10  # 리스크 모니터링은 에러 허용도 높게
+            ))
+        
+        if scheduler_config.get('risk_management.daily_risk_report.enabled', True):
+            self.register_task(ScheduledTask(
+                name="generate_daily_risk_report",
+                description="일일 리스크 리포트",
+                cron_expression=scheduler_config.get('risk_management.daily_risk_report.cron', '0 20 * * *'),
+                function=self.scheduled_tasks.generate_daily_risk_report,
+                timeout_seconds=scheduler_config.get('risk_management.daily_risk_report.timeout', 120)
+            ))
+        
+        # 리포트 생성 작업들
+        if scheduler_config.get('reports.daily_report.enabled', True):
+            self.register_task(ScheduledTask(
+                name="generate_daily_report",
+                description="일일 성과 리포트",
+                cron_expression=scheduler_config.get('reports.daily_report.cron', '0 19 * * *'),
+                function=self.scheduled_tasks.generate_daily_report,
+                timeout_seconds=scheduler_config.get('reports.daily_report.timeout', 180)
+            ))
+        
+        if scheduler_config.get('reports.weekly_report.enabled', True):
+            self.register_task(ScheduledTask(
+                name="generate_weekly_report",
+                description="주간 성과 리포트",
+                cron_expression=scheduler_config.get('reports.weekly_report.cron', '0 18 * * 0'),
+                function=self.scheduled_tasks.generate_weekly_report,
+                timeout_seconds=scheduler_config.get('reports.weekly_report.timeout', 300)
+            ))
+        
+        if scheduler_config.get('reports.monthly_report.enabled', True):
+            self.register_task(ScheduledTask(
+                name="generate_monthly_report",
+                description="월간 성과 리포트",
+                cron_expression=scheduler_config.get('reports.monthly_report.cron', '0 10 1 * *'),
+                function=self.scheduled_tasks.generate_monthly_report,
+                timeout_seconds=scheduler_config.get('reports.monthly_report.timeout', 600)
+            ))
+        
+        # 시스템 유지보수 작업들
+        if scheduler_config.get('maintenance.backup.enabled', True):
+            self.register_task(ScheduledTask(
+                name="system_backup",
+                description="시스템 백업",
+                cron_expression=scheduler_config.get('maintenance.backup.cron', '0 2 * * *'),
+                function=self.scheduled_tasks.system_backup,
+                timeout_seconds=scheduler_config.get('maintenance.backup.timeout', 120)
+            ))
+        
+        if scheduler_config.get('maintenance.cleanup.enabled', True):
+            self.register_task(ScheduledTask(
+                name="system_cleanup",
+                description="시스템 정리",
+                cron_expression=scheduler_config.get('maintenance.cleanup.cron', '0 3 * * 0'),
+                function=self.scheduled_tasks.system_cleanup,
+                timeout_seconds=scheduler_config.get('maintenance.cleanup.timeout', 180)
+            ))
+        
+        if scheduler_config.get('maintenance.health_check.enabled', True):
+            self.register_task(ScheduledTask(
+                name="health_check",
+                description="시스템 헬스 체크",
+                cron_expression=scheduler_config.get('maintenance.health_check.cron', '*/10 * * * *'),
+                function=self.scheduled_tasks.health_check,
+                timeout_seconds=scheduler_config.get('maintenance.health_check.timeout', 60),
+                max_errors=20  # 헬스체크는 에러 허용도 높게
+            ))
+    
+    def _setup_scheduler(self):
+        """스케줄러 설정"""
+        # python-crontab 사용하여 cron 표현식 파싱
+        for task in self.tasks.values():
+            if task.enabled:
+                self._schedule_task(task)
+    
+    def _schedule_task(self, task: ScheduledTask):
+        """개별 작업 스케줄링"""
+        try:
+            # cron 표현식을 schedule 라이브러리로 변환하여 등록
+            # 간단한 변환 (실제로는 더 정교한 파싱 필요)
+            self._convert_cron_to_schedule(task)
+            
+        except Exception as e:
+            logging.error(f"작업 스케줄링 실패 {task.name}: {e}")
+    
+    def _convert_cron_to_schedule(self, task: ScheduledTask):
+        """cron 표현식을 schedule로 변환 (요일별 최적화 지원)"""
+        # 기본적인 cron 표현식만 지원 (확장 가능)
+        cron = task.cron_expression
+        
+        if cron == '*/30 * * * *':  # 30분마다
+            schedule.every(30).minutes.do(self._run_scheduled_task, task)
+        elif cron == '*/5 * * * *':  # 5분마다
+            schedule.every(5).minutes.do(self._run_scheduled_task, task)
+        elif cron == '*/10 * * * *':  # 10분마다
+            schedule.every(10).minutes.do(self._run_scheduled_task, task)
+        elif cron.endswith('* * 2,4'):  # 화요일, 목요일만 (미국, 일본)
+            hour = int(cron.split()[1])
+            minute = int(cron.split()[0])
+            schedule.every().tuesday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+            schedule.every().thursday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+        elif cron.endswith('* * 1,5'):  # 월요일, 금요일만 (암호화폐)
+            times = cron.split()[1].split(',') if ',' in cron.split()[1] else [cron.split()[1]]
+            minute = int(cron.split()[0])
+            for time_hour in times:
+                hour = int(time_hour)
+                schedule.every().monday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+                schedule.every().friday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+        elif cron.endswith('* * 3'):  # 수요일만 (인도)
+            hour = int(cron.split()[1])
+            minute = int(cron.split()[0])
+            schedule.every().wednesday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+        elif cron.endswith('* * 1-5'):  # 평일만 (기존)
+            hour = int(cron.split()[1])
+            minute = int(cron.split()[0])
+            schedule.every().monday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+            schedule.every().tuesday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+            schedule.every().wednesday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+            schedule.every().thursday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+            schedule.every().friday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+        elif cron.endswith('* * *'):  # 매일
+            hour = int(cron.split()[1])
+            minute = int(cron.split()[0])
+            schedule.every().day.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+        elif cron.endswith('* * 0'):  # 일요일만
+            hour = int(cron.split()[1])
+            minute = int(cron.split()[0])
+            schedule.every().sunday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+        elif cron.endswith('* * 5'):  # 금요일만
+            hour = int(cron.split()[1])
+            minute = int(cron.split()[0])
+            schedule.every().friday.at(f"{hour:02d}:{minute:02d}").do(self._run_scheduled_task, task)
+    
+    def _run_scheduled_task(self, task: ScheduledTask):
+        """스케줄된 작업 실행"""
+        if not task.enabled:
+            return
+        
+        # 비동기 작업을 동기적으로 실행
+        def run_async():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(self.executor.execute_task(task))
+                logging.info(f"작업 완료: {task.name} - {result.success}")
+            except Exception as e:
+                logging.error(f"작업 실행 오류: {task.name} - {e}")
+            finally:
+                loop.close()
+        
+        # 별도 스레드에서 실행
+        thread = threading.Thread(target=run_async, daemon=True)
+        thread.start()
+    
+    def register_task(self, task: ScheduledTask):
+        """작업 등록"""
+        self.tasks[task.name] = task
+        logging.info(f"작업 등록: {task.name} ({task.cron_expression})")
+    
+    def unregister_task(self, task_name: str):
+        """작업 등록 해제"""
+        if task_name in self.tasks:
+            del self.tasks[task_name]
+            logging.info(f"작업 등록 해제: {task_name}")
+    
+    def enable_task(self, task_name: str):
+        """작업 활성화"""
+        if task_name in self.tasks:
+            self.tasks[task_name].enabled = True
+            logging.info(f"작업 활성화: {task_name}")
+    
+    def disable_task(self, task_name: str):
+        """작업 비활성화"""
+        if task_name in self.tasks:
+            self.tasks[task_name].enabled = False
+            logging.info(f"작업 비활성화: {task_name}")
+    
+    async def run_task_now(self, task_name: str) -> TaskResult:
+        """작업 즉시 실행"""
+        if task_name not in self.tasks:
+            raise ValueError(f"존재하지 않는 작업: {task_name}")
+        
+        task = self.tasks[task_name]
+        result = await self.executor
+            logging.error(f"스케줄러 설정 저장 실패: {e}")
+    
+    def get(self, key_path: str, default=None):
+        """설정값 조회"""
+        keys = key_path.split('.')
+        value = self.config
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return default
+        return value
+    
+    def update(self, key_path: str, value):
+        """설정값 업데이트"""
+        keys = key_path.split('.')
+        config = self.config
+        for key in keys[:-1]:
+            if key not in config:
+                config[key] = {}
+            config = config[key]
+        config[keys[-1]] = value
+        self._save_config()
 
-if __name__ == "__main__":
-    try:
-        # 환경 확인
-        logger.info("🔍 환경 확인...")
-        logger.info(f"✅ APScheduler: {'사용 가능' if APSCHEDULER_AVAILABLE else '설치 필요'}")
-        logger.info(f"✅ 백테스팅 연동: {'사용 가능' if BACKTESTER_AVAILABLE else '선택사항'}")
-        logger.info(f"✅ 알림 시스템: {'사용 가능' if NOTIFIER_AVAILABLE else '선택사항'}")
-        logger.info(f"✅ 유틸리티: {'사용 가능' if UTILS_AVAILABLE else '선택사항'}")
+# 전역 스케줄러 설정
+scheduler_config = SchedulerConfig()
+
+# ============================================================================
+# 📈 시장별 최적 타이밍 계산기
+# ============================================================================
+class MarketTimingCalculator:
+    """시장별 최적 분석 타이밍 계산"""
+    
+    def __init__(self):
+        self.timezones = {
+            'us': pytz.timezone('America/New_York'),
+            'korea': pytz.timezone('Asia/Seoul'),
+            'japan': pytz.timezone('Asia/Tokyo'),
+            'india': pytz.timezone('Asia/Kolkata')
+        }
         
-        if not APSCHEDULER_AVAILABLE:
-            print("❌ APScheduler가 설치되지 않았습니다.")
-            print("설치 명령: pip install apscheduler")
-            exit(1)
+        self.market_hours = {
+            'us': {'open': time(9, 30), 'close': time(16, 0)},
+            'crypto': {'open': time(0, 0), 'close': time(23, 59)},
+            'japan': {'open': time(9, 0), 'close': time(15, 0)},
+            'india': {'open': time(9, 15), 'close': time(15, 30)}
+        }
+    
+    def get_optimal_scan_time(self, market: str) -> Dict:
+        """시장별 최적 스캔 시간 계산"""
+        now = datetime.now(pytz.UTC)
         
-        # CLI 실행
-        run_scheduler_cli()
+        if market == 'us':
+            # 미국 장시작 30분 전 (한국시간 오후 11시)
+            optimal_time = self._convert_to_cron('23:00', 'weekdays')
+        elif market == 'crypto':
+            # 암호화폐는 24시간이므로 30분마다
+            optimal_time = '*/30 * * * *'
+        elif market == 'japan':
+            # 일본 장시작 1시간 전 (한국시간 오전 8시)
+            optimal_time = self._convert_to_cron('08:00', 'weekdays')
+        elif market == 'india':
+            # 인도 장중 (한국시간 낮 12시)
+            optimal_time = self._convert_to_cron('12:00', 'weekdays')
+        else:
+            optimal_time = '0 9 * * 1-5'  # 기본값
         
-    except Exception as e:
-        logger.error(f"❌ 프로그램 실행 실패: {e}")
-        print("\n🔧 문제 해결 방법:")
-        print("1. 필수 패키지 설치: pip install apscheduler")
-        print("2. 설정 파일 확인: settings.yaml")
-        print("3. 간단한 테스트: python unified_scheduler.py --mode test")
+        return {
+            'cron_expression': optimal_time,
+            'description': f'{market} 시장 최적 스캔 시간',
+            'timezone': 'Asia/Seoul'
+        }
+    
+    def _convert_to_cron(self, time_str: str, frequency: str) -> str:
+        """시간을 cron 표현식으로 변환"""
+        hour, minute = map(int, time_str.split(':'))
+        
+        if frequency == 'weekdays':
+            return f"{minute} {hour} * * 1-5"
+        elif frequency == 'daily':
+            return f"{minute} {hour} * * *"
+        elif frequency == 'weekly':
+            return f"{minute} {hour} * * 0"
+        else:
+            return f"{minute} {hour} * * *"
+    
+    def is_market_open(self, market: str) -> bool:
+        """시장 개장 여부 확인"""
+        if market == 'crypto':
+            return True
+        
+        tz = self.timezones.get(market.replace('_stocks', ''), self.timezones['korea'])
+        now = datetime.now(tz)
+        
+        # 주말 체크
+        if now.weekday() >= 5:
+            return False
+        
+        market_key = market.replace('_stocks', '')
+        if market_key not in self.market_hours:
+            return False
+        
+        open_time = self.market_hours[market_key]['open']
+        close_time = self.market_hours[market_key]['close']
+        current_time = now.time()
+        
+        return open_time <= current_time <= close_time
+
+# ============================================================================
+# 🔄 작업 실행 엔진
+# ============================================================================
+class TaskExecutor:
+    """스케줄 작업 실행 엔진"""
+    
+    def __init__(self):
+        self.running_tasks = set()
+        self.task_history = []
+        self.max_history = 1000
+        self.executor_pool = None
+        
+    async def execute_task(self, task: ScheduledTask) -> TaskResult:
+        """작업 실행"""
+        if task.name in self.running_tasks:
+            return TaskResult(
+                task_name=task.name,
+                success=False,
+                execution_time=0,
+                error_message="이미 실행 중인 작업"
+            )
+        
+        self.running_tasks.add(task.name)
+        start_time = time_module.time()
+        
+        try:
+            # 타임아웃 적용
+            result_data = await asyncio.wait_for(
+                self._run_task_function(task),
+                timeout=task.timeout_seconds
+            )
+            
+            execution_time = time_module.time() - start_time
+            task.last_run = datetime.now()
+            task.run_count += 1
+            task.error_count = 0  # 성공시 에러 카운트 리셋
+            
+            result = TaskResult(
+                task_name=task.name,
+                success=True,
+                execution_time=execution_time,
+                result_data=result_data
+            )
+            
+            logging.info(f"✅ 작업 완료: {task.name} ({execution_time:.1f}초)")
+            
+        except asyncio.TimeoutError:
+            execution_time = time_module.time() - start_time
+            task.error_count += 1
+            
+            result = TaskResult(
+                task_name=task.name,
+                success=False,
+                execution_time=execution_time,
+                error_message=f"타임아웃 ({task.timeout_seconds}초)"
+            )
+            
+            logging.error(f"⏱️ 작업 타임아웃: {task.name}")
+            
+        except Exception as e:
+            execution_time = time_module.time() - start_time
+            task.error_count += 1
+            
+            result = TaskResult(
+                task_name=task.name,
+                success=False,
+                execution_time=execution_time,
+                error_message=str(e)
+            )
+            
+            logging.error(f"❌ 작업 실패: {task.name} - {e}")
+            
+        finally:
+            self.running_tasks.discard(task.name)
+        
+        # 히스토리 저장
+        self._save_to_history(result)
+        
+        # 에러가 너무 많으면 작업 비활성화
+        if task.error_count >= task.max_errors:
+            task.enabled = False
+            logging.warning(f"⚠️ 작업 비활성화: {task.name} (연속 {task.error_count}회 실패)")
+        
+        return result
+    
+    async def _run_task_function(self, task: ScheduledTask) -> Any:
+        """작업 함수 실행"""
+        if asyncio.iscoroutinefunction(task.function):
+            return await task.function()
+        else:
+            return task.function()
+    
+    def _save_to_history(self, result: TaskResult):
+        """실행 히스토리 저장"""
+        self.task_history.append(result)
+        
+        # 히스토리 크기 제한
+        if len(self.task_history) > self.max_history:
+            self.task_history = self.task_history[-self.max_history:]
+    
+    def get_task_statistics(self, task_name: str = None) -> Dict:
+        """작업 통계 조회"""
+        if task_name:
+            history = [r for r in self.task_history if r.task_name == task_name]
+        else:
+            history = self.task_history
+        
+        if not history:
+            return {}
+        
+        success_count = sum(1 for r in history if r.success)
+        total_count = len(history)
+        avg_execution_time = sum(r.execution_time for r in history) / total_count
+        
+        return {
+            'total_executions': total_count,
+            'success_count': success_count,
+            'failure_count': total_count - success_count,
+            'success_rate': success_count / total_count * 100,
+            'avg_execution_time': avg_execution_time,
+            'last_execution': history[-1].timestamp if history else None
+        }
+
+# ============================================================================
+# 🎯 핵심 스케줄 작업들
+# ============================================================================
+class QuintScheduledTasks:
+    """퀸트프로젝트 핵심 스케줄 작업들"""
+    
+    def __init__(self):
+        self.quint_master = None
+        self.notification_manager = None
+        self._initialize_components()
+    
+    def _initialize_components(self):
+        """컴포넌트 초기화"""
+        if QUINT_MODULES_AVAILABLE:
+            try:
+                self.quint_master = QuintProjectMaster()
+                self.notification_manager = QuintNotificationManager()
+            except Exception as e:
+                logging.error(f"퀸트 컴포넌트 초기화 실패: {e}")
+    
+    # ========================================================================
+    # 📊 시장 스캔 작업들
+    # ========================================================================
+    async def scan_us_stocks(self) -> Dict:
+        """미국 주식 시장 스캔"""
+        if not self.quint_master:
+            return {'status': 'error', 'message': '퀸트 마스터 없음'}
+        
+        try:
+            signals = await self.quint_master.us_engine.analyze_us_market()
+            buy_signals = [s for s in signals if s.action == 'BUY']
+            
+            # 중요한 신호가 있으면 즉시 알림
+            if len(buy_signals) >= 3:
+                await self._send_urgent_signal_alert('미국주식', buy_signals[:3])
+            
+            return {
+                'status': 'success',
+                'total_signals': len(signals),
+                'buy_signals': len(buy_signals),
+                'top_signals': [s.to_dict() for s in buy_signals[:5]]
+            }
+            
+        except Exception as e:
+            logging.error(f"미국주식 스캔 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    async def scan_crypto_market(self) -> Dict:
+        """암호화폐 시장 스캔"""
+        if not self.quint_master:
+            return {'status': 'error', 'message': '퀸트 마스터 없음'}
+        
+        try:
+            signals = await self.quint_master.crypto_engine.analyze_crypto_market()
+            buy_signals = [s for s in signals if s.action == 'BUY']
+            
+            # 고신뢰도 신호 체크
+            high_confidence = [s for s in buy_signals if s.confidence > 0.8]
+            if high_confidence:
+                await self._send_urgent_signal_alert('암호화폐', high_confidence[:2])
+            
+            return {
+                'status': 'success',
+                'total_signals': len(signals),
+                'buy_signals': len(buy_signals),
+                'high_confidence_signals': len(high_confidence)
+            }
+            
+        except Exception as e:
+            logging.error(f"암호화폐 스캔 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    async def scan_japan_stocks(self) -> Dict:
+        """일본 주식 시장 스캔"""
+        if not self.quint_master:
+            return {'status': 'error', 'message': '퀸트 마스터 없음'}
+        
+        try:
+            signals = await self.quint_master.japan_engine.analyze_japan_market()
+            buy_signals = [s for s in signals if s.action == 'BUY']
+            
+            return {
+                'status': 'success',
+                'total_signals': len(signals),
+                'buy_signals': len(buy_signals)
+            }
+            
+        except Exception as e:
+            logging.error(f"일본주식 스캔 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    async def scan_india_stocks(self) -> Dict:
+        """인도 주식 시장 스캔"""
+        if not self.quint_master:
+            return {'status': 'error', 'message': '퀸트 마스터 없음'}
+        
+        try:
+            signals = await self.quint_master.india_engine.analyze_india_market()
+            buy_signals = [s for s in signals if s.action == 'BUY']
+            
+            return {
+                'status': 'success',
+                'total_signals': len(signals),
+                'buy_signals': len(buy_signals)
+            }
+            
+        except Exception as e:
+            logging.error(f"인도주식 스캔 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    # ========================================================================
+    # 💼 포트폴리오 관리 작업들
+    # ========================================================================
+    async def check_portfolio_performance(self) -> Dict:
+        """포트폴리오 성과 체크"""
+        try:
+            if not self.quint_master:
+                return {'status': 'error', 'message': '퀸트 마스터 없음'}
+            
+            portfolio_summary = self.quint_master.portfolio_manager.get_portfolio_summary()
+            
+            # 성과 분석
+            total_value = portfolio_summary.get('total_value', 0)
+            target_value = config.get('system.portfolio_value', 100_000_000)
+            performance = ((total_value - target_value) / target_value) * 100
+            
+            # 성과 알림 (일정 수준 이상/이하일 때)
+            if abs(performance) > 5.0:  # 5% 이상 변동시
+                await self._send_performance_alert(performance, total_value)
+            
+            return {
+                'status': 'success',
+                'total_value': total_value,
+                'performance_percent': performance,
+                'position_count': portfolio_summary.get('total_positions', 0)
+            }
+            
+        except Exception as e:
+            logging.error(f"포트폴리오 성과 체크 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    async def rebalance_portfolio(self) -> Dict:
+        """포트폴리오 리밸런싱"""
+        try:
+            if not self.quint_master:
+                return {'status': 'error', 'message': '퀸트 마스터 없음'}
+            
+            # 전체 분석 실행
+            analysis_result = await self.quint_master.run_full_analysis()
+            
+            if 'error' in analysis_result:
+                return {'status': 'error', 'message': analysis_result['error']}
+            
+            # 리밸런싱 필요성 체크
+            threshold = scheduler_config.get('portfolio.rebalancing.threshold_percent', 5.0)
+            current_allocation = analysis_result.get('portfolio_allocation', 0)
+            
+            if current_allocation > 95.0:  # 너무 풀 투자된 경우
+                await self._send_rebalancing_alert("현금 비중 부족", current_allocation)
+            
+            return {
+                'status': 'success',
+                'signals_analyzed': analysis_result.get('total_signals', 0),
+                'buy_signals': analysis_result.get('buy_signals', 0),
+                'portfolio_allocation': current_allocation
+            }
+            
+        except Exception as e:
+            logging.error(f"포트폴리오 리밸런싱 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    # ========================================================================
+    # 🛡️ 리스크 관리 작업들
+    # ========================================================================
+    async def monitor_real_time_risk(self) -> Dict:
+        """실시간 리스크 모니터링"""
+        try:
+            if not self.quint_master:
+                return {'status': 'error', 'message': '퀸트 마스터 없음'}
+            
+            portfolio_summary = self.quint_master.portfolio_manager.get_portfolio_summary()
+            
+            # 손실 체크
+            total_value = portfolio_summary.get('total_value', 0)
+            target_value = config.get('system.portfolio_value', 100_000_000)
+            loss_percent = ((target_value - total_value) / target_value) * 100
+            
+            max_loss = scheduler_config.get('risk_management.real_time_monitoring.max_loss_percent', 10.0)
+            circuit_breaker = scheduler_config.get('risk_management.real_time_monitoring.circuit_breaker', True)
+            
+            # 긴급 정지 체크
+            if loss_percent > max_loss and circuit_breaker:
+                await self._trigger_emergency_stop(loss_percent)
+                
+                return {
+                    'status': 'emergency_stop',
+                    'loss_percent': loss_percent,
+                    'emergency_action': 'triggered'
+                }
+            
+            # 경고 수준 체크
+            warning_levels = [5.0, 7.5]  # 5%, 7.5% 손실시 경고
+            for warning_level in warning_levels:
+                if loss_percent > warning_level:
+                    await self._send_risk_warning(loss_percent, warning_level)
+                    break
+            
+            return {
+                'status': 'normal',
+                'loss_percent': loss_percent,
+                'risk_level': 'high' if loss_percent > 7.5 else 'medium' if loss_percent > 5.0 else 'low'
+            }
+            
+        except Exception as e:
+            logging.error(f"리스크 모니터링 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    async def generate_daily_risk_report(self) -> Dict:
+        """일일 리스크 리포트 생성"""
+        try:
+            # 포트폴리오 현황
+            if self.quint_master:
+                portfolio_summary = self.quint_master.portfolio_manager.get_portfolio_summary()
+            else:
+                portfolio_summary = {'total_value': 0, 'total_positions': 0}
+            
+            # 기본 리스크 지표
+            total_value = portfolio_summary.get('total_value', 0)
+            position_count = portfolio_summary.get('total_positions', 0)
+            
+            risk_report = {
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                'portfolio_value': total_value,
+                'position_count': position_count,
+                'diversification_score': min(position_count / 20 * 100, 100),  # 20개 기준
+                'risk_level': 'low' if position_count >= 15 else 'medium' if position_count >= 10 else 'high'
+            }
+            
+            # 리포트 알림 전송
+            if self.notification_manager:
+                await self._send_risk_report_notification(risk_report)
+            
+            return {
+                'status': 'success',
+                'report': risk_report
+            }
+            
+        except Exception as e:
+            logging.error(f"일일 리스크 리포트 생성 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    # ========================================================================
+    # 📊 리포트 생성 작업들
+    # ========================================================================
+    async def generate_daily_report(self) -> Dict:
+        """일일 성과 리포트 생성"""
+        try:
+            today = datetime.now().strftime('%Y-%m-%d')
+            
+            # 포트폴리오 현황
+            if self.quint_master:
+                portfolio_summary = self.quint_master.portfolio_manager.get_portfolio_summary()
+                
+                # 전체 분석 실행
+                analysis_result = await self.quint_master.run_full_analysis()
+            else:
+                portfolio_summary = {'total_value': 0}
+                analysis_result = {'buy_signals': 0, 'total_signals': 0}
+            
+            # 리포트 데이터 구성
+            report_data = {
+                'date': today,
+                'portfolio_value': portfolio_summary.get('total_value', 0),
+                'daily_signals': analysis_result.get('total_signals', 0),
+                'buy_signals': analysis_result.get('buy_signals', 0),
+                'market_summary': analysis_result.get('market_breakdown', {}),
+                'top_opportunities': analysis_result.get('optimized_portfolio', [])[:5]
+            }
+            
+            # 일일 리포트 알림 전송
+            if self.notification_manager:
+                await self._send_daily_report_notification(report_data)
+            
+            return {
+                'status': 'success',
+                'report': report_data
+            }
+            
+        except Exception as e:
+            logging.error(f"일일 리포트 생성 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+🏆 퀸트프로젝트 = 완벽한 자동화 스케줄링!
+"""
