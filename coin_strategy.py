@@ -752,31 +752,31 @@ class ExitStrategyEngine:
         
         # 1차 익절 (20% 매도)
         if (current_price >= position.target_take_profits[0] and 
-            profit_ratio >= 0.20):
-            sell_quantity = position.total_quantity * 0.2
+            profit_ratio >= 0.15):
+            sell_quantity = position.total_quantity * 0.3
             return {
                 'action': 'sell_partial',
                 'reason': 'take_profit_1',
                 'price': current_price,
                 'quantity': sell_quantity,
-                'details': f'1차 익절: 20% 매도'
+                'details': f'1차 익절: 30% 매도'
             }
         
         # 2차 익절 (50% 매도)
         if (current_price >= position.target_take_profits[1] and 
-            profit_ratio >= 0.50):
-            sell_quantity = position.total_quantity * 0.5
+            profit_ratio >= 0.25):
+            sell_quantity = position.total_quantity * 0.4
             return {
                 'action': 'sell_partial',
                 'reason': 'take_profit_2',
                 'price': current_price,
                 'quantity': sell_quantity,
-                'details': f'2차 익절: 50% 매도'
+                'details': f'2차 익절: 40% 매도'
             }
         
         # 3차 익절 (전량 매도)
         if (current_price >= position.target_take_profits[2] and 
-            profit_ratio >= 1.00):
+            profit_ratio >= 0.40):
             return {
                 'action': 'sell_all',
                 'reason': 'take_profit_3',
