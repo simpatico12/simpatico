@@ -467,8 +467,8 @@ class DiamondHandAlgorithm:
                     price * 1.18,  # 1차 익절 (+18%)
                     price * 1.30,  # 2차 익절 (+30%)
                     price * 1.50   # 3차 익절 (+50%)
-                 ]
-                 stop_loss = price * 0.90  # -10% 손절
+                ]
+                stop_loss = price * 0.90  # -10% 손절
 
             elif quality_score >= 0.6:  # 중품질
                 take_profits = [
