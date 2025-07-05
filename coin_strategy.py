@@ -1017,7 +1017,7 @@ class RealTimeMonitor:
         self.quantum_cycle = quantum_cycle
         self.monitoring = False
     
-    async def start_monitoring(self, check_interval: int = 300):  # 5분마다
+    async def start_monitoring(self, check_interval: int = 180):  # 3분마다
         """실시간 모니터링 시작"""
         self.monitoring = True
         logger.info("🔄 실시간 모니터링 시작")
