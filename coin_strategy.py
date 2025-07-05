@@ -747,62 +747,38 @@ class ExitStrategyEngine:
                 'details': f'손절 실행: {current_price} <= {position.stop_loss}'
             }
            # 2. 시간 기반 매도 (2주 = 14일)
-    holding_days = (datetime.now() - position.created_at).days
-    if holding_days >= 14:
-        if profit_ratio > 0.05:  # 5% 이상 수익시
-            return {
-                'action': 'sell_all',
-                'reason': 'time_limit_profit',
-                'price': current_price,
-                'quantity': position.total_quantity,
-                'details': f'2주 완료: {holding_days}일, {profit_ratio*100:.1f}% 수익으로 매도'
-            }
-        elif holding_days >= 16:  # 2주 초과시 무조건
-            return {
-                'action': 'sell_all',
-                'reason': 'time_limit_force',
-                'price': current_price,
-                'quantity': position.total_quantity,
-                'details': f'강제매도: {holding_days}일 초과'
-            }
+holding_days = (datetime.now() - position.created_at).days
+if holding_days >= 14:
+    if profit_ratio > 0.05:
+        return {
+            'action': 'sell_all',
+            'reason': 'time_limit_profit',
+            'price': current_price,
+            'quantity': position.total_quantity,
+            'details': f'2주 완료: {holding_days}일, {profit_ratio*100:.1f}% 수익으로 매도'
+        }
+elif holding_days >= 16:
+    return {
+        'action': 'sell_all',
+        'reason': 'time_limit_force',
+        'price': current_price,
+        'quantity': position.total_quantity,
+        'details': f'강제매도: {holding_days}일 초과'
+    }
 
-        # 3. 익절 체크 (단계별)
-        profit_ratio = (current_price - position.avg_price) / position.avg_price
-        
-        # 1차 익절 (20% 매도)
-        if (current_price >= position.target_take_profits[0] and 
-            profit_ratio >= 0.15):
-            sell_quantity = position.total_quantity * 0.3
-            return {
-                'action': 'sell_partial',
-                'reason': 'take_profit_1',
-                'price': current_price,
-                'quantity': sell_quantity,
-                'details': f'1차 익절: 30% 매도'
-            }
-        
-        # 2차 익절 (50% 매도)
-        if (current_price >= position.target_take_profits[1] and 
-            profit_ratio >= 0.25):
-            sell_quantity = position.total_quantity * 0.4
-            return {
-                'action': 'sell_partial',
-                'reason': 'take_profit_2',
-                'price': current_price,
-                'quantity': sell_quantity,
-                'details': f'2차 익절: 40% 매도'
-            }
-        
-        # 3차 익절 (전량 매도)
-        if (current_price >= position.target_take_profits[2] and 
-            profit_ratio >= 0.40):
-            return {
-                'action': 'sell_all',
-                'reason': 'take_profit_3',
-                'price': current_price,
-                'quantity': position.total_quantity,
-                'details': f'3차 익절: 전량 매도'
-            }
+# 3. 익절 체크 (단계별) - 별도 블록
+profit_ratio = (current_price - position.avg_price) / position.avg_price
+
+# 1차 익절
+if (current_price >= position.target_take_profits[0] and profit_ratio >= 0.15):
+    sell_quantity = position.total_quantity * 0.3
+    return {
+        'action': 'sell_partial',
+        'reason': 'take_profit_1',
+        'price': current_price,
+        'quantity': sell_quantity,
+        'details': '1차 익절: 30% 매도'
+    }
         
         # 3. 사이클 변화 매도
         cycle_exit = self._check_cycle_exit(position, current_cycle, profit_ratio)
