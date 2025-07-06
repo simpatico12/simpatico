@@ -2277,6 +2277,28 @@ def print_help():
 # 🏁 실행 진입점
 # ========================================================================================
 
+def calculate_take_profit_levels(self, price: float, mode: str) -> Dict:
+    """익절 레벨 계산"""
+    if mode == 'swing':
+        tp_levels = config.get('trading.swing.take_profit', [6.0, 12.0])
+        ratios = config.get('trading.swing.profit_ratios', [60.0, 40.0])
+        
+        return {
+            'tp1_price': price * (1 + tp_levels[0] / 100),
+            'tp2_price': price * (1 + tp_levels[1] / 100),
+            'tp1_ratio': ratios[0] / 100,
+            'tp2_ratio': ratios[1] / 100
+        }
+    else:  # classic
+        tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
+        return {
+            'tp1_price': price * (1 + tp_levels[0] / 100),
+            'tp2_price': price * (1 + tp_levels[1] / 100),
+            'tp1_ratio': 0.6,  # 60%
+            'tp2_ratio': 0.4   # 40%
+        }
+
+# 그리고 맨 마지막에 이것만 있어야 함
 if __name__ == "__main__":
     try:
         # 명령행 인자 처리
@@ -2303,17 +2325,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ 실행 오류: {e}")
         logging.error(f"실행 오류: {e}")
-        
-        'tp1_price': price * (1 + tp_levels[0] / 100),
-        'tp2_price': price * (1 + tp_levels[1] / 100),
-        'tp1_ratio': ratios[0] / 100,
-        'tp2_ratio': ratios[1] / 100
-        
-    else:  # classic
-        tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
-        return {
-            'tp1_price': price * (1 + tp_levels[0] / 100),
-            'tp2_price': price * (1 + tp_levels[1] / 100),
-            'tp1_ratio': 0.6,  # 60%
-            'tp2_ratio': 0.4   # 40%
-        }
