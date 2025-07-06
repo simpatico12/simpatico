@@ -664,6 +664,30 @@ class TradingSystem:
             shares = int(investment / price)
             
             return {
+                'total_shares': shares,
+                'investment': investment,
+                'weight': target_weight * 100
+            }
+            
+        except Exception as e:
+            logging.error(f"포지션 계산 실패: {e}")
+            return {'total_shares': 0, 'investment': 0, 'weight': 0}
+    
+    def calculate_take_profit_levels(self, price: float, mode: str) -> Dict:
+        """익절 레벨 계산"""
+        if mode == 'swing':
+            tp_levels = config.get('trading.swing.take_profit', [6.0, 12.0])
+            ratios = config.get('trading.swing.profit_ratios', [60.0, 40.0])
+            
+            return {
+                'tp1_price': price * (1 + tp_levels[0] / 100),
+                'tp2_price': price * (1 + tp_levels[1] / 100),
+                'tp1_ratio': ratios[0] / 100,
+                'tp2_ratio': ratios[1] / 100
+            }
+        else:  # classic
+            tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
+            return {
                 'tp1_price': price * (1 + tp_levels[0] / 100),
                 'tp2_price': price * (1 + tp_levels[1] / 100),
                 'tp1_ratio': 0.6,  # 60%
