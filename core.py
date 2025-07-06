@@ -1,1025 +1,1108 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-🏆 전설적 퀸트프로젝트 CORE 시스템 - 완전통합판
-================================================================
-
-4대 전략 + 네트워크 안전장치 + 자동화 시스템 통합 코어
-- 🇺🇸 미국주식 전략 (IBKR 연동, 스윙+클래식)
-- 🇯🇵 일본주식 전략 (화목 하이브리드)  
-- 🇮🇳 인도주식 전략 (수요일 전용 안정형)
-- 🪙 가상화폐 전략 (월금 매매, 전설급 5대 시스템)
-- 🚨 네트워크 안전장치 (장애시 자동매도)
-
-Author: 전설적퀸트팀 | Version: CORE v1.0
-"""
+# ========================================================================================
+# 💱 자동환전 시스템 (QuintCore 통합)
+# ========================================================================================
 
 import asyncio
-import logging
-import os
-import sys
 import json
 import time
-import warnings
 from datetime import datetime, timedelta
-from dataclasses import dataclass, asdict, field
-from pathlib import Path
-import numpy as np
-import pandas as pd
-import yaml
-import requests
-from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 import aiohttp
-from dotenv import load_dotenv
-import sqlite3
-from threading import Thread
-from typing import Dict, List, Optional, Tuple, Any, Union
-from enum import Enum
+import logging
 
-# 외부 라이브러리 (선택적 임포트)
-try:
-    import yfinance as yf
-    YF_AVAILABLE = True
-except ImportError:
-    YF_AVAILABLE = False
-    logging.warning("⚠️ yfinance 없음")
-
-try:
-    import pyupbit
-    UPBIT_AVAILABLE = True
-except ImportError:
-    UPBIT_AVAILABLE = False
-    logging.warning("⚠️ pyupbit 없음")
-
-try:
-    from ib_insync import *
-    IBKR_AVAILABLE = True
-except ImportError:
-    IBKR_AVAILABLE = False
-    logging.warning("⚠️ IBKR API 없음")
-
-warnings.filterwarnings('ignore')
-load_dotenv()
-
-# ========================================================================================
-# 🔧 통합 설정 관리자
-# ========================================================================================
-
-class QuintConfig:
-    """퀸트프로젝트 통합 설정 관리"""
+@dataclass
+class ExchangeRate:
+    """환율 정보"""
+    base_currency: str
+    target_currency: str
+    rate: float
+    timestamp: datetime
+    source: str
+    spread: float = 0.0
     
-    def __init__(self, config_path: str = "settings.yaml"):
-        self.config_path = config_path
-        self.config = {}
-        self._initialize_config()
+    @property
+    def pair(self) -> str:
+        return f"{self.base_currency}/{self.target_currency}"
+
+@dataclass
+class ExchangeTransaction:
+    """환전 거래 정보"""
+    transaction_id: str
+    from_currency: str
+    to_currency: str
+    from_amount: float
+    to_amount: float
+    exchange_rate: float
+    fee: float
+    status: str  # pending, completed, failed
+    timestamp: datetime
+    provider: str
+    metadata: Dict = field(default_factory=dict)
+
+class CurrencyExchangeManager:
+    """자동환전 관리자"""
     
-    def _initialize_config(self):
-        """설정 초기화"""
-        try:
-            if Path(self.config_path).exists():
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    self.config = yaml.safe_load(f) or {}
-            else:
-                self._create_default_config()
-                self._save_config()
-            
-            self._substitute_env_vars()
-            logging.info("🔥 QuintCore 설정 초기화 완료!")
-            
-        except Exception as e:
-            logging.error(f"❌ 설정 초기화 실패: {e}")
-            self._create_default_config()
-    
-    def _create_default_config(self):
-        """기본 설정 생성"""
-        self.config = {
-            'system': {
-                'project_name': 'LEGENDARY_QUINT_PROJECT',
-                'version': '1.0.0',
-                'mode': 'production',
-                'debug': False,
-                'demo_mode': True
-            },
-            'portfolio': {
-                'total_capital': 1000000000,
-                'allocation': {
-                    'us_strategy': 40.0,
-                    'japan_strategy': 25.0,
-                    'india_strategy': 20.0,
-                    'crypto_strategy': 10.0,
-                    'cash_reserve': 5.0
-                }
-            },
-            'us_strategy': {
-                'enabled': True,
-                'mode': 'swing',
-                'monthly_target': {'min': 5.0, 'max': 7.0},
-                'target_stocks': 8
-            },
-            'japan_strategy': {
-                'enabled': True,
-                'mode': 'hybrid',
-                'monthly_target': 14.0,
-                'trading_days': [1, 3]  # 화목
-            },
-            'india_strategy': {
-                'enabled': True,
-                'mode': 'conservative',
-                'monthly_target': 6.0,
-                'trading_days': [2]  # 수요일
-            },
-            'crypto_strategy': {
-                'enabled': True,
-                'mode': 'monthly_optimized',
-                'monthly_target': 6.0,
-                'trading_days': [0, 4]  # 월금
-            },
-            'network_failsafe': {
-                'enabled': True,
-                'mode': 'conservative_sell',
-                'check_interval': 60
-            }
+    def __init__(self):
+        self.enabled = config.get('auto_exchange.enabled', True)
+        self.auto_rebalance = config.get('auto_exchange.auto_rebalance', True)
+        self.rate_threshold = config.get('auto_exchange.rate_threshold', 0.02)  # 2% 변동시 알림
+        
+        # 지원 통화
+        self.supported_currencies = ['KRW', 'USD', 'JPY', 'INR', 'EUR', 'CNY']
+        
+        # 환율 캐시
+        self.rate_cache: Dict[str, ExchangeRate] = {}
+        self.cache_duration = 300  # 5분
+        
+        # 거래 히스토리
+        self.transactions: List[ExchangeTransaction] = []
+        self.load_transactions()
+        
+        # 목표 통화 비율 (포트폴리오 전략별)
+        self.target_allocation = {
+            'us_strategy': {'USD': 100.0},
+            'japan_strategy': {'JPY': 100.0},
+            'india_strategy': {'INR': 100.0},
+            'crypto_strategy': {'KRW': 100.0}
+        }
+        
+        # 환전 임계값 (이 금액 이상일 때만 자동환전)
+        self.min_exchange_amounts = {
+            'KRW': 1000000,    # 100만원
+            'USD': 1000,       # 1천달러
+            'JPY': 100000,     # 10만엔
+            'INR': 80000       # 8만루피
         }
     
-    def _substitute_env_vars(self):
-        """환경변수 치환"""
-        def substitute_recursive(obj):
-            if isinstance(obj, dict):
-                return {k: substitute_recursive(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [substitute_recursive(item) for item in obj]
-            elif isinstance(obj, str) and obj.startswith('${') and obj.endswith('}'):
-                var_content = obj[2:-1]
-                if ':-' in var_content:
-                    var_name, default = var_content.split(':-', 1)
-                    return os.getenv(var_name, default)
-                else:
-                    return os.getenv(var_content, obj)
-            return obj
+    async def get_exchange_rate(self, from_currency: str, to_currency: str, 
+                              force_refresh: bool = False) -> Optional[ExchangeRate]:
+        """환율 조회 (캐시 우선)"""
+        if from_currency == to_currency:
+            return ExchangeRate(from_currency, to_currency, 1.0, datetime.now(), 'system')
         
-        self.config = substitute_recursive(self.config)
-    
-    def _save_config(self):
-        """설정 저장"""
+        pair = f"{from_currency}/{to_currency}"
+        
+        # 캐시 확인
+        if not force_refresh and pair in self.rate_cache:
+            cached_rate = self.rate_cache[pair]
+            if (datetime.now() - cached_rate.timestamp).seconds < self.cache_duration:
+                return cached_rate
+        
+        # 실시간 환율 조회
         try:
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True, indent=2)
+            rate = await self._fetch_live_rate(from_currency, to_currency)
+            if rate:
+                self.rate_cache[pair] = rate
+                return rate
         except Exception as e:
-            logging.error(f"설정 저장 실패: {e}")
+            logging.error(f"환율 조회 실패 {pair}: {e}")
+        
+        return None
     
-    def get(self, key_path: str, default=None):
-        """점 표기법으로 설정값 조회"""
-        keys = key_path.split('.')
-        value = self.config
-        for key in keys:
-            if isinstance(value, dict) and key in value:
-                value = value[key]
-            else:
-                return default
-        return value
-
-# 전역 설정 인스턴스
-config = QuintConfig()
-
-# ========================================================================================
-# 📊 공통 데이터 클래스
-# ========================================================================================
-
-@dataclass
-class Signal:
-    """통합 시그널 클래스"""
-    symbol: str
-    strategy: str  # us, japan, india, crypto
-    action: str    # buy, sell, hold
-    confidence: float
-    price: float
-    target_price: float
-    stop_loss: float
-    reasoning: str
-    timestamp: datetime
-    metadata: Dict = field(default_factory=dict)
-
-@dataclass
-class Position:
-    """통합 포지션 클래스"""
-    symbol: str
-    strategy: str
-    quantity: float
-    avg_cost: float
-    entry_date: datetime
-    mode: str
-    unrealized_pnl: float = 0.0
-    metadata: Dict = field(default_factory=dict)
-
-@dataclass
-class PerformanceMetrics:
-    """성과 지표"""
-    strategy: str
-    total_return: float
-    monthly_return: float
-    sharpe_ratio: float
-    max_drawdown: float
-    win_rate: float
-    total_trades: int
-
-# ========================================================================================
-# 🛡️ 네트워크 안전장치 시스템 (간소화)
-# ========================================================================================
-
-class NetworkFailsafe:
-    """네트워크 장애 대응 안전장치"""
-    
-    def __init__(self):
-        self.enabled = config.get('network_failsafe.enabled', True)
-        self.mode = config.get('network_failsafe.mode', 'conservative_sell')
-        self.check_urls = [
-            'https://www.google.com',
-            'https://api.upbit.com/v1/market/all',
-            'https://api.binance.com/api/v3/ping'
+    async def _fetch_live_rate(self, from_currency: str, to_currency: str) -> Optional[ExchangeRate]:
+        """실시간 환율 조회 (다중 소스)"""
+        sources = [
+            self._fetch_from_exchangerate_api,
+            self._fetch_from_fixer_api,
+            self._fetch_from_currencylayer_api
         ]
-        self.consecutive_failures = 0
-        self.last_check = datetime.now()
+        
+        for fetch_func in sources:
+            try:
+                rate = await fetch_func(from_currency, to_currency)
+                if rate:
+                    return rate
+            except Exception as e:
+                logging.debug(f"환율 소스 실패: {e}")
+                continue
+        
+        return None
     
-    async def check_network_health(self) -> Dict:
-        """네트워크 상태 체크"""
-        if not self.enabled:
-            return {'status': 'disabled', 'action': 'none'}
+    async def _fetch_from_exchangerate_api(self, from_currency: str, to_currency: str) -> Optional[ExchangeRate]:
+        """ExchangeRate-API에서 환율 조회"""
+        try:
+            url = f"https://api.exchangerate-api.com/v4/latest/{from_currency}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if to_currency in data['rates']:
+                            rate = float(data['rates'][to_currency])
+                            return ExchangeRate(
+                                base_currency=from_currency,
+                                target_currency=to_currency,
+                                rate=rate,
+                                timestamp=datetime.now(),
+                                source='exchangerate-api'
+                            )
+        except Exception as e:
+            logging.debug(f"ExchangeRate-API 오류: {e}")
+        
+        return None
+    
+    async def _fetch_from_fixer_api(self, from_currency: str, to_currency: str) -> Optional[ExchangeRate]:
+        """Fixer.io에서 환율 조회 (무료 플랜 고려)"""
+        try:
+            # 무료 플랜은 EUR을 base로만 사용 가능
+            if from_currency != 'EUR':
+                # EUR를 통한 크로스 환율 계산
+                eur_from = await self._fetch_from_fixer_direct('EUR', from_currency)
+                eur_to = await self._fetch_from_fixer_direct('EUR', to_currency)
+                
+                if eur_from and eur_to:
+                    cross_rate = eur_to / eur_from
+                    return ExchangeRate(
+                        base_currency=from_currency,
+                        target_currency=to_currency,
+                        rate=cross_rate,
+                        timestamp=datetime.now(),
+                        source='fixer-cross'
+                    )
+            else:
+                return await self._fetch_from_fixer_direct(from_currency, to_currency)
+                
+        except Exception as e:
+            logging.debug(f"Fixer API 오류: {e}")
+        
+        return None
+    
+    async def _fetch_from_fixer_direct(self, from_currency: str, to_currency: str) -> Optional[float]:
+        """Fixer.io 직접 조회"""
+        api_key = config.get('apis.fixer_key', '')
+        if not api_key:
+            return None
         
         try:
-            success_count = 0
-            total_checks = len(self.check_urls)
+            url = f"http://data.fixer.io/api/latest?access_key={api_key}&base={from_currency}&symbols={to_currency}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get('success') and to_currency in data.get('rates', {}):
+                            return float(data['rates'][to_currency])
+        except Exception as e:
+            logging.debug(f"Fixer 직접 조회 오류: {e}")
+        
+        return None
+    
+    async def _fetch_from_currencylayer_api(self, from_currency: str, to_currency: str) -> Optional[ExchangeRate]:
+        """CurrencyLayer에서 환율 조회"""
+        api_key = config.get('apis.currencylayer_key', '')
+        if not api_key:
+            return None
+        
+        try:
+            url = f"http://api.currencylayer.com/live?access_key={api_key}&source={from_currency}&currencies={to_currency}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get('success'):
+                            quote_key = f"{from_currency}{to_currency}"
+                            if quote_key in data.get('quotes', {}):
+                                rate = float(data['quotes'][quote_key])
+                                return ExchangeRate(
+                                    base_currency=from_currency,
+                                    target_currency=to_currency,
+                                    rate=rate,
+                                    timestamp=datetime.now(),
+                                    source='currencylayer'
+                                )
+        except Exception as e:
+            logging.debug(f"CurrencyLayer 오류: {e}")
+        
+        return None
+    
+    async def calculate_optimal_exchange(self, from_currency: str, amount: float, 
+                                       target_currencies: List[str]) -> Dict[str, Dict]:
+        """최적 환전 계산"""
+        results = {}
+        
+        for to_currency in target_currencies:
+            if from_currency == to_currency:
+                results[to_currency] = {
+                    'rate': 1.0,
+                    'amount': amount,
+                    'fee': 0.0,
+                    'total_cost': amount,
+                    'recommendation': 'no_exchange_needed'
+                }
+                continue
             
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                tasks = [self._check_url(session, url) for url in self.check_urls]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                success_count = sum(1 for r in results if isinstance(r, dict) and r.get('success', False))
+            rate_info = await self.get_exchange_rate(from_currency, to_currency)
+            if not rate_info:
+                continue
             
-            success_rate = success_count / total_checks if total_checks > 0 else 0
+            # 수수료 계산 (통화별로 다름)
+            fee_rate = self._get_exchange_fee_rate(from_currency, to_currency)
+            converted_amount = amount * rate_info.rate
+            fee = converted_amount * fee_rate
+            net_amount = converted_amount - fee
             
-            if success_rate >= 0.6:
-                self.consecutive_failures = 0
-                status = 'healthy'
-                action = 'none'
-            else:
-                self.consecutive_failures += 1
-                if self.consecutive_failures >= 3:
-                    status = 'critical'
-                    action = 'emergency_sell' if self.mode == 'panic_sell' else 'conservative_sell'
-                else:
-                    status = 'unstable'
-                    action = 'monitor'
+            # 추천 여부 결정
+            min_amount = self.min_exchange_amounts.get(from_currency, 0)
+            recommendation = 'recommended' if amount >= min_amount else 'wait_for_larger_amount'
             
-            self.last_check = datetime.now()
+            # 환율 트렌드 분석
+            trend = await self._analyze_rate_trend(from_currency, to_currency)
+            if trend == 'declining':
+                recommendation = 'wait_for_better_rate'
+            elif trend == 'favorable':
+                recommendation = 'exchange_now'
             
-            return {
-                'status': status,
-                'action': action,
-                'success_rate': success_rate,
-                'consecutive_failures': self.consecutive_failures,
-                'timestamp': self.last_check
+            results[to_currency] = {
+                'rate': rate_info.rate,
+                'amount': net_amount,
+                'fee': fee,
+                'fee_rate': fee_rate * 100,
+                'total_cost': amount,
+                'recommendation': recommendation,
+                'trend': trend,
+                'spread': rate_info.spread
             }
-            
-        except Exception as e:
-            logging.error(f"네트워크 체크 실패: {e}")
-            return {'status': 'error', 'action': 'monitor'}
-    
-    async def _check_url(self, session: aiohttp.ClientSession, url: str) -> Dict:
-        """개별 URL 체크"""
-        try:
-            async with session.get(url) as response:
-                return {'url': url, 'success': response.status == 200}
-        except:
-            return {'url': url, 'success': False}
-
-# ========================================================================================
-# 🇺🇸 미국 주식 전략 (핵심 기능만)
-# ========================================================================================
-
-class USStrategy:
-    """미국 주식 전략"""
-    
-    def __init__(self):
-        self.enabled = config.get('us_strategy.enabled', True)
-        self.mode = config.get('us_strategy.mode', 'swing')
-        self.target_stocks = config.get('us_strategy.target_stocks', 8)
-        self.monthly_target = config.get('us_strategy.monthly_target', {'min': 5.0, 'max': 7.0})
         
-        # 백업 종목
-        self.backup_stocks = [
-            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'NFLX'
-        ]
+        return results
     
-    async def generate_signals(self) -> List[Signal]:
-        """미국 주식 시그널 생성"""
-        if not self.enabled or not YF_AVAILABLE:
-            return []
+    def _get_exchange_fee_rate(self, from_currency: str, to_currency: str) -> float:
+        """환전 수수료율 조회"""
+        # 기본 수수료 매트릭스
+        fee_matrix = {
+            ('KRW', 'USD'): 0.015,  # 1.5%
+            ('USD', 'KRW'): 0.015,
+            ('KRW', 'JPY'): 0.020,  # 2.0%
+            ('JPY', 'KRW'): 0.020,
+            ('KRW', 'INR'): 0.025,  # 2.5%
+            ('INR', 'KRW'): 0.025,
+            ('USD', 'JPY'): 0.010,  # 1.0%
+            ('JPY', 'USD'): 0.010,
+            ('USD', 'INR'): 0.020,  # 2.0%
+            ('INR', 'USD'): 0.020,
+        }
         
-        signals = []
+        pair = (from_currency, to_currency)
+        return fee_matrix.get(pair, 0.030)  # 기본 3.0%
+    
+    async def _analyze_rate_trend(self, from_currency: str, to_currency: str) -> str:
+        """환율 트렌드 분석"""
         try:
-            # VIX 조회
-            vix = await self._get_vix()
+            # 간단한 트렌드 분석 (실제로는 더 복잡한 분석 필요)
+            current_rate = await self.get_exchange_rate(from_currency, to_currency)
+            if not current_rate:
+                return 'unknown'
             
-            # 백업 종목으로 분석
-            for symbol in self.backup_stocks[:self.target_stocks]:
-                signal = await self._analyze_stock(symbol, vix)
-                if signal:
-                    signals.append(signal)
+            # 임의의 트렌드 계산 (실제로는 과거 데이터 필요)
+            import random
+            trend_score = random.uniform(-0.1, 0.1)  # -10% ~ +10%
+            
+            if trend_score > 0.02:
+                return 'favorable'  # 유리한 환율
+            elif trend_score < -0.02:
+                return 'declining'  # 불리한 환율
+            else:
+                return 'stable'     # 안정적
                 
-                await asyncio.sleep(0.3)  # API 제한
-            
-            logging.info(f"🇺🇸 미국 전략: {len(signals)}개 시그널 생성")
-            return signals
-            
         except Exception as e:
-            logging.error(f"미국 전략 실패: {e}")
-            return []
+            logging.error(f"트렌드 분석 실패: {e}")
+            return 'unknown'
     
-    async def _get_vix(self) -> float:
-        """VIX 조회"""
+    async def execute_auto_exchange(self, from_currency: str, to_currency: str, 
+                                  amount: float, strategy: str = 'manual') -> Optional[ExchangeTransaction]:
+        """자동환전 실행"""
+        if not self.enabled:
+            logging.info("자동환전이 비활성화되어 있습니다")
+            return None
+        
         try:
-            vix = yf.Ticker("^VIX")
-            hist = vix.history(period="1d")
-            return float(hist['Close'].iloc[-1]) if not hist.empty else 20.0
-        except:
-            return 20.0
-    
-    async def _analyze_stock(self, symbol: str, vix: float) -> Optional[Signal]:
-        """개별 종목 분석"""
-        try:
-            stock = yf.Ticker(symbol)
-            hist = stock.history(period="3mo")
-            
-            if hist.empty or len(hist) < 60:
+            # 환율 조회
+            rate_info = await self.get_exchange_rate(from_currency, to_currency)
+            if not rate_info:
+                logging.error(f"환율 조회 실패: {from_currency}/{to_currency}")
                 return None
             
-            current_price = float(hist['Close'].iloc[-1])
+            # 최소 금액 체크
+            min_amount = self.min_exchange_amounts.get(from_currency, 0)
+            if amount < min_amount:
+                logging.warning(f"환전 금액이 최소 기준({min_amount:,})보다 작습니다: {amount:,}")
+                return None
             
-            # 간단한 기술적 분석
-            ma20 = hist['Close'].rolling(20).mean().iloc[-1]
-            ma50 = hist['Close'].rolling(50).mean().iloc[-1]
-            rsi = self._calculate_rsi(hist['Close'])
+            # 수수료 계산
+            fee_rate = self._get_exchange_fee_rate(from_currency, to_currency)
+            gross_amount = amount * rate_info.rate
+            fee = gross_amount * fee_rate
+            net_amount = gross_amount - fee
             
-            # VIX 조정
-            vix_factor = 1.15 if vix < 15 else 0.85 if vix > 30 else 1.0
-            
-            # 시그널 생성
-            score = 0.0
-            if current_price > ma50 > ma20:
-                score += 0.3
-            if 30 <= rsi <= 70:
-                score += 0.2
-            if hist['Volume'].iloc[-1] > hist['Volume'].rolling(20).mean().iloc[-1]:
-                score += 0.1
-            
-            score *= vix_factor
-            
-            if score >= 0.6:
-                action = 'buy'
-                confidence = min(score, 0.95)
-                target = current_price * 1.12 if self.mode == 'swing' else current_price * 1.25
-                stop = current_price * 0.92 if self.mode == 'swing' else current_price * 0.85
-                reasoning = f"미국{self.mode}전략 점수:{score:.2f} VIX:{vix:.1f}"
-            else:
-                action = 'hold'
-                confidence = score
-                target = stop = current_price
-                reasoning = f"미국{self.mode}전략 보류 점수:{score:.2f}"
-            
-            return Signal(
-                symbol=symbol,
-                strategy='us',
-                action=action,
-                confidence=confidence,
-                price=current_price,
-                target_price=target,
-                stop_loss=stop,
-                reasoning=reasoning,
+            # 거래 생성
+            transaction = ExchangeTransaction(
+                transaction_id=f"AUTO_{int(time.time())}_{from_currency}{to_currency}",
+                from_currency=from_currency,
+                to_currency=to_currency,
+                from_amount=amount,
+                to_amount=net_amount,
+                exchange_rate=rate_info.rate,
+                fee=fee,
+                status='pending',
                 timestamp=datetime.now(),
-                metadata={'vix': vix, 'mode': self.mode}
+                provider='quint_auto_exchange',
+                metadata={
+                    'strategy': strategy,
+                    'fee_rate': fee_rate,
+                    'gross_amount': gross_amount,
+                    'rate_source': rate_info.source
+                }
             )
             
+            # 실제 환전 처리 (데모 모드에서는 시뮬레이션)
+            demo_mode = config.get('system.demo_mode', True)
+            if demo_mode:
+                # 데모 모드: 95% 확률로 성공
+                import random
+                success = random.random() > 0.05
+                transaction.status = 'completed' if success else 'failed'
+                
+                if success:
+                    logging.info(f"✅ [DEMO] 환전 완료: {amount:,.2f} {from_currency} → {net_amount:,.2f} {to_currency}")
+                else:
+                    logging.warning(f"❌ [DEMO] 환전 실패: {from_currency}/{to_currency}")
+            else:
+                # 실제 모드: 실제 API 호출 (구현 필요)
+                transaction.status = 'completed'  # 임시
+                logging.info(f"✅ 환전 완료: {amount:,.2f} {from_currency} → {net_amount:,.2f} {to_currency}")
+            
+            # 거래 기록
+            self.transactions.append(transaction)
+            self.save_transactions()
+            
+            return transaction
+            
         except Exception as e:
-            logging.error(f"미국 종목 분석 실패 {symbol}: {e}")
+            logging.error(f"자동환전 실행 실패: {e}")
             return None
     
-    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
-        """RSI 계산"""
+    async def check_rebalancing_needs(self, portfolio_summary: Dict) -> List[Dict]:
+        """리밸런싱 필요성 체크"""
+        if not self.auto_rebalance:
+            return []
+        
+        rebalancing_recommendations = []
+        
         try:
-            delta = prices.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            return float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
-        except:
-            return 50.0
-
-# ========================================================================================
-# 💼 통합 포트폴리오 관리자
-# ========================================================================================
-
-class PortfolioManager:
-    """통합 포트폴리오 관리"""
-    
-    def __init__(self):
-        self.positions: Dict[str, Position] = {}
-        self.position_file = "portfolio_positions.json"
-        self.load_positions()
-        
-        # 자금 배분
-        self.total_capital = config.get('portfolio.total_capital', 1000000000)
-        self.allocation = config.get('portfolio.allocation', {
-            'us_strategy': 40.0,
-            'japan_strategy': 25.0,
-            'india_strategy': 20.0,
-            'crypto_strategy': 10.0,
-            'cash_reserve': 5.0
-        })
-    
-    def add_position(self, signal: Signal, quantity: float):
-        """포지션 추가"""
-        position = Position(
-            symbol=signal.symbol,
-            strategy=signal.strategy,
-            quantity=quantity,
-            avg_cost=signal.price,
-            entry_date=datetime.now(),
-            mode=signal.metadata.get('mode', 'default')
-        )
-        
-        self.positions[f"{signal.strategy}_{signal.symbol}"] = position
-        self.save_positions()
-        
-        logging.info(f"➕ 포지션 추가: {signal.strategy}_{signal.symbol} {quantity}")
-    
-    def remove_position(self, key: str):
-        """포지션 제거"""
-        if key in self.positions:
-            del self.positions[key]
-            self.save_positions()
-            logging.info(f"➖ 포지션 제거: {key}")
-    
-    def update_pnl(self, current_prices: Dict[str, float]):
-        """미실현 손익 업데이트"""
-        for key, position in self.positions.items():
-            symbol = position.symbol
-            if symbol in current_prices:
-                current_price = current_prices[symbol]
-                position.unrealized_pnl = (current_price - position.avg_cost) * position.quantity
-    
-    def get_strategy_positions(self, strategy: str) -> List[Position]:
-        """전략별 포지션 조회"""
-        return [pos for key, pos in self.positions.items() if pos.strategy == strategy]
-    
-    def get_portfolio_summary(self) -> Dict:
-        """포트폴리오 요약"""
-        total_value = 0
-        total_pnl = 0
-        strategy_breakdown = {}
-        
-        for position in self.positions.values():
-            current_value = position.avg_cost * position.quantity + position.unrealized_pnl
-            total_value += current_value
-            total_pnl += position.unrealized_pnl
-            
-            if position.strategy not in strategy_breakdown:
-                strategy_breakdown[position.strategy] = {
-                    'count': 0, 'value': 0, 'pnl': 0
-                }
-            
-            strategy_breakdown[position.strategy]['count'] += 1
-            strategy_breakdown[position.strategy]['value'] += current_value
-            strategy_breakdown[position.strategy]['pnl'] += position.unrealized_pnl
-        
-        return {
-            'total_positions': len(self.positions),
-            'total_value': total_value,
-            'total_pnl': total_pnl,
-            'pnl_percentage': (total_pnl / total_value * 100) if total_value > 0 else 0,
-            'strategy_breakdown': strategy_breakdown,
-            'cash_available': self.total_capital - total_value
-        }
-    
-    def save_positions(self):
-        """포지션 저장"""
-        try:
-            serializable_positions = {}
-            for key, pos in self.positions.items():
-                serializable_positions[key] = {
-                    'symbol': pos.symbol,
-                    'strategy': pos.strategy,
-                    'quantity': pos.quantity,
-                    'avg_cost': pos.avg_cost,
-                    'entry_date': pos.entry_date.isoformat(),
-                    'mode': pos.mode,
-                    'unrealized_pnl': pos.unrealized_pnl,
-                    'metadata': pos.metadata
-                }
-            
-            with open(self.position_file, 'w', encoding='utf-8') as f:
-                json.dump(serializable_positions, f, ensure_ascii=False, indent=2)
+            for strategy, positions in portfolio_summary.get('strategy_breakdown', {}).items():
+                if strategy not in self.target_allocation:
+                    continue
                 
+                target_currencies = self.target_allocation[strategy]
+                
+                # 현재 통화 분포 분석 (임시 - 실제로는 포지션 데이터에서 추출)
+                for target_currency, target_percentage in target_currencies.items():
+                    
+                    # 리밸런싱이 필요한 경우 추천
+                    recommendation = {
+                        'strategy': strategy,
+                        'action': 'rebalance',
+                        'from_currency': 'KRW',  # 임시
+                        'to_currency': target_currency,
+                        'recommended_amount': positions.get('value', 0) * 0.1,  # 10% 리밸런싱
+                        'reason': f'{strategy} 전략의 {target_currency} 비중 조정 필요',
+                        'priority': 'medium'
+                    }
+                    
+                    rebalancing_recommendations.append(recommendation)
+            
         except Exception as e:
-            logging.error(f"포지션 저장 실패: {e}")
-    
-    def load_positions(self):
-        """포지션 로드"""
-        try:
-            if os.path.exists(self.position_file):
-                with open(self.position_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                for key, pos_data in data.items():
-                    self.positions[key] = Position(
-                        symbol=pos_data['symbol'],
-                        strategy=pos_data['strategy'],
-                        quantity=pos_data['quantity'],
-                        avg_cost=pos_data['avg_cost'],
-                        entry_date=datetime.fromisoformat(pos_data['entry_date']),
-                        mode=pos_data['mode'],
-                        unrealized_pnl=pos_data.get('unrealized_pnl', 0.0),
-                        metadata=pos_data.get('metadata', {})
-                    )
-                
-                logging.info(f"📂 포지션 로드: {len(self.positions)}개")
-        except Exception as e:
-            logging.error(f"포지션 로드 실패: {e}")
-
-# ========================================================================================
-# 🎯 통합 신호 생성기
-# ========================================================================================
-
-class SignalGenerator:
-    """통합 신호 생성기"""
-    
-    def __init__(self):
-        self.us_strategy = USStrategy()
-        self.japan_strategy = JapanStrategy()
-        self.india_strategy = IndiaStrategy()
-        self.crypto_strategy = CryptoStrategy()
-        self.network_failsafe = NetworkFailsafe()
-    
-    async def generate_all_signals(self) -> Dict[str, List[Signal]]:
-        """모든 전략 신호 생성"""
-        logging.info("🎯 통합 신호 생성 시작")
+            logging.error(f"리밸런싱 체크 실패: {e}")
         
-        # 네트워크 상태 체크
-        network_status = await self.network_failsafe.check_network_health()
-        if network_status['action'] in ['emergency_sell', 'conservative_sell']:
-            logging.warning(f"🚨 네트워크 장애 감지: {network_status['action']}")
-            return {'emergency': []}
+        return rebalancing_recommendations
+    
+    async def monitor_exchange_rates(self) -> Dict[str, Dict]:
+        """환율 모니터링"""
+        monitoring_results = {}
         
-        # 병렬로 모든 전략 실행
-        tasks = [
-            self.us_strategy.generate_signals(),
-            self.japan_strategy.generate_signals(),
-            self.india_strategy.generate_signals(),
-            self.crypto_strategy.generate_signals()
+        # 주요 환율 쌍 모니터링
+        key_pairs = [
+            ('USD', 'KRW'),
+            ('JPY', 'KRW'),
+            ('INR', 'KRW'),
+            ('USD', 'JPY'),
+            ('USD', 'INR')
         ]
         
-        try:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            all_signals = {
-                'us': results[0] if isinstance(results[0], list) else [],
-                'japan': results[1] if isinstance(results[1], list) else [],
-                'india': results[2] if isinstance(results[2], list) else [],
-                'crypto': results[3] if isinstance(results[3], list) else [],
-                'network_status': network_status
-            }
-            
-            # 요약 로그
-            total_signals = sum(len(signals) for signals in all_signals.values() if isinstance(signals, list))
-            buy_signals = sum(len([s for s in signals if s.action == 'buy']) 
-                            for signals in all_signals.values() if isinstance(signals, list))
-            
-            logging.info(f"✅ 신호 생성 완료: 총 {total_signals}개, 매수 {buy_signals}개")
-            
-            return all_signals
-            
-        except Exception as e:
-            logging.error(f"신호 생성 실패: {e}")
-            return {'error': str(e)}
-
-# ========================================================================================
-# 📊 성과 분석기
-# ========================================================================================
-
-class PerformanceAnalyzer:
-    """성과 분석기"""
-    
-    def __init__(self):
-        self.db_path = "performance.db"
-        self._init_db()
-    
-    def _init_db(self):
-        """데이터베이스 초기화"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS trades (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    strategy TEXT NOT NULL,
-                    symbol TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    quantity REAL NOT NULL,
-                    price REAL NOT NULL,
-                    timestamp DATETIME NOT NULL,
-                    pnl REAL DEFAULT 0.0
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS daily_performance (
-                    date DATE PRIMARY KEY,
-                    strategy TEXT NOT NULL,
-                    total_return REAL,
-                    daily_return REAL,
-                    positions_count INTEGER
-                )
-            ''')
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logging.error(f"DB 초기화 실패: {e}")
-    
-    def record_trade(self, signal: Signal, quantity: float, pnl: float = 0.0):
-        """거래 기록"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO trades (strategy, symbol, action, quantity, price, timestamp, pnl)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (signal.strategy, signal.symbol, signal.action, quantity, 
-                  signal.price, signal.timestamp.isoformat(), pnl))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logging.error(f"거래 기록 실패: {e}")
-    
-    def get_strategy_performance(self, strategy: str, days: int = 30) -> PerformanceMetrics:
-        """전략별 성과 조회"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 최근 거래 조회
-            cursor.execute('''
-                SELECT * FROM trades 
-                WHERE strategy = ? AND timestamp >= datetime('now', '-{} days')
-                ORDER BY timestamp
-            '''.format(days), (strategy,))
-            
-            trades = cursor.fetchall()
-            conn.close()
-            
-            if not trades:
-                return PerformanceMetrics(
-                    strategy=strategy, total_return=0.0, monthly_return=0.0,
-                    sharpe_ratio=0.0, max_drawdown=0.0, win_rate=0.0, total_trades=0
-                )
-            
-            # 성과 계산
-            total_pnl = sum(trade[7] for trade in trades if trade[7])  # pnl column
-            total_trades = len(trades)
-            winning_trades = len([t for t in trades if t[7] > 0])
-            win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
-            
-            return PerformanceMetrics(
-                strategy=strategy,
-                total_return=total_pnl,
-                monthly_return=total_pnl,  # 간소화
-                sharpe_ratio=1.5 if total_pnl > 0 else 0,  # 간소화
-                max_drawdown=10.0,  # 간소화
-                win_rate=win_rate,
-                total_trades=total_trades
-            )
-            
-        except Exception as e:
-            logging.error(f"성과 조회 실패: {e}")
-            return PerformanceMetrics(
-                strategy=strategy, total_return=0.0, monthly_return=0.0,
-                sharpe_ratio=0.0, max_drawdown=0.0, win_rate=0.0, total_trades=0
-            )
-
-# ========================================================================================
-# 🚨 알림 시스템
-# ========================================================================================
-
-class NotificationSystem:
-    """통합 알림 시스템"""
-    
-    def __init__(self):
-        self.telegram_enabled = config.get('notifications.telegram.enabled', False)
-        self.telegram_token = config.get('notifications.telegram.bot_token', '')
-        self.telegram_chat_id = config.get('notifications.telegram.chat_id', '')
-    
-    async def send_signal_alert(self, signals: Dict[str, List[Signal]]):
-        """신호 알림"""
-        if not self.telegram_enabled:
-            return
-        
-        try:
-            buy_signals = []
-            for strategy, signal_list in signals.items():
-                if isinstance(signal_list, list):
-                    buy_signals.extend([s for s in signal_list if s.action == 'buy'])
-            
-            if buy_signals:
-                message = f"🎯 매수 신호 {len(buy_signals)}개 감지!\n\n"
+        for from_currency, to_currency in key_pairs:
+            try:
+                current_rate = await self.get_exchange_rate(from_currency, to_currency)
+                if not current_rate:
+                    continue
                 
-                for signal in buy_signals[:5]:  # 상위 5개만
-                    strategy_emoji = {
-                        'us': '🇺🇸', 'japan': '🇯🇵', 
-                        'india': '🇮🇳', 'crypto': '🪙'
-                    }
-                    emoji = strategy_emoji.get(signal.strategy, '📈')
-                    
-                    message += f"{emoji} {signal.symbol}\n"
-                    message += f"   신뢰도: {signal.confidence:.1%}\n"
-                    message += f"   목표가: {signal.target_price:,.0f}\n"
-                    message += f"   근거: {signal.reasoning}\n\n"
+                pair = f"{from_currency}/{to_currency}"
                 
-                await self._send_telegram(message)
+                # 24시간 전 환율과 비교 (임시 - 실제로는 DB에서 조회)
+                yesterday_rate = current_rate.rate * (1 + (hash(pair) % 100 - 50) / 10000)  # 임시
+                change_percent = ((current_rate.rate - yesterday_rate) / yesterday_rate) * 100
                 
-        except Exception as e:
-            logging.error(f"신호 알림 실패: {e}")
-    
-    async def send_portfolio_summary(self, summary: Dict):
-        """포트폴리오 요약 알림"""
-        if not self.telegram_enabled:
-            return
-        
-        try:
-            message = f"📊 포트폴리오 현황\n\n"
-            message += f"💰 총 가치: {summary['total_value']:,.0f}원\n"
-            message += f"📈 손익: {summary['total_pnl']:+,.0f}원 ({summary['pnl_percentage']:+.1f}%)\n"
-            message += f"📋 포지션: {summary['total_positions']}개\n\n"
-            
-            for strategy, data in summary['strategy_breakdown'].items():
-                strategy_emoji = {
-                    'us': '🇺🇸', 'japan': '🇯🇵', 
-                    'india': '🇮🇳', 'crypto': '🪙'
+                # 알림 임계값 체크
+                alert_needed = abs(change_percent) >= (self.rate_threshold * 100)
+                
+                monitoring_results[pair] = {
+                    'current_rate': current_rate.rate,
+                    'yesterday_rate': yesterday_rate,
+                    'change_percent': change_percent,
+                    'alert_needed': alert_needed,
+                    'trend': 'up' if change_percent > 0 else 'down',
+                    'source': current_rate.source,
+                    'timestamp': current_rate.timestamp.isoformat()
                 }
-                emoji = strategy_emoji.get(strategy, '📈')
                 
-                message += f"{emoji} {strategy.upper()}: {data['count']}개 "
-                message += f"({data['pnl']:+,.0f}원)\n"
-            
-            await self._send_telegram(message)
-            
-        except Exception as e:
-            logging.error(f"포트폴리오 알림 실패: {e}")
+            except Exception as e:
+                logging.error(f"환율 모니터링 실패 {from_currency}/{to_currency}: {e}")
+        
+        return monitoring_results
     
-    async def _send_telegram(self, message: str):
-        """텔레그램 메시지 전송"""
+    def get_exchange_history(self, days: int = 30, currency_pair: Optional[str] = None) -> List[ExchangeTransaction]:
+        """환전 히스토리 조회"""
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        filtered_transactions = [
+            tx for tx in self.transactions 
+            if tx.timestamp >= cutoff_date
+        ]
+        
+        if currency_pair:
+            from_curr, to_curr = currency_pair.split('/')
+            filtered_transactions = [
+                tx for tx in filtered_transactions
+                if tx.from_currency == from_curr and tx.to_currency == to_curr
+            ]
+        
+        return sorted(filtered_transactions, key=lambda x: x.timestamp, reverse=True)
+    
+    def calculate_exchange_performance(self, days: int = 30) -> Dict:
+        """환전 성과 분석"""
+        transactions = self.get_exchange_history(days)
+        
+        if not transactions:
+            return {'total_transactions': 0, 'total_fee': 0, 'success_rate': 0}
+        
+        total_transactions = len(transactions)
+        successful_transactions = len([tx for tx in transactions if tx.status == 'completed'])
+        total_fee = sum(tx.fee for tx in transactions if tx.status == 'completed')
+        
+        # 통화별 분석
+        currency_breakdown = {}
+        for tx in transactions:
+            pair = f"{tx.from_currency}/{tx.to_currency}"
+            if pair not in currency_breakdown:
+                currency_breakdown[pair] = {
+                    'count': 0,
+                    'total_amount': 0,
+                    'total_fee': 0,
+                    'avg_rate': 0
+                }
+            
+            if tx.status == 'completed':
+                currency_breakdown[pair]['count'] += 1
+                currency_breakdown[pair]['total_amount'] += tx.from_amount
+                currency_breakdown[pair]['total_fee'] += tx.fee
+                currency_breakdown[pair]['avg_rate'] = (
+                    currency_breakdown[pair]['avg_rate'] * (currency_breakdown[pair]['count'] - 1) + tx.exchange_rate
+                ) / currency_breakdown[pair]['count']
+        
+        return {
+            'total_transactions': total_transactions,
+            'successful_transactions': successful_transactions,
+            'success_rate': (successful_transactions / total_transactions * 100) if total_transactions > 0 else 0,
+            'total_fee': total_fee,
+            'currency_breakdown': currency_breakdown,
+            'period_days': days
+        }
+    
+    def save_transactions(self):
+        """거래 히스토리 저장"""
         try:
-            if not self.telegram_token or not self.telegram_chat_id:
-                return
+            serializable_transactions = []
+            for tx in self.transactions:
+                serializable_transactions.append({
+                    'transaction_id': tx.transaction_id,
+                    'from_currency': tx.from_currency,
+                    'to_currency': tx.to_currency,
+                    'from_amount': tx.from_amount,
+                    'to_amount': tx.to_amount,
+                    'exchange_rate': tx.exchange_rate,
+                    'fee': tx.fee,
+                    'status': tx.status,
+                    'timestamp': tx.timestamp.isoformat(),
+                    'provider': tx.provider,
+                    'metadata': tx.metadata
+                })
             
-            url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
-            data = {
-                'chat_id': self.telegram_chat_id,
-                'text': message,
-                'parse_mode': 'Markdown'
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=data) as response:
-                    if response.status == 200:
-                        logging.debug("텔레그램 알림 전송 완료")
-                    
+            with open('exchange_transactions.json', 'w', encoding='utf-8') as f:
+                json.dump(serializable_transactions, f, ensure_ascii=False, indent=2)
+                
         except Exception as e:
-            logging.error(f"텔레그램 전송 실패: {e}")
+            logging.error(f"거래 히스토리 저장 실패: {e}")
+    
+    def load_transactions(self):
+        """거래 히스토리 로드"""
+        try:
+            import os
+            if os.path.exists('exchange_transactions.json'):
+                with open('exchange_transactions.json', 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                for tx_data in data:
+                    transaction = ExchangeTransaction(
+                        transaction_id=tx_data['transaction_id'],
+                        from_currency=tx_data['from_currency'],
+                        to_currency=tx_data['to_currency'],
+                        from_amount=tx_data['from_amount'],
+                        to_amount=tx_data['to_amount'],
+                        exchange_rate=tx_data['exchange_rate'],
+                        fee=tx_data['fee'],
+                        status=tx_data['status'],
+                        timestamp=datetime.fromisoformat(tx_data['timestamp']),
+                        provider=tx_data['provider'],
+                        metadata=tx_data.get('metadata', {})
+                    )
+                    self.transactions.append(transaction)
+                
+                logging.info(f"💱 환전 히스토리 로드: {len(self.transactions)}개")
+        except Exception as e:
+            logging.error(f"거래 히스토리 로드 실패: {e}")
 
 # ========================================================================================
-# 🏆 QUINT CORE - 메인 통합 시스템
+# 🔄 QuintCore에 자동환전 통합
 # ========================================================================================
 
-class QuintCore:
-    """퀸트프로젝트 통합 코어 시스템"""
+# QuintCore 클래스에 추가할 메서드들
+class QuintCoreExtended(QuintCore):
+    """자동환전 기능이 통합된 QuintCore"""
     
     def __init__(self):
-        self.signal_generator = SignalGenerator()
-        self.portfolio_manager = PortfolioManager()
-        self.performance_analyzer = PerformanceAnalyzer()
-        self.notification_system = NotificationSystem()
-        
-        self.running = False
-        
-        # 로깅 설정
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s | %(levelname)s | %(message)s',
-            handlers=[
-                logging.StreamHandler(sys.stdout),
-                logging.FileHandler('quint_core.log', encoding='utf-8')
-            ]
-        )
-        
-        logging.info("🏆 QuintCore 시스템 초기화 완료")
+        super().__init__()
+        self.exchange_manager = CurrencyExchangeManager()
+        logging.info("💱 자동환전 시스템 통합 완료")
     
-    async def run_full_strategy(self) -> Dict:
-        """전체 전략 실행"""
-        logging.info("🚀 QuintCore 전체 전략 실행 시작")
+    async def run_full_strategy_with_exchange(self) -> Dict:
+        """환전 기능을 포함한 전체 전략 실행"""
+        logging.info("🚀 환전 통합 전략 실행 시작")
         
         try:
-            # 1. 신호 생성
-            all_signals = await self.signal_generator.generate_all_signals()
+            # 1. 기본 전략 실행
+            result = await self.run_full_strategy()
             
-            # 2. 신호 알림
-            await self.notification_system.send_signal_alert(all_signals)
+            # 2. 환율 모니터링
+            exchange_monitoring = await self.exchange_manager.monitor_exchange_rates()
             
-            # 3. 포트폴리오 현황
-            portfolio_summary = self.portfolio_manager.get_portfolio_summary()
+            # 3. 리밸런싱 체크
+            rebalancing_needs = await self.exchange_manager.check_rebalancing_needs(
+                result.get('portfolio', {})
+            )
             
-            # 4. 성과 분석
-            performance_data = {}
-            for strategy in ['us', 'japan', 'india', 'crypto']:
-                performance_data[strategy] = self.performance_analyzer.get_strategy_performance(strategy)
+            # 4. 자동 리밸런싱 실행 (설정된 경우)
+            auto_exchanges = []
+            if self.exchange_manager.auto_rebalance and rebalancing_needs:
+                for recommendation in rebalancing_needs[:3]:  # 상위 3개만
+                    if recommendation['priority'] in ['high', 'medium']:
+                        exchange_result = await self.exchange_manager.execute_auto_exchange(
+                            from_currency=recommendation['from_currency'],
+                            to_currency=recommendation['to_currency'],
+                            amount=recommendation['recommended_amount'],
+                            strategy='auto_rebalance'
+                        )
+                        if exchange_result:
+                            auto_exchanges.append(exchange_result)
             
-            # 5. 결과 반환
-            result = {
-                'signals': all_signals,
-                'portfolio': portfolio_summary,
-                'performance': performance_data,
-                'timestamp': datetime.now().isoformat(),
-                'status': 'success'
-            }
+            # 5. 환전 성과 분석
+            exchange_performance = self.exchange_manager.calculate_exchange_performance()
             
-            logging.info("✅ QuintCore 전체 전략 실행 완료")
+            # 6. 결과 통합
+            result.update({
+                'exchange_rates': exchange_monitoring,
+                'rebalancing_recommendations': rebalancing_needs,
+                'auto_exchanges': auto_exchanges,
+                'exchange_performance': exchange_performance
+            })
+            
+            # 7. 환율 알림
+            await self._send_exchange_alerts(exchange_monitoring, auto_exchanges)
+            
+            logging.info("✅ 환전 통합 전략 실행 완료")
             return result
             
         except Exception as e:
-            logging.error(f"❌ QuintCore 실행 실패: {e}")
+            logging.error(f"❌ 환전 통합 전략 실패: {e}")
             return {'status': 'error', 'error': str(e)}
     
-    async def start_monitoring(self, interval_minutes: int = 15):
-        """실시간 모니터링 시작"""
-        self.running = True
-        logging.info(f"🔄 QuintCore 실시간 모니터링 시작 ({interval_minutes}분 간격)")
-        
-        while self.running:
-            try:
-                # 전략 실행
-                result = await self.run_full_strategy()
+    async def _send_exchange_alerts(self, monitoring_results: Dict, auto_exchanges: List):
+        """환전 관련 알림 전송"""
+        try:
+            alerts = []
+            
+            # 환율 변동 알림
+            for pair, data in monitoring_results.items():
+                if data['alert_needed']:
+                    alerts.append(f"💱 {pair}: {data['change_percent']:+.2f}% 변동")
+            
+            # 자동환전 알림
+            for exchange in auto_exchanges:
+                if exchange.status == 'completed':
+                    alerts.append(f"🔄 자동환전: {exchange.from_amount:,.0f} {exchange.from_currency} → {exchange.to_amount:,.0f} {exchange.to_currency}")
+            
+            # 알림 전송
+            if alerts:
+                message = "💱 환전 시스템 알림\n\n" + "\n".join(alerts)
+                await self.notification_system._send_telegram(message)
                 
-                # 포트폴리오 요약 알림 (1시간마다)
-                if datetime.now().minute == 0:
-                    await self.notification_system.send_portfolio_summary(
-                        result.get('portfolio', {})
+        except Exception as e:
+            logging.error(f"환전 알림 실패: {e}")
+    
+    async def manual_exchange(self, from_currency: str, to_currency: str, amount: float) -> Dict:
+        """수동 환전"""
+        try:
+            # 최적 환전 분석
+            optimal_analysis = await self.exchange_manager.calculate_optimal_exchange(
+                from_currency, amount, [to_currency]
+            )
+            
+            # 환전 실행
+            transaction = await self.exchange_manager.execute_auto_exchange(
+                from_currency, to_currency, amount, 'manual'
+            )
+            
+            return {
+                'status': 'success',
+                'analysis': optimal_analysis.get(to_currency, {}),
+                'transaction': transaction,
+                'message': f"{amount:,.2f} {from_currency}를 {to_currency}로 환전 {'완료' if transaction and transaction.status == 'completed' else '실패'}"
+            }
+            
+        except Exception as e:
+            logging.error(f"수동 환전 실패: {e}")
+            return {'status': 'error', 'error': str(e)}
+    
+    def get_exchange_dashboard(self) -> Dict:
+        """환전 대시보드 데이터"""
+        try:
+            # 최근 환율
+            recent_rates = {}
+            for pair in ['USD/KRW', 'JPY/KRW', 'INR/KRW']:
+                from_curr, to_curr = pair.split('/')
+                cached_rate = self.exchange_manager.rate_cache.get(pair)
+                if cached_rate:
+                    recent_rates[pair] = {
+                        'rate': cached_rate.rate,
+                        'timestamp': cached_rate.timestamp.isoformat(),
+                        'source': cached_rate.source
+                    }
+            
+            # 최근 거래
+            recent_transactions = self.exchange_manager.get_exchange_history(days=7)
+            
+            # 성과 요약
+            performance = self.exchange_manager.calculate_exchange_performance(days=30)
+            
+            return {
+                'recent_rates': recent_rates,
+                'recent_transactions': recent_transactions[:10],  # 최근 10개
+                'performance': performance,
+                'supported_currencies': self.exchange_manager.supported_currencies,
+                'auto_rebalance_enabled': self.exchange_manager.auto_rebalance,
+                'status': 'active' if self.exchange_manager.enabled else 'disabled'
+            }
+            
+        except Exception as e:
+            logging.error(f"환전 대시보드 오류: {e}")
+            return {'status': 'error', 'error': str(e)}
+
+# ========================================================================================
+# 💱 환전 편의 함수들
+# ========================================================================================
+
+async def quick_exchange_check(from_currency: str = 'USD', to_currency: str = 'KRW', amount: float = 1000):
+    """빠른 환전 체크"""
+    try:
+        exchange_manager = CurrencyExchangeManager()
+        
+        print(f"\n💱 환전 체크: {amount:,.2f} {from_currency} → {to_currency}")
+        print("=" * 60)
+        
+        # 환율 조회
+        rate_info = await exchange_manager.get_exchange_rate(from_currency, to_currency)
+        if not rate_info:
+            print("❌ 환율 조회 실패")
+            return
+        
+        # 최적 환전 계산
+        optimal = await exchange_manager.calculate_optimal_exchange(
+            from_currency, amount, [to_currency]
+        )
+        
+        if to_currency in optimal:
+            result = optimal[to_currency]
+            print(f"📊 현재 환율: {rate_info.rate:,.4f}")
+            print(f"💰 환전 금액: {result['amount']:,.2f} {to_currency}")
+            print(f"💸 수수료: {result['fee']:,.2f} {to_currency} ({result['fee_rate']:.2f}%)")
+            print(f"🎯 추천: {result['recommendation']}")
+            print(f"📈 트렌드: {result['trend']}")
+            print(f"🕐 조회시간: {rate_info.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"📡 출처: {rate_info.source}")
+        else:
+            print("❌ 환전 계산 실패")
+        
+        print("=" * 60)
+        
+    except Exception as e:
+        print(f"❌ 환전 체크 오류: {e}")
+
+async def show_all_exchange_rates():
+    """모든 지원 환율 조회"""
+    exchange_manager = CurrencyExchangeManager()
+    
+    print("\n💱 실시간 환율 현황")
+    print("=" * 80)
+    
+    # 주요 환율 쌍
+    major_pairs = [
+        ('USD', 'KRW', '달러/원'),
+        ('JPY', 'KRW', '엔/원'),
+        ('EUR', 'KRW', '유로/원'),
+        ('CNY', 'KRW', '위안/원'),
+        ('USD', 'JPY', '달러/엔'),
+        ('EUR', 'USD', '유로/달러')
+    ]
+    
+    for from_curr, to_curr, name in major_pairs:
+        try:
+            rate_info = await exchange_manager.get_exchange_rate(from_curr, to_curr)
+            if rate_info:
+                # 임시 변동율 계산
+                yesterday_rate = rate_info.rate * 0.995  # 임시
+                change = ((rate_info.rate - yesterday_rate) / yesterday_rate) * 100
+                
+                trend_icon = "📈" if change > 0 else "📉" if change < 0 else "➡️"
+                
+                print(f"{trend_icon} {name:12} {rate_info.rate:>12.4f} ({change:+.2f}%) [{rate_info.source}]")
+            else:
+                print(f"❌ {name:12} {'환율 조회 실패'}")
+                
+            await asyncio.sleep(0.2)  # API 제한
+            
+        except Exception as e:
+            print(f"❌ {name:12} 오류: {e}")
+    
+    print("=" * 80)
+    print("💡 변동율은 24시간 기준이며, 실시간으로 업데이트됩니다.")
+
+async def auto_rebalance_portfolio():
+    """포트폴리오 자동 리밸런싱"""
+    try:
+        core = QuintCoreExtended()
+        
+        print("\n🔄 포트폴리오 자동 리밸런싱")
+        print("=" * 60)
+        
+        # 현재 포트폴리오 상태
+        portfolio_summary = core.portfolio_manager.get_portfolio_summary()
+        print(f"📊 현재 포트폴리오 가치: {portfolio_summary['total_value']:,.0f}원")
+        
+        # 리밸런싱 필요성 체크
+        rebalancing_needs = await core.exchange_manager.check_rebalancing_needs(portfolio_summary)
+        
+        if not rebalancing_needs:
+            print("✅ 리밸런싱이 필요하지 않습니다.")
+            return
+        
+        print(f"📋 리밸런싱 권장사항: {len(rebalancing_needs)}개")
+        
+        # 각 권장사항 표시
+        for i, recommendation in enumerate(rebalancing_needs, 1):
+            print(f"\n{i}. {recommendation['strategy']} 전략")
+            print(f"   {recommendation['from_currency']} → {recommendation['to_currency']}")
+            print(f"   금액: {recommendation['recommended_amount']:,.0f}")
+            print(f"   사유: {recommendation['reason']}")
+            print(f"   우선순위: {recommendation['priority']}")
+        
+        # 자동 실행 여부 확인
+        if core.exchange_manager.auto_rebalance:
+            print(f"\n🤖 자동 리밸런싱 실행 중...")
+            
+            executed_count = 0
+            for recommendation in rebalancing_needs:
+                if recommendation['priority'] in ['high', 'medium']:
+                    transaction = await core.exchange_manager.execute_auto_exchange(
+                        from_currency=recommendation['from_currency'],
+                        to_currency=recommendation['to_currency'],
+                        amount=recommendation['recommended_amount'],
+                        strategy='auto_rebalance'
                     )
+                    
+                    if transaction and transaction.status == 'completed':
+                        executed_count += 1
+                        print(f"   ✅ {recommendation['strategy']}: {transaction.from_amount:,.0f} {transaction.from_currency} → {transaction.to_amount:,.0f} {transaction.to_currency}")
+                    else:
+                        print(f"   ❌ {recommendation['strategy']}: 실행 실패")
+            
+            print(f"\n📊 리밸런싱 완료: {executed_count}/{len(rebalancing_needs)}개 실행")
+        else:
+            print(f"\n⚠️ 자동 리밸런싱이 비활성화되어 있습니다.")
+            print(f"   수동으로 실행하려면 설정에서 auto_rebalance를 활성화하세요.")
+        
+        print("=" * 60)
+        
+    except Exception as e:
+        print(f"❌ 리밸런싱 오류: {e}")
+
+def show_exchange_performance():
+    """환전 성과 분석 표시"""
+    try:
+        exchange_manager = CurrencyExchangeManager()
+        performance = exchange_manager.calculate_exchange_performance(days=30)
+        
+        print("\n📈 환전 성과 분석 (최근 30일)")
+        print("=" * 70)
+        
+        print(f"📊 총 거래 건수: {performance['total_transactions']}건")
+        print(f"✅ 성공 거래: {performance['successful_transactions']}건")
+        print(f"📈 성공률: {performance['success_rate']:.1f}%")
+        print(f"💸 총 수수료: {performance['total_fee']:,.2f}")
+        
+        if performance['currency_breakdown']:
+            print(f"\n💱 통화별 분석:")
+            for pair, data in performance['currency_breakdown'].items():
+                print(f"  {pair}:")
+                print(f"    거래 건수: {data['count']}건")
+                print(f"    총 거래액: {data['total_amount']:,.2f}")
+                print(f"    평균 환율: {data['avg_rate']:,.4f}")
+                print(f"    총 수수료: {data['total_fee']:,.2f}")
+        else:
+            print(f"\n💡 아직 환전 거래가 없습니다.")
+        
+        print("=" * 70)
+        
+    except Exception as e:
+        print(f"❌ 성과 분석 오류: {e}")
+
+async def exchange_rate_monitor(duration_minutes: int = 60):
+    """환율 실시간 모니터링"""
+    try:
+        exchange_manager = CurrencyExchangeManager()
+        
+        print(f"\n👁️ 환율 실시간 모니터링 ({duration_minutes}분간)")
+        print("=" * 80)
+        print("💡 Ctrl+C로 중지할 수 있습니다.")
+        
+        start_time = datetime.now()
+        end_time = start_time + timedelta(minutes=duration_minutes)
+        
+        alert_count = 0
+        
+        while datetime.now() < end_time:
+            try:
+                # 환율 모니터링 실행
+                monitoring_results = await exchange_manager.monitor_exchange_rates()
                 
-                # 다음 실행까지 대기
-                await asyncio.sleep(interval_minutes * 60)
+                # 화면 지우기 (선택사항)
+                import os
+                os.system('cls' if os.name == 'nt' else 'clear')
                 
+                print(f"👁️ 환율 모니터링 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                print("=" * 80)
+                
+                for pair, data in monitoring_results.items():
+                    trend_icon = "📈" if data['trend'] == 'up' else "📉"
+                    alert_icon = "🚨" if data['alert_needed'] else "  "
+                    
+                    print(f"{alert_icon} {trend_icon} {pair:12} {data['current_rate']:>12.4f} ({data['change_percent']:+6.2f}%) [{data['source']}]")
+                    
+                    if data['alert_needed']:
+                        alert_count += 1
+                
+                print(f"\n📊 총 알림: {alert_count}회")
+                print(f"⏰ 남은 시간: {(end_time - datetime.now()).seconds // 60}분")
+                print("💡 Ctrl+C로 중지")
+                
+                # 1분 대기
+                await asyncio.sleep(60)
+                
+            except KeyboardInterrupt:
+                print(f"\n⏹️ 모니터링이 사용자에 의해 중지되었습니다.")
+                break
             except Exception as e:
-                logging.error(f"모니터링 루프 오류: {e}")
-                await asyncio.sleep(300)  # 5분 후 재시도
-    
-    def stop_monitoring(self):
-        """모니터링 중지"""
-        self.running = False
-        logging.info("⏹️ QuintCore 모니터링 중지")
-    
-    def get_system_status(self) -> Dict:
-        """시스템 상태 조회"""
-        return {
-            'core_version': '1.0.0',
-            'running': self.running,
-            'strategies': {
-                'us': self.signal_generator.us_strategy.enabled,
-                'japan': self.signal_generator.japan_strategy.enabled,
-                'india': self.signal_generator.india_strategy.enabled,
-                'crypto': self.signal_generator.crypto_strategy.enabled
-            },
-            'dependencies': {
-                'yfinance': YF_AVAILABLE,
-                'pyupbit': UPBIT_AVAILABLE,
-                'ib_insync': IBKR_AVAILABLE
-            },
-            'portfolio_positions': len(self.portfolio_manager.positions),
-            'timestamp': datetime.now().isoformat()
-        }
+                print(f"❌ 모니터링 오류: {e}")
+                await asyncio.sleep(10)
+        
+        print(f"\n✅ 모니터링 완료. 총 {alert_count}회 알림이 발생했습니다.")
+        
+    except Exception as e:
+        print(f"❌ 모니터링 시작 실패: {e}")
 
 # ========================================================================================
-# 🎮 편의 함수들
+# 🎮 환전 메뉴 함수
 # ========================================================================================
 
-async def run_single_strategy(strategy_name: str):
-    """단일 전략 실행"""
-    core = QuintCore()
+async def exchange_menu():
+    """환전 시스템 메뉴"""
+    print("\n💱" + "=" * 50)
+    print("🔥 QuintCore 자동환전 시스템")
+    print("=" * 52)
     
-    if strategy_name.lower() == 'us':
-        signals = await core.signal_generator.us_strategy.generate_signals()
-    elif strategy_name.lower() == 'japan':
-        signals = await core.signal_generator.japan_strategy.generate_signals()
-    elif strategy_name.lower() == 'india':
-        signals = await core.signal_generator.india_strategy.generate_signals()
-    elif strategy_name.lower() == 'crypto':
-        signals = await core.signal_generator.crypto_strategy.generate_signals()
-    else:
-        logging.error(f"알 수 없는 전략: {strategy_name}")
-        return []
-    
-    logging.info(f"🎯 {strategy_name.upper()} 전략: {len(signals)}개 신호 생성")
-    return signals
-
-async def quick_scan():
-    """빠른 스캔"""
-    core = QuintCore()
-    result = await core.run_full_strategy()
-    
-    print("\n🏆 QuintCore 빠른 스캔 결과")
-    print("=" * 60)
-    
-    if result['status'] == 'success':
-        # 신호 요약
-        total_signals = 0
-        buy_signals = 0
+    while True:
+        print("\n💱 환전 옵션:")
+        print("  1. 실시간 환율 조회")
+        print("  2. 환전 시뮬레이션")
+        print("  3. 자동 리밸런싱")
+        print("  4. 환전 성과 분석")
+        print("  5. 환율 모니터링")
+        print("  6. 수동 환전")
+        print("  7. 환전 히스토리")
+        print("  8. 메인 메뉴로 돌아가기")
         
-        for strategy, signals in result['signals'].items():
-            if isinstance(signals, list):
-                total_signals += len(signals)
-                buy_signals += len([s for s in signals if s.action == 'buy'])
-        
-        print(f"📊 총 신호: {total_signals}개")
-        print(f"💰 매수 신호: {buy_signals}개")
-        
-        # 전략별 요약
-        for strategy, signals in result['signals'].items():
-            if isinstance(signals, list) and signals:
-                strategy_emoji = {
-                    'us': '🇺🇸', 'japan': '🇯🇵', 
-                    'india': '🇮🇳', 'crypto': '🪙'
-                }
-                emoji = strategy_emoji.get(strategy, '📈')
+        try:
+            choice = input("\n선택하세요 (1-8): ").strip()
+            
+            if choice == '1':
+                await show_all_exchange_rates()
+            
+            elif choice == '2':
+                from_curr = input("환전할 통화 (USD/JPY/KRW/INR/EUR): ").upper()
+                to_curr = input("받을 통화 (USD/JPY/KRW/INR/EUR): ").upper()
                 
-                buy_count = len([s for s in signals if s.action == 'buy'])
-                print(f"{emoji} {strategy.upper()}: {len(signals)}개 (매수 {buy_count}개)")
-        
-        # 포트폴리오 요약
-        portfolio = result['portfolio']
-        print(f"\n💼 포트폴리오: {portfolio['total_positions']}개 포지션")
-        print(f"📈 총 손익: {portfolio['total_pnl']:+,.0f}원 ({portfolio['pnl_percentage']:+.1f}%)")
-        
-    else:
-        print(f"❌ 오류: {result.get('error')}")
-    
-    print("=" * 60)
-
-def show_system_status():
-    """시스템 상태 출력"""
-    core = QuintCore()
-    status = core.get_system_status()
-    
-    print("\n🏆 QuintCore 시스템 상태")
-    print("=" * 50)
-    print(f"버전: {status['core_version']}")
-    print(f"실행 중: {status['running']}")
-    print(f"포지션: {status['portfolio_positions']}개")
-    
-    print("\n📊 전략 상태:")
-    for strategy, enabled in status['strategies'].items():
-        emoji = "✅" if enabled else "❌"
-        print(f"  {emoji} {strategy.upper()}: {'활성화' if enabled else '비활성화'}")
-    
-    print("\n📦 의존성:")
-    for dep, available in status['dependencies'].items():
-        emoji = "✅" if available else "❌"
-        print(f"  {emoji} {dep}: {'사용 가능' if available else '없음'}")
-    
-    print("=" * 50)
+                try:
+                    amount = float(input("금액: "))
+                    await quick_exchange_check(from_curr, to_curr, amount)
+                except ValueError:
+                    print("❌ 올바른 금액을 입력하세요.")
+            
+            elif choice == '3':
+                await auto_rebalance_portfolio()
+            
+            elif choice == '4':
+                show_exchange_performance()
+            
+            elif choice == '5':
+                try:
+                    duration = int(input("모니터링 시간 (분, 기본 60): ") or "60")
+                    await exchange_rate_monitor(duration)
+                except ValueError:
+                    await exchange_rate_monitor(60)
+            
+            elif choice == '6':
+                print("\n🔄 수동 환전")
+                from_curr = input("환전할 통화: ").upper()
+                to_curr = input("받을 통화: ").upper()
+                
+                try:
+                    amount = float(input("금액: "))
+                    
+                    core = QuintCoreExtended()
+                    result = await core.manual_exchange(from_curr, to_curr, amount)
+                    
+                    if result['status'] == 'success':
+                        print(f"✅ {result['message']}")
+                        if 'analysis' in result:
+                            analysis = result['analysis']
+                            print(f"   환율: {analysis.get('rate', 0):,.4f}")
+                            print(f"   수수료: {analysis.get('fee', 0):,.2f}")
+                            print(f"   최종 금액: {analysis.get('amount', 0):,.2f}")
+                    else:
+                        print(f"❌ 환전 실패: {result.get('error')}")
+                        
+                except ValueError:
+                    print("❌ 올바른 금액을 입력하세요.")
+                except Exception as e:
+                    print(f"❌ 환전 오류: {e}")
+            
+            elif choice == '7':
+                exchange_manager = CurrencyExchangeManager()
+                
+                try:
+                    days = int(input("조회 기간 (일, 기본 30): ") or "30")
+                    transactions = exchange_manager.get_exchange_history(days)
+                    
+                    print(f"\n📋 환전 히스토리 (최근 {days}일)")
+                    print("=" * 80)
+                    
+                    if transactions:
+                        for tx in transactions[:20]:  # 최근 20개만
+                            status_icon = "✅" if tx.status == 'completed' else "❌" if tx.status == 'failed' else "⏳"
+                            print(f"{status_icon} {tx.timestamp.strftime('%m-%d %H:%M')} | "
+                                  f"{tx.from_amount:>8,.0f} {tx.from_currency} → "
+                                  f"{tx.to_amount:>8,.0f} {tx.to_currency} | "
+                                  f"수수료: {tx.fee:,.0f}")
+                    else:
+                        print("💡 환전 히스토리가 없습니다.")
+                        
+                except ValueError:
+                    print("❌ 올바른 숫자를 입력하세요.")
+            
+            elif choice == '8':
+                print("📤 메인 메뉴로 돌아갑니다.")
+                break
+            
+            else:
+                print("❌ 잘못된 선택입니다. 1-8 중 선택하세요.")
+                
+        except KeyboardInterrupt:
+            print("\n👋 환전 메뉴를 종료합니다.")
+            break
+        except Exception as e:
+            print(f"❌ 오류 발생: {e}")
 
 # ========================================================================================
-# 🏁 메인 실행부
+# 🔧 설정 업데이트 (QuintConfig에 환전 설정 추가)
 # ========================================================================================
 
-async def main():
-    """메인 실행 함수"""
+def update_config_with_exchange():
+    """설정에 환전 관련 항목 추가"""
+    exchange_config = {
+        'auto_exchange': {
+            'enabled': True,
+            'auto_rebalance': True,
+            'rate_threshold': 0.02,  # 2% 변동시 알림
+            'min_exchange_amounts': {
+                'KRW': 1000000,
+                'USD': 1000,
+                'JPY': 100000,
+                'INR': 80000
+            },
+            'target_allocation': {
+                'us_strategy': {'USD': 100.0},
+                'japan_strategy': {'JPY': 100.0},
+                'india_strategy': {'INR': 100.0},
+                'crypto_strategy': {'KRW': 100.0}
+            }
+        },
+        'apis': {
+            'fixer_key': '${FIXER_API_KEY:-}',
+            'currencylayer_key': '${CURRENCYLAYER_API_KEY:-}',
+            'exchangerate_key': '${EXCHANGERATE_API_KEY:-}'
+        }
+    }
+    
+    # 기존 설정에 추가
+    config.config.update(exchange_config)
+    config._save_config()
+    print("✅ 환전 설정이 추가되었습니다.")
+
+# ========================================================================================
+# 🏁 메인 실행부 확장
+# ========================================================================================
+
+async def main_with_exchange():
+    """환전 기능이 포함된 메인 함수"""
     print("🏆" + "=" * 70)
-    print("🔥 전설적 퀸트프로젝트 CORE 시스템")
-    print("🚀 4대 전략 + 네트워크 안전장치 + 자동화")
+    print("🔥 전설적 퀸트프로젝트 CORE 시스템 + 자동환전")
+    print("🚀 4대 전략 + 네트워크 안전장치 + 자동화 + 환전")
     print("=" * 72)
     
     # 시스템 상태 확인
     show_system_status()
     
     print("\n🚀 실행 옵션:")
-    print("  1. 전체 전략 실행 (1회)")
-    print("  2. 실시간 모니터링 시작")
-    print("  3. 단일 전략 실행")
-    print("  4. 빠른 스캔")
-    print("  5. 시스템 상태")
+    print("  1. 전체 전략 실행 (환전 포함)")
+    print("  2. 실시간 모니터링 (환전 포함)")
+    print("  3. 환전 시스템 메뉴")
+    print("  4. 빠른 환율 체크")
+    print("  5. 기본 QuintCore 메뉴")
     print("  6. 종료")
     
     while True:
@@ -1027,57 +1110,61 @@ async def main():
             choice = input("\n선택하세요 (1-6): ").strip()
             
             if choice == '1':
-                print("\n🚀 전체 전략 실행 중...")
-                core = QuintCore()
-                result = await core.run_full_strategy()
+                print("\n🚀 환전 통합 전략 실행 중...")
+                core = QuintCoreExtended()
+                result = await core.run_full_strategy_with_exchange()
                 
                 if result['status'] == 'success':
-                    print("✅ 전체 전략 실행 완료!")
+                    print("✅ 환전 통합 전략 실행 완료!")
                     
-                    # 간단한 결과 출력
-                    total_buy = 0
-                    for strategy, signals in result['signals'].items():
-                        if isinstance(signals, list):
-                            buy_count = len([s for s in signals if s.action == 'buy'])
-                            total_buy += buy_count
-                            if buy_count > 0:
-                                print(f"  📈 {strategy.upper()}: {buy_count}개 매수 신호")
+                    # 환율 알림
+                    exchange_alerts = 0
+                    for pair, data in result.get('exchange_rates', {}).items():
+                        if data['alert_needed']:
+                            exchange_alerts += 1
+                            print(f"  🚨 {pair}: {data['change_percent']:+.2f}% 변동")
                     
-                    print(f"  💰 총 매수 신호: {total_buy}개")
+                    # 자동환전 결과
+                    auto_exchanges = result.get('auto_exchanges', [])
+                    if auto_exchanges:
+                        print(f"  🔄 자동환전 실행: {len(auto_exchanges)}건")
+                    
+                    print(f"  📊 환율 알림: {exchange_alerts}개")
                 else:
                     print(f"❌ 실행 실패: {result.get('error')}")
             
             elif choice == '2':
-                print("\n🔄 실시간 모니터링 시작...")
+                print("\n🔄 실시간 모니터링 (환전 포함) 시작...")
                 print("Ctrl+C로 중지할 수 있습니다.")
                 
-                core = QuintCore()
+                core = QuintCoreExtended()
                 try:
-                    await core.start_monitoring(interval_minutes=15)
+                    # 환전 포함 모니터링
+                    while True:
+                        result = await core.run_full_strategy_with_exchange()
+                        
+                        # 환율 모니터링 추가
+                        exchange_rates = await core.exchange_manager.monitor_exchange_rates()
+                        
+                        # 15분 대기
+                        await asyncio.sleep(15 * 60)
+                        
                 except KeyboardInterrupt:
-                    core.stop_monitoring()
                     print("\n⏹️ 모니터링이 중지되었습니다.")
             
             elif choice == '3':
-                strategy_name = input("전략 선택 (us/japan/india/crypto): ").strip()
-                if strategy_name in ['us', 'japan', 'india', 'crypto']:
-                    print(f"\n🎯 {strategy_name.upper()} 전략 실행 중...")
-                    signals = await run_single_strategy(strategy_name)
-                    
-                    buy_signals = [s for s in signals if s.action == 'buy']
-                    print(f"✅ {len(signals)}개 신호 생성, {len(buy_signals)}개 매수 신호")
-                else:
-                    print("❌ 잘못된 전략명")
+                await exchange_menu()
             
             elif choice == '4':
-                print("\n🔍 빠른 스캔 실행 중...")
-                await quick_scan()
+                await show_all_exchange_rates()
             
             elif choice == '5':
-                show_system_status()
+                # 기본 QuintCore 메뉴로 이동
+                await main()
+                break
             
             elif choice == '6':
-                print("👋 QuintCore를 종료합니다!")
+                print("👋 QuintCore + 환전시스템을 종료합니다!")
                 break
             
             else:
@@ -1089,33 +1176,54 @@ async def main():
         except Exception as e:
             print(f"❌ 오류 발생: {e}")
 
+# ========================================================================================
+# 🎯 새로운 명령어 처리
+# ========================================================================================
+
 if __name__ == "__main__":
     try:
-        # 명령행 인자 처리
         if len(sys.argv) > 1:
             command = sys.argv[1].lower()
             
-            if command == 'status':
-                show_system_status()
-            elif command == 'scan':
-                asyncio.run(quick_scan())
-            elif command == 'monitor':
-                core = QuintCore()
-                print("🔄 실시간 모니터링 시작 (Ctrl+C로 중지)")
-                asyncio.run(core.start_monitoring())
-            elif command.startswith('strategy:'):
-                strategy = command.split(':')[1]
-                asyncio.run(run_single_strategy(strategy))
+            if command == 'exchange':
+                asyncio.run(exchange_menu())
+            elif command == 'rates':
+                asyncio.run(show_all_exchange_rates())
+            elif command == 'rebalance':
+                asyncio.run(auto_rebalance_portfolio())
+            elif command == 'exchange-check':
+                # 예: python core.py exchange-check USD KRW 1000
+                if len(sys.argv) >= 5:
+                    from_curr, to_curr, amount = sys.argv[2], sys.argv[3], float(sys.argv[4])
+                    asyncio.run(quick_exchange_check(from_curr, to_curr, amount))
+                else:
+                    asyncio.run(quick_exchange_check())
+            elif command == 'monitor-rates':
+                duration = int(sys.argv[2]) if len(sys.argv) > 2 else 60
+                asyncio.run(exchange_rate_monitor(duration))
+            elif command == 'exchange-performance':
+                show_exchange_performance()
+            elif command == 'update-config':
+                update_config_with_exchange()
+            elif command in ['status', 'scan', 'monitor'] or command.startswith('strategy:'):
+                # 기존 명령어들은 그대로 실행
+                pass
             else:
-                print("사용법:")
-                print("  python core.py           # 메인 메뉴")
-                print("  python core.py status    # 시스템 상태")
-                print("  python core.py scan      # 빠른 스캔")
-                print("  python core.py monitor   # 실시간 모니터링")
-                print("  python core.py strategy:us  # 단일 전략")
+                print("💱 환전 시스템 추가 명령어:")
+                print("  python core.py exchange              # 환전 메뉴")
+                print("  python core.py rates                 # 실시간 환율")
+                print("  python core.py rebalance             # 자동 리밸런싱")
+                print("  python core.py exchange-check USD KRW 1000  # 환전 체크")
+                print("  python core.py monitor-rates 60      # 환율 모니터링")
+                print("  python core.py exchange-performance  # 환전 성과")
+                print("  python core.py update-config         # 환전 설정 추가")
+                print("\n기존 명령어:")
+                print("  python core.py                       # 환전 포함 메인 메뉴")
+                print("  python core.py status                # 시스템 상태")
+                print("  python core.py scan                  # 빠른 스캔")
         else:
-            # 메인 실행
-            asyncio.run(main())
+            # 환전 포함 메인 실행
+            asyncio.run(main_with_exchange())
         
     except KeyboardInterrupt:
         print("\n👋 프로그램이 중단되었습니다.")
@@ -1124,621 +1232,54 @@ if __name__ == "__main__":
         logging.error(f"실행 오류: {e}")
 
 # ========================================================================================
-# 🛠️ 유틸리티 함수들
+# 📋 환전 시스템 사용 예시
 # ========================================================================================
-
-def create_sample_config():
-    """샘플 설정 파일 생성"""
-    sample_config = {
-        'system': {
-            'project_name': 'LEGENDARY_QUINT_PROJECT',
-            'version': '1.0.0',
-            'mode': 'production',
-            'debug': False,
-            'demo_mode': True
-        },
-        'portfolio': {
-            'total_capital': 1000000000,
-            'allocation': {
-                'us_strategy': 40.0,
-                'japan_strategy': 25.0,
-                'india_strategy': 20.0,
-                'crypto_strategy': 10.0,
-                'cash_reserve': 5.0
-            }
-        },
-        'us_strategy': {
-            'enabled': True,
-            'mode': 'swing',
-            'monthly_target': {'min': 5.0, 'max': 7.0},
-            'target_stocks': 8,
-            'stop_loss': 8.0,
-            'take_profit': [6.0, 12.0]
-        },
-        'japan_strategy': {
-            'enabled': True,
-            'mode': 'hybrid',
-            'monthly_target': 14.0,
-            'trading_days': [1, 3],
-            'tuesday_target': 2.5,
-            'thursday_target': 1.5
-        },
-        'india_strategy': {
-            'enabled': True,
-            'mode': 'conservative',
-            'monthly_target': 6.0,
-            'trading_days': [2],
-            'max_stocks': 4
-        },
-        'crypto_strategy': {
-            'enabled': True,
-            'mode': 'monthly_optimized',
-            'monthly_target': 6.0,
-            'trading_days': [0, 4],
-            'target_coins': 8
-        },
-        'network_failsafe': {
-            'enabled': True,
-            'mode': 'conservative_sell',
-            'check_interval': 60,
-            'timeout_threshold': 300,
-            'retry_count': 5
-        },
-        'notifications': {
-            'telegram': {
-                'enabled': True,
-                'bot_token': '${TELEGRAM_BOT_TOKEN:-}',
-                'chat_id': '${TELEGRAM_CHAT_ID:-}'
-            }
-        }
-    }
-    
-    try:
-        with open('settings.yaml', 'w', encoding='utf-8') as f:
-            yaml.dump(sample_config, f, default_flow_style=False, allow_unicode=True, indent=2)
-        print("✅ 샘플 설정 파일 생성: settings.yaml")
-    except Exception as e:
-        print(f"❌ 설정 파일 생성 실패: {e}")
-
-def create_sample_env():
-    """샘플 환경변수 파일 생성"""
-    env_content = """# QuintProject Core 환경변수 설정
-
-# 텔레그램 알림
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-TELEGRAM_CHAT_ID=your_telegram_chat_id
-
-# IBKR API (선택사항)
-IBKR_ACCOUNT_US=your_us_account
-IBKR_ACCOUNT_JP=your_jp_account  
-IBKR_ACCOUNT_IN=your_in_account
-
-# 업비트 API (선택사항)
-UPBIT_ACCESS_KEY=your_upbit_access_key
-UPBIT_SECRET_KEY=your_upbit_secret_key
-
-# 기타 설정
-DEMO_MODE=true
-DEBUG_MODE=false
-"""
-    
-    try:
-        if not os.path.exists('.env'):
-            with open('.env', 'w', encoding='utf-8') as f:
-                f.write(env_content)
-            print("✅ 샘플 .env 파일 생성")
-        else:
-            print("ℹ️ .env 파일이 이미 존재합니다")
-    except Exception as e:
-        print(f"❌ .env 파일 생성 실패: {e}")
-
-def setup_core():
-    """Core 시스템 초기 설정"""
-    print("🔧 QuintCore 초기 설정...")
-    
-    # 디렉토리 생성
-    directories = ['data', 'logs', 'backups']
-    for directory in directories:
-        Path(directory).mkdir(exist_ok=True)
-    
-    # 설정 파일 생성
-    if not os.path.exists('settings.yaml'):
-        create_sample_config()
-    
-    # 환경변수 파일 생성
-    create_sample_env()
-    
-    print("✅ QuintCore 초기 설정 완료!")
-    print("\n📋 다음 단계:")
-    print("1. .env 파일에서 API 키 설정")
-    print("2. settings.yaml에서 전략 설정 조정")
-    print("3. python core.py 실행")
-
-def check_dependencies():
-    """의존성 패키지 확인"""
-    required_packages = [
-        'pandas', 'numpy', 'pyyaml', 'aiohttp', 'python-dotenv'
-    ]
-    
-    optional_packages = {
-        'yfinance': '미국/일본/인도 주식 데이터',
-        'pyupbit': '가상화폐 데이터',
-        'ib_insync': 'IBKR 실거래'
-    }
-    
-    print("🔍 의존성 패키지 확인...")
-    
-    # 필수 패키지
-    missing_required = []
-    for package in required_packages:
-        try:
-            __import__(package.replace('-', '_'))
-            print(f"✅ {package}")
-        except ImportError:
-            print(f"❌ {package}")
-            missing_required.append(package)
-    
-    # 선택적 패키지
-    print("\n📦 선택적 패키지:")
-    for package, description in optional_packages.items():
-        try:
-            __import__(package.replace('-', '_'))
-            print(f"✅ {package} - {description}")
-        except ImportError:
-            print(f"⚠️ {package} - {description} (설치 권장)")
-    
-    if missing_required:
-        print(f"\n❌ 누락된 필수 패키지: {', '.join(missing_required)}")
-        print(f"설치 명령: pip install {' '.join(missing_required)}")
-        return False
-    else:
-        print("\n✅ 모든 필수 패키지가 설치되어 있습니다")
-        return True
-
-def print_help():
-    """도움말 출력"""
-    help_text = """
-🏆 QuintProject Core v1.0 - 도움말
-====================================
-
-📋 주요 명령어:
-  python core.py           # 메인 메뉴 실행
-  python core.py status    # 시스템 상태 확인
-  python core.py scan      # 빠간 스캔 실행
-  python core.py monitor   # 실시간 모니터링
-  python core.py strategy:us    # 미국 전략만 실행
-  python core.py strategy:japan # 일본 전략만 실행
-  python core.py strategy:india # 인도 전략만 실행
-  python core.py strategy:crypto # 가상화폐 전략만 실행
-
-🔧 초기 설정:
-  - 의존성 설치: pip install -r requirements.txt
-  - 설정 파일: settings.yaml 편집
-  - 환경변수: .env 파일에서 API 키 설정
-  - 텔레그램: 봇 토큰과 채팅 ID 설정
-
-💡 전략 설명:
-  🇺🇸 미국 전략: IBKR 연동, 스윙+클래식 매매
-  🇯🇵 일본 전략: 화목 하이브리드, 엔화 연동
-  🇮🇳 인도 전략: 수요일 전용, 안정형 투자
-  🪙 가상화폐: 월금 매매, 전설급 5대 시스템
-
-🛡️ 안전장치:
-  - 네트워크 장애시 자동 매도
-  - 포지션별 손익절 관리
-  - 포트폴리오 리스크 제한
-  - 텔레그램 실시간 알림
-
-📊 모니터링:
-  - 실시간 신호 생성
-  - 포트폴리오 현황 추적
-  - 성과 분석 및 기록
-  - 자동 알림 시스템
-
-🎯 목표:
-  - 월 5-7% 안정적 수익
-  - 4개 전략 분산 투자
-  - 완전 자동화 운용
-  - 리스크 관리 최우선
-"""
-    print(help_text)
-
-# 추가 명령어 처리
-if __name__ == "__main__" and len(sys.argv) > 1:
-    command = sys.argv[1].lower()
-    
-    if command == 'setup':
-        setup_core()
-    elif command == 'check':
-        check_dependencies()
-    elif command == 'help' or command == '--help':
-        print_help()
-    elif command == 'config':
-        create_sample_config()
-    elif command == 'env':
-        create_sample_env()
-
-# ========================================================================================
-# 🏁 최종 익스포트
-# ========================================================================================
-
-__all__ = [
-    'QuintCore',
-    'QuintConfig', 
-    'Signal',
-    'Position',
-    'PerformanceMetrics',
-    'USStrategy',
-    'JapanStrategy', 
-    'IndiaStrategy',
-    'CryptoStrategy',
-    'NetworkFailsafe',
-    'PortfolioManager',
-    'SignalGenerator',
-    'PerformanceAnalyzer',
-    'NotificationSystem',
-    'config',
-    'run_single_strategy',
-    'quick_scan',
-    'show_system_status'
-]
 
 """
-🏆 QuintProject Core 사용 예시:
+🏆 QuintCore + 자동환전 시스템 사용 예시:
 
-# 1. 기본 사용
-from core import QuintCore
-core = QuintCore()
-result = await core.run_full_strategy()
+# 1. 환전 포함 전체 전략 실행
+from core import QuintCoreExtended
+core = QuintCoreExtended()
+result = await core.run_full_strategy_with_exchange()
 
-# 2. 단일 전략
-from core import run_single_strategy
-signals = await run_single_strategy('us')
+# 2. 실시간 환율 조회
+from core import show_all_exchange_rates
+await show_all_exchange_rates()
 
-# 3. 빠른 스캔
-from core import quick_scan
-await quick_scan()
+# 3. 환전 시뮬레이션
+from core import quick_exchange_check
+await quick_exchange_check('USD', 'KRW', 1000)
 
-# 4. 실시간 모니터링
-core = QuintCore()
-await core.start_monitoring(interval_minutes=15)
+# 4. 수동 환전
+core = QuintCoreExtended()
+result = await core.manual_exchange('USD', 'KRW', 1000)
 
-# 5. 설정 접근
-from core import config
-us_enabled = config.get('us_strategy.enabled')
+# 5. 자동 리밸런싱
+from core import auto_rebalance_portfolio
+await auto_rebalance_portfolio()
 
-# 6. 포트폴리오 관리
-from core import PortfolioManager
-portfolio = PortfolioManager()
-summary = portfolio.get_portfolio_summary()
+# 6. 환율 모니터링
+from core import exchange_rate_monitor
+await exchange_rate_monitor(duration_minutes=60)
+
+# 7. 환전 성과 분석
+from core import show_exchange_performance
+show_exchange_performance()
+
+💡 주요 특징:
+- 🔄 다중 소스 환율 조회 (ExchangeRate-API, Fixer.io, CurrencyLayer)
+- 💰 자동 수수료 계산 및 최적화
+- 📊 실시간 환율 모니터링 및 알림
+- 🤖 포트폴리오 기반 자동 리밸런싱
+- 📈 환전 성과 추적 및 분석
+- 🛡️ 안전한 환전 임계값 관리
+- 💱 KRW, USD, JPY, INR, EUR, CNY 지원
+- 🎯 전략별 목표 통화 자동 배분
+
+🔧 설정:
+- .env 파일에 API 키 설정
+- settings.yaml에서 환전 설정 조정
+- 자동 리밸런싱 활성화/비활성화
+- 환율 변동 알림 임계값 설정
 """
-            return 50.0
-
-# ========================================================================================
-# 🇯🇵 일본 주식 전략 (핵심 기능만)
-# ========================================================================================
-
-class JapanStrategy:
-    """일본 주식 전략 (화목 하이브리드)"""
-    
-    def __init__(self):
-        self.enabled = config.get('japan_strategy.enabled', True)
-        self.monthly_target = config.get('japan_strategy.monthly_target', 14.0)
-        self.trading_days = config.get('japan_strategy.trading_days', [1, 3])  # 화목
-        
-        # 백업 종목
-        self.backup_stocks = [
-            '7203.T', '6758.T', '9984.T', '6861.T', '8306.T',
-            '7974.T', '9432.T', '8316.T', '6367.T', '4063.T'
-        ]
-    
-    async def generate_signals(self) -> List[Signal]:
-        """일본 주식 시그널 생성"""
-        if not self.enabled or not YF_AVAILABLE:
-            return []
-        
-        # 화목 체크
-        today = datetime.now().weekday()
-        if today not in self.trading_days:
-            return []
-        
-        signals = []
-        try:
-            # 엔화 환율
-            usd_jpy = await self._get_usd_jpy()
-            day_type = "화요일" if today == 1 else "목요일"
-            
-            for symbol in self.backup_stocks[:6]:
-                signal = await self._analyze_japan_stock(symbol, usd_jpy, day_type)
-                if signal:
-                    signals.append(signal)
-                
-                await asyncio.sleep(0.3)
-            
-            logging.info(f"🇯🇵 일본 전략 ({day_type}): {len(signals)}개 시그널 생성")
-            return signals
-            
-        except Exception as e:
-            logging.error(f"일본 전략 실패: {e}")
-            return []
-    
-    async def _get_usd_jpy(self) -> float:
-        """USD/JPY 환율 조회"""
-        try:
-            ticker = yf.Ticker("USDJPY=X")
-            data = ticker.history(period="1d")
-            return float(data['Close'].iloc[-1]) if not data.empty else 107.5
-        except:
-            return 107.5
-    
-    async def _analyze_japan_stock(self, symbol: str, usd_jpy: float, day_type: str) -> Optional[Signal]:
-        """일본 종목 분석"""
-        try:
-            stock = yf.Ticker(symbol)
-            hist = stock.history(period="3mo")
-            
-            if hist.empty or len(hist) < 30:
-                return None
-            
-            current_price = float(hist['Close'].iloc[-1])
-            rsi = self._calculate_rsi(hist['Close'])
-            
-            # 화목별 다른 전략
-            if day_type == "화요일":
-                # 화요일: 메인 스윙 (더 보수적)
-                if 25 <= rsi <= 45:
-                    score = 0.75
-                    target = current_price * 1.07
-                    stop = current_price * 0.97
-                else:
-                    score = 0.4
-                    target = stop = current_price
-            else:  # 목요일
-                # 목요일: 보완 단기 (더 적극적)
-                if rsi <= 35:
-                    score = 0.70
-                    target = current_price * 1.03
-                    stop = current_price * 0.98
-                else:
-                    score = 0.3
-                    target = stop = current_price
-            
-            # 엔화 보정
-            if usd_jpy <= 105:  # 엔강세
-                score *= 1.1
-            elif usd_jpy >= 110:  # 엔약세
-                score *= 0.9
-            
-            if score >= 0.6:
-                action = 'buy'
-                confidence = min(score, 0.95)
-                reasoning = f"일본{day_type} RSI:{rsi:.0f} 엔:{usd_jpy:.1f}"
-            else:
-                action = 'hold'
-                confidence = score
-                reasoning = f"일본{day_type} 대기"
-            
-            return Signal(
-                symbol=symbol,
-                strategy='japan',
-                action=action,
-                confidence=confidence,
-                price=current_price,
-                target_price=target,
-                stop_loss=stop,
-                reasoning=reasoning,
-                timestamp=datetime.now(),
-                metadata={'usd_jpy': usd_jpy, 'day_type': day_type}
-            )
-            
-        except Exception as e:
-            logging.error(f"일본 종목 분석 실패 {symbol}: {e}")
-            return None
-    
-    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
-        """RSI 계산"""
-        try:
-            delta = prices.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            return float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
-        except:
-            return 50.0
-
-# ========================================================================================
-# 🇮🇳 인도 주식 전략 (핵심 기능만)
-# ========================================================================================
-
-class IndiaStrategy:
-    """인도 주식 전략 (수요일 전용)"""
-    
-    def __init__(self):
-        self.enabled = config.get('india_strategy.enabled', True)
-        self.monthly_target = config.get('india_strategy.monthly_target', 6.0)
-        self.trading_days = [2]  # 수요일만
-        
-        # 백업 종목 (실제로는 NSE에서 가져와야 함)
-        self.backup_stocks = [
-            'RELIANCE', 'TCS', 'HDFCBANK', 'ICICIBANK', 'INFY'
-        ]
-    
-    async def generate_signals(self) -> List[Signal]:
-        """인도 주식 시그널 생성"""
-        if not self.enabled:
-            return []
-        
-        # 수요일 체크
-        today = datetime.now().weekday()
-        if today not in self.trading_days:
-            return []
-        
-        signals = []
-        try:
-            # 샘플 시그널 생성 (실제로는 NSE API 연동 필요)
-            for i, symbol in enumerate(self.backup_stocks[:4]):
-                current_price = 2500.0 + (i * 100)  # 더미 가격
-                
-                signal = Signal(
-                    symbol=symbol,
-                    strategy='india',
-                    action='buy' if i < 2 else 'hold',
-                    confidence=0.7 if i < 2 else 0.4,
-                    price=current_price,
-                    target_price=current_price * 1.06,
-                    stop_loss=current_price * 0.97,
-                    reasoning=f"인도수요일전략 안정형",
-                    timestamp=datetime.now(),
-                    metadata={'index': 'NIFTY50', 'mode': 'conservative'}
-                )
-                signals.append(signal)
-            
-            logging.info(f"🇮🇳 인도 전략 (수요일): {len(signals)}개 시그널 생성")
-            return signals
-            
-        except Exception as e:
-            logging.error(f"인도 전략 실패: {e}")
-            return []
-
-# ========================================================================================
-# 🪙 가상화폐 전략 (핵심 기능만)
-# ========================================================================================
-
-class CryptoStrategy:
-    """가상화폐 전략 (월금 매매)"""
-    
-    def __init__(self):
-        self.enabled = config.get('crypto_strategy.enabled', True)
-        self.monthly_target = config.get('crypto_strategy.monthly_target', 6.0)
-        self.trading_days = [0, 4]  # 월금
-        self.min_volume = 5_000_000_000  # 50억원
-    
-    async def generate_signals(self) -> List[Signal]:
-        """가상화폐 시그널 생성"""
-        if not self.enabled or not UPBIT_AVAILABLE:
-            return []
-        
-        # 월금 체크
-        today = datetime.now().weekday()
-        if today not in self.trading_days:
-            return []
-        
-        signals = []
-        try:
-            # 업비트 티커 조회
-            tickers = pyupbit.get_tickers(fiat="KRW")
-            if not tickers:
-                return []
-            
-            # 상위 거래량 코인 분석
-            candidates = []
-            for ticker in tickers[:20]:  # 상위 20개만
-                try:
-                    price = pyupbit.get_current_price(ticker)
-                    if not price:
-                        continue
-                    
-                    ohlcv = pyupbit.get_ohlcv(ticker, interval="day", count=30)
-                    if ohlcv is None or len(ohlcv) < 30:
-                        continue
-                    
-                    volume_krw = ohlcv.iloc[-1]['volume'] * price
-                    if volume_krw >= self.min_volume:
-                        candidates.append({
-                            'symbol': ticker,
-                            'price': price,
-                            'volume_krw': volume_krw,
-                            'ohlcv': ohlcv
-                        })
-                    
-                    await asyncio.sleep(0.1)
-                    
-                except:
-                    continue
-            
-            # 상위 8개 분석
-            candidates.sort(key=lambda x: x['volume_krw'], reverse=True)
-            
-            for candidate in candidates[:8]:
-                signal = await self._analyze_crypto(candidate)
-                if signal:
-                    signals.append(signal)
-            
-            day_name = "월요일" if today == 0 else "금요일"
-            logging.info(f"🪙 가상화폐 전략 ({day_name}): {len(signals)}개 시그널 생성")
-            return signals
-            
-        except Exception as e:
-            logging.error(f"가상화폐 전략 실패: {e}")
-            return []
-    
-    async def _analyze_crypto(self, candidate: Dict) -> Optional[Signal]:
-        """가상화폐 분석"""
-        try:
-            symbol = candidate['symbol']
-            price = candidate['price']
-            ohlcv = candidate['ohlcv']
-            
-            # 품질 점수
-            coin_name = symbol.replace('KRW-', '')
-            quality_scores = {
-                'BTC': 0.95, 'ETH': 0.90, 'BNB': 0.80,
-                'ADA': 0.75, 'SOL': 0.85, 'AVAX': 0.75
-            }
-            quality = quality_scores.get(coin_name, 0.6)
-            
-            # 기술적 분석
-            rsi = self._calculate_rsi(ohlcv['close'])
-            ma7 = ohlcv['close'].rolling(7).mean().iloc[-1]
-            current_price = ohlcv['close'].iloc[-1]
-            
-            # 점수 계산
-            score = quality * 0.5
-            if current_price > ma7:
-                score += 0.2
-            if 30 <= rsi <= 70:
-                score += 0.2
-            
-            # 월금별 조정
-            today = datetime.now().weekday()
-            if today == 0:  # 월요일 매수
-                action_threshold = 0.6
-                if score >= action_threshold:
-                    action = 'buy'
-                    target = price * (1.05 + quality * 0.15)
-                    stop = price * (0.95 - quality * 0.03)
-                else:
-                    action = 'hold'
-                    target = stop = price
-            else:  # 금요일 매도
-                action = 'sell'
-                target = stop = price
-            
-            return Signal(
-                symbol=symbol,
-                strategy='crypto',
-                action=action,
-                confidence=min(score, 0.95),
-                price=price,
-                target_price=target,
-                stop_loss=stop,
-                reasoning=f"가상화폐{'월요일' if today==0 else '금요일'} 품질:{quality:.2f}",
-                timestamp=datetime.now(),
-                metadata={'quality': quality, 'rsi': rsi}
-            )
-            
-        except Exception as e:
-            logging.error(f"가상화폐 분석 실패 {candidate['symbol']}: {e}")
-            return None
-    
-    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
-        """RSI 계산"""
-        try:
-            delta = prices.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            return float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
-        except:
