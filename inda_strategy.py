@@ -756,6 +756,241 @@ class LegendaryIndiaStrategy:
         df['legendary_sell_signal'] = legendary_take_profit | legendary_stop_loss
         
         return df
+
+    # ================== 2주 스윙 손익절 시스템 ==================
+    
+    def calculate_swing_stops(self, df):
+        """2주 스윙용 동적 손익절가 계산"""
+        
+        # 지수별 기본 손익절비
+        stop_loss_pct = {
+            'NIFTY50': 0.07,   # -7%
+            'SENSEX': 0.07,    # -7%  
+            'NEXT50': 0.09,    # -9%
+            'SMALLCAP': 0.11   # -11%
+        }
+        
+        take_profit_pct = {
+            'NIFTY50': 0.14,   # +14%
+            'SENSEX': 0.14,    # +14%
+            'NEXT50': 0.18,    # +18%  
+            'SMALLCAP': 0.22   # +22%
+        }
+        
+        # 각 종목별 손익절가 계산
+        df['stop_loss_price'] = 0
+        df['take_profit_price'] = 0
+        df['swing_stop_pct'] = 0
+        df['swing_profit_pct'] = 0
+        
+        for idx, row in df.iterrows():
+            index_cat = row.get('index_category', 'OTHER')
+            current_price = row.get('close', row.get('Price', 0))
+            
+            # 지수별 손익절비 설정
+            if 'NIFTY50' in str(index_cat):
+                stop_pct = stop_loss_pct['NIFTY50']
+                profit_pct = take_profit_pct['NIFTY50']
+            elif 'SENSEX' in str(index_cat):
+                stop_pct = stop_loss_pct['SENSEX']
+                profit_pct = take_profit_pct['SENSEX']
+            elif 'NEXT50' in str(index_cat):
+                stop_pct = stop_loss_pct['NEXT50']
+                profit_pct = take_profit_pct['NEXT50']
+            elif 'SMALLCAP' in str(index_cat):
+                stop_pct = stop_loss_pct['SMALLCAP']
+                profit_pct = take_profit_pct['SMALLCAP']
+            else:
+                stop_pct = 0.08  # 기본값
+                profit_pct = 0.16
+            
+            # 전설급 신호 강도에 따른 조정
+            final_score = row.get('final_score', 0)
+            if final_score > 20:  # 전설급 신호
+                stop_pct *= 1.5  # 손절 여유있게
+                profit_pct *= 1.8  # 익절 크게
+            elif final_score > 15:  # 강한 신호
+                stop_pct *= 1.2
+                profit_pct *= 1.4
+            
+            # 손익절가 계산
+            if current_price > 0:
+                df.loc[idx, 'stop_loss_price'] = current_price * (1 - stop_pct)
+                df.loc[idx, 'take_profit_price'] = current_price * (1 + profit_pct)
+                df.loc[idx, 'swing_stop_pct'] = stop_pct * 100
+                df.loc[idx, 'swing_profit_pct'] = profit_pct * 100
+        
+        return df
+    
+    def track_current_positions(self):
+        """현재 포지션 추적 및 상태 출력"""
+        from datetime import datetime, timedelta
+        
+        # 샘플 포지션 (실제로는 DB나 파일에서 로드)
+        positions = {
+            'RELIANCE': {
+                'entry_date': '2024-12-20',
+                'entry_price': 2450,
+                'current_price': 2528,
+                'stop_loss': 2278,
+                'take_profit': 2793,
+                'index_category': 'NIFTY50'
+            },
+            'TCS': {
+                'entry_date': '2024-12-18', 
+                'entry_price': 3200,
+                'current_price': 3256,
+                'stop_loss': 2976,
+                'take_profit': 3648,
+                'index_category': 'NIFTY50'
+            },
+            'HDFCBANK': {
+                'entry_date': '2024-12-22',
+                'entry_price': 1650,
+                'current_price': 1623,
+                'stop_loss': 1535,
+                'take_profit': 1881,
+                'index_category': 'SENSEX'
+            }
+        }
+        
+        position_status = []
+        today = datetime.now()
+        
+        for ticker, pos in positions.items():
+            # 경과일 계산
+            entry_date = datetime.strptime(pos['entry_date'], '%Y-%m-%d')
+            days_held = (today - entry_date).days
+            days_remaining = 14 - days_held
+            
+            # 손익률 계산
+            pnl_pct = ((pos['current_price'] - pos['entry_price']) / pos['entry_price']) * 100
+            
+            # 손절/익절선까지 거리
+            stop_distance = ((pos['current_price'] - pos['stop_loss']) / pos['current_price']) * 100
+            profit_distance = ((pos['take_profit'] - pos['current_price']) / pos['current_price']) * 100
+            
+            # 상태 결정
+            if pnl_pct >= 0:
+                status = "🟢"
+            elif pnl_pct > -3:
+                status = "🟡"
+            else:
+                status = "🔴"
+            
+            position_status.append({
+                'ticker': ticker,
+                'days_held': days_held,
+                'days_remaining': max(0, days_remaining),
+                'pnl_pct': pnl_pct,
+                'stop_distance': stop_distance,
+                'profit_distance': profit_distance,
+                'status': status,
+                'current_price': pos['current_price'],
+                'entry_price': pos['entry_price']
+            })
+        
+        return position_status
+    
+    def essential_alerts(self):
+        """핵심 알림 시스템"""
+        alerts = []
+        
+        # 현재 포지션 상태 가져오기
+        positions = self.track_current_positions()
+        
+        for pos in positions:
+            ticker = pos['ticker']
+            
+            # 1. 손절선 80% 근접 경고
+            if pos['stop_distance'] < 20:  # 손절선까지 20% 미만
+                alerts.append(f"🚨 {ticker} 손절선 근접! 현재 거리: {pos['stop_distance']:.1f}%")
+            
+            # 2. 익절 달성
+            if pos['pnl_pct'] >= 10:
+                alerts.append(f"🎯 {ticker} 익절 기회! 수익률: +{pos['pnl_pct']:.1f}%")
+            
+            # 3. 2주 만료 임박 (2일 이하)
+            if pos['days_remaining'] <= 2 and pos['days_remaining'] > 0:
+                alerts.append(f"⏰ {ticker} 만료 {pos['days_remaining']}일 전 - 포지션 정리 검토")
+            
+            # 4. 2주 초과 홀딩
+            if pos['days_remaining'] <= 0:
+                alerts.append(f"🔄 {ticker} 2주 초과 홀딩 - 즉시 정리 권장")
+        
+        # 5. 신규 매수 기회 (샘플)
+        new_opportunities = ['WIPRO', 'BAJFINANCE', 'MARUTI']
+        for stock in new_opportunities[:1]:  # 1개만 샘플로
+            alerts.append(f"💎 {stock} 새로운 전설급 매수 신호 감지")
+        
+        return alerts
+    
+    # ================== 메인 실행 함수 ==================
+    
+    def run_strategy(self, df):
+        """전체 전략 실행 - 4개 지수 통합 + 2주 스윙 버전"""
+        print("🚀 인도 4대 지수 통합 전설 투자전략 + 2주 스윙 시스템 실행 중...")
+        
+        # 1. 기술지표 계산
+        df = self.calculate_all_indicators(df)
+        print("✅ 전설급 기술지표 계산 완료")
+        
+        # 2. 전설 전략 적용
+        df = self.apply_all_strategies(df)
+        print("✅ 5대 전설 전략 적용 완료")
+        
+        # 3. 통합 점수 생성
+        df = self.generate_master_score(df)
+        print("✅ 마스터 점수 생성 완료")
+        
+        # 4. 지수별 맞춤 전략 적용
+        df = self.apply_index_specific_strategy(df)
+        print("✅ 지수별 맞춤 전략 적용 완료")
+        
+        # 5. 2주 스윙 손익절 계산
+        df = self.calculate_swing_stops(df)
+        print("✅ 2주 스윙 손익절 시스템 적용 완료")
+        
+        # 6. 전체 상위 종목 선별
+        selected_stocks = self.auto_stock_selection(df)
+        print(f"✅ 전체 상위 {len(selected_stocks)}개 종목 선별 완료")
+        
+        # 7. 지수별 상위 종목 선별
+        index_selections = self.select_by_index(df)
+        print("✅ 지수별 상위 종목 선별 완료")
+        
+        # 8. 전설급 매매 신호 생성
+        df = self.generate_legendary_buy_signals(df)
+        df = self.generate_legendary_sell_signals(df)
+        print("✅ 전설급 매매 신호 생성 완료")
+        
+        # 9. 포트폴리오 구성
+        portfolio = self.portfolio_management(selected_stocks)
+        print("✅ 포트폴리오 구성 완료")
+        
+        # 10. 리스크 평가
+        risk_metrics = self.risk_management(df)
+        print("✅ 리스크 평가 완료")
+        
+        # 11. 현재 포지션 추적
+        position_status = self.track_current_positions()
+        print("✅ 포지션 추적 완료")
+        
+        # 12. 핵심 알림 생성
+        alerts = self.essential_alerts()
+        print("✅ 알림 시스템 완료")
+        
+        return {
+            'selected_stocks': selected_stocks,
+            'index_selections': index_selections,
+            'portfolio': portfolio,
+            'risk_metrics': risk_metrics,
+            'signals': pd.DataFrame(),
+            'position_status': position_status,
+            'alerts': alerts,
+            'swing_data': df[['ticker', 'close', 'swing_stop_pct', 'swing_profit_pct', 
+                            'stop_loss_price', 'take_profit_price']].head(10)
+        }
     
     # ================== 포트폴리오 관리 ==================
     
