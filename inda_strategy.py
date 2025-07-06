@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+"""
 🇮🇳 인도 전설 투자전략 완전판 - 레전드 에디션 + IBKR 연동
 ================================================================
 
@@ -825,6 +827,7 @@ class LegendaryIndiaStrategy:
             df_sample['ticker'] = symbol
             df_sample['company_name'] = f"{symbol} Limited"
             df_sample['Sector'] = np.random.choice(sectors)
+            df_sample['index_category'] = 'NIFTY50'  # 추가된 필드
             
             # 펀더멘털 데이터
             df_sample['ROE'] = np.random.uniform(15, 35)
@@ -847,302 +850,6 @@ class LegendaryIndiaStrategy:
         print(f"✅ {len(all_symbols)}개 종목, {len(full_df)}개 데이터 포인트 생성 완료")
         
         return full_df
-    
-    # ================== 메인 실행 함수 (원본 + IBKR 추가) ==================
-    
-    def run_conservative_strategy(self, df, enable_trading=False):
-        """안정형 월 5~7% 수요일 전용 전략 실행"""
-        print("🎯 월 5~7% 안정형 수요일 전용 인도 투자전략 실행 중...")
-        
-        # 수요일 체크
-        wednesday_status = self.wednesday_only_filter()
-        print(f"📅 오늘: {wednesday_status['current_day']} | 거래가능: {wednesday_status['is_wednesday']}")
-        
-        # 1. 기술지표 계산
-        df = self.calculate_all_indicators(df)
-        print("✅ 전설급 기술지표 계산 완료")
-        
-        # 2. 전설 전략 적용
-        df = self.apply_all_strategies(df)
-        print("✅ 5대 전설 전략 적용 완료")
-        
-        # 3. 통합 점수 생성
-        df = self.generate_master_score(df)
-        print("✅ 마스터 점수 생성 완료")
-        
-        # 4. 지수별 맞춤 전략 적용
-        df = self.apply_index_specific_strategy(df)
-        print("✅ 지수별 맞춤 전략 적용 완료")
-        
-        # 5. 안정형 1주 스윙 손익절 계산
-        df = self.calculate_conservative_weekly_stops(df)
-        print("✅ 안정형 1주 스윙 손익절 시스템 적용 완료")
-        
-        # 6. 안정형 종목 선별 (엄격한 기준)
-        selected_stocks = self.conservative_stock_selection(df, max_stocks=4)
-        print(f"✅ 안정형 {len(selected_stocks)}개 종목 선별 완료")
-        
-        # 7. 수요일 IBKR 자동매매
-        if enable_trading and wednesday_status['is_wednesday']:
-            print("\n💰 수요일 안정형 자동매매 시작...")
-            if self.connect_ibkr():
-                self.execute_conservative_trading(selected_stocks)
-                print("✅ 안정형 자동매매 완료")
-            else:
-                print("❌ IBKR 연결 실패 - 분석만 진행")
-        elif enable_trading and not wednesday_status['is_wednesday']:
-            print(f"📅 오늘은 {wednesday_status['current_day']} - 거래 없음 (수요일만 거래)")
-        
-        # 8. 안정형 포트폴리오 구성
-        portfolio = self.calculate_position_sizing_conservative(selected_stocks)
-        print("✅ 안정형 포트폴리오 구성 완료")
-        
-        # 9. 리스크 평가
-        risk_metrics = self.risk_management(df)
-        print("✅ 리스크 평가 완료")
-        
-        # 10. 주간 포지션 추적
-        position_status = self.weekly_position_tracker()
-        print("✅ 주간 포지션 추적 완료")
-        
-        # 11. 안정형 알림 생성
-        alerts = self.conservative_alerts()
-        print("✅ 안정형 알림 시스템 완료")
-        
-        return {
-            'selected_stocks': selected_stocks,
-            'portfolio': portfolio,
-            'risk_metrics': risk_metrics,
-            'position_status': position_status,
-            'alerts': alerts,
-            'wednesday_status': wednesday_status,
-            'conservative_data': df[['ticker', 'close', 'weekly_stop_pct', 'weekly_profit_pct', 
-                                   'conservative_stop_loss', 'conservative_take_profit']].head(10) if all(col in df.columns for col in ['ticker', 'close', 'weekly_stop_pct', 'weekly_profit_pct', 'conservative_stop_loss', 'conservative_take_profit']) else pd.DataFrame(),
-            'ibkr_connected': getattr(self.ibkr, 'connected', False)
-        }
-    
-    def execute_conservative_trading(self, selected_stocks, max_investment=2000000):
-        """안정형 자동 거래 실행 (월 5~7% 목표)"""
-        if not self.ibkr.connected:
-            print("❌ IBKR 연결이 필요합니다")
-            return
-        
-        print("\n🎯 안정형 자동 거래 시작 (주간 1~2% 목표)...")
-        
-        # 엄격한 진입 조건 재확인
-        for _, stock in selected_stocks.iterrows():
-            symbol = stock['ticker']
-            price = stock['close']
-            score = stock['final_score']
-            
-            # 재확인: 점수 20점 이상만
-            if score < 20:
-                print(f"⚠️ {symbol} 점수 부족 ({score:.1f}) - 패스")
-                continue
-            
-            # 포지션 사이즈 계산 (보수적)
-            investment = min(max_investment / len(selected_stocks), 500000)  # 최대 50만
-            quantity = int(investment / price)
-            
-            if quantity > 0:
-                success = self.ibkr.place_buy_order(symbol, quantity, price)
-                if success:
-                    stop_loss = stock.get('conservative_stop_loss', price * 0.97)
-                    take_profit = stock.get('conservative_take_profit', price * 1.06)
-                    
-                    print(f"✅ 안정형 매수: {symbol} {quantity}주")
-                    print(f"   💰 진입가: ₹{price:.2f}")
-                    print(f"   🛑 손절가: ₹{stop_loss:.2f} (-{stock.get('weekly_stop_pct', 3):.1f}%)")
-                    print(f"   🎯 익절가: ₹{take_profit:.2f} (+{stock.get('weekly_profit_pct', 6):.1f}%)")
-                    print(f"   📊 신뢰도: {score:.1f}/30점")
-                    time.sleep(1)
-        
-        print("📊 다음 수요일까지 포지션 유지 예정")
-    
-    # 기존 run_strategy 함수를 안정형으로 교체
-    def run_strategy(self, df, enable_trading=False):
-        """전체 전략 실행 - 안정형 월 5~7% 시스템"""
-        return self.run_conservative_strategy(df, enable_trading) 'swing_stop_pct', 'swing_profit_pct', 'stop_loss_price', 'take_profit_price']) else pd.DataFrame(),
-            'ibkr_connected': getattr(self.ibkr, 'connected', False)
-        }
-    
-    # ================== 포트폴리오 관리 (원본) ==================
-    
-    def portfolio_management(self, selected_stocks, total_capital=10000000):
-        """포트폴리오 관리 (1천만원 기준)"""
-        n_stocks = len(selected_stocks)
-        if n_stocks == 0:
-            return {}
-        
-        # 균등 분할 + 점수 가중치
-        base_allocation = total_capital / n_stocks
-        
-        portfolio = {}
-        for _, stock in selected_stocks.iterrows():
-            weight = stock['final_score'] / selected_stocks['final_score'].sum()
-            allocation = base_allocation * (0.7 + 0.6 * weight)  # 70% 균등 + 30% 가중
-            
-            portfolio[stock['ticker']] = {
-                'allocation': allocation,
-                'shares': int(allocation / stock['close']),
-                'score': stock['final_score'],
-                'entry_price': stock['close']
-            }
-        
-        return portfolio
-    
-    def risk_management(self, df):
-        """리스크 관리"""
-        # 간단한 리스크 메트릭
-        risk_metrics = {
-            'portfolio_beta': 1.2,
-            'max_sector_concentration': 0.3,
-            'diversification_score': 0.7,
-            'avg_volatility': 0.25
-        }
-        
-        return risk_metrics
-
-# ================== 실제 실행 및 데모 (원본 + IBKR 추가) ==================
-
-if __name__ == "__main__":
-    print("🇮🇳 인도 전설 투자전략 + IBKR 자동매매 시스템")
-    print("=" * 70)
-    print("⚡ 추가된 IBKR 기능:")
-    print("🔥 실시간 자동매매 | 💰 스마트 손익절 | 📊 포지션 관리")
-    print("=" * 70)
-    
-    # 전략 시스템 초기화
-    strategy = LegendaryIndiaStrategy()
-    
-    # 실행 모드 선택
-    print("\n실행 모드를 선택하세요:")
-    print("1. 📊 백테스팅만 (IBKR 없이)")
-    print("2. 🚀 실제 거래 (IBKR 연동)")
-    print("3. 📈 포지션 확인 (IBKR)")
-    
-    choice = input("\n번호 입력 (기본값: 1): ").strip() or "1"
-    
-    if choice == "1":
-        # 백테스팅 모드
-        print("\n🔬 백테스팅 모드 시작...")
-        sample_df = strategy.create_sample_data()
-        results = strategy.run_strategy(sample_df, enable_trading=False)
-        
-    elif choice == "2":
-        # 실제 거래 모드
-        print("\n🚀 실제 거래 모드 시작...")
-        print("⚠️ 실제 자금이 사용됩니다. 신중하게 진행하세요!")
-        confirm = input("계속하시겠습니까? (yes/no): ")
-        
-        if confirm.lower() == 'yes':
-            sample_df = strategy.create_sample_data()
-            results = strategy.run_strategy(sample_df, enable_trading=True)
-        else:
-            print("❌ 취소되었습니다")
-            exit()
-            
-    elif choice == "3":
-        # 포지션 확인 모드
-        print("\n📈 포지션 확인 모드...")
-        if strategy.connect_ibkr():
-            positions = strategy.ibkr.get_positions()
-            print("\n현재 포지션:")
-            for symbol, pos in positions.items():
-                print(f"📊 {symbol}: {pos['quantity']}주 @₹{pos['avg_cost']}")
-        else:
-            print("❌ IBKR 연결 실패")
-        exit()
-    
-    else:
-        print("❌ 잘못된 선택 - 백테스팅 모드로 진행")
-        sample_df = strategy.create_sample_data()
-        results = strategy.run_strategy(sample_df, enable_trading=False)
-    
-    # 결과 상세 출력 (원본 코드)
-    print("\n🏆 === 인도 전설 종목 선별 결과 ===")
-    print("="*80)
-    
-    selected = results['selected_stocks']
-    if not selected.empty:
-        print(f"📊 총 {len(selected)}개 전설 종목 선별!")
-        print("-" * 80)
-        
-        for idx, (_, stock) in enumerate(selected.iterrows(), 1):
-            print(f"🥇 #{idx:2d} | {stock['ticker']:12} | {stock.get('company_name', 'N/A')[:20]:20}")
-            print(f"    💰 주가: ₹{stock['close']:8.2f} | 🎯 최종점수: {stock['final_score']:6.2f}")
-            
-            # 기본 전략 점수들 (안전하게 접근)
-            master_score = stock.get('master_score', 0)
-            print(f"    📈 마스터점수: {master_score:4.1f}")
-            print("-" * 80)
-    
-    # 포트폴리오 구성 결과
-    print("\n💼 === 자동 포트폴리오 구성 ===")
-    print("="*80)
-    
-    portfolio = results['portfolio']
-    total_investment = 0
-    
-    if portfolio:
-        print("💎 투자 배분 (₹10,000,000 기준):")
-        print("-" * 80)
-        
-        for ticker, details in portfolio.items():
-            investment = details['allocation']
-            shares = details['shares']
-            score = details['score']
-            price = details['entry_price']
-            
-            print(f"📈 {ticker:12} | ₹{investment:9,.0f} | {shares:6,}주 | ₹{price:8.2f} | 점수:{score:6.2f}")
-            total_investment += investment
-        
-        print("-" * 80)
-        print(f"💰 총 투자금액: ₹{total_investment:10,.0f}")
-        print(f"🏦 잔여현금:   ₹{10000000 - total_investment:10,.0f}")
-    
-    # IBKR 연결 상태
-    print("\n🔗 === IBKR 연결 상태 ===")
-    print("="*70)
-    
-    if results.get('ibkr_connected'):
-        print("✅ IBKR 연결 성공 - 자동매매 활성화")
-        print("💰 실제 주문이 실행되었습니다")
-    else:
-        print("❌ IBKR 연결 없음 - 백테스팅만 진행")
-        print("🔧 IBKR 연동을 원하면 TWS/Gateway를 실행하세요")
-    
-    # 리스크 분석
-    print("\n⚖️ === 포트폴리오 리스크 분석 ===")
-    print("="*70)
-    
-    risk = results['risk_metrics']
-    print(f"📊 포트폴리오 베타:    {risk['portfolio_beta']:.2f}")
-    print(f"🎯 섹터 집중도:       {risk['max_sector_concentration']:.1%}")
-    print(f"🌈 분산투자 점수:     {risk['diversification_score']:.1%}")
-    print(f"📈 연평균 변동성:     {risk['avg_volatility']:.1%}")
-    
-    # 실전 사용법 안내 (원본 + IBKR 추가)
-    print("\n🚀 === 실전 활용 가이드 ===")
-    print("="*70)
-    print("1. 📅 매일 인도 장마감 후 실행하여 신호 확인")
-    print("2. 🎯 상위 10개 종목 중심으로 포트폴리오 구성")
-    print("3. 💰 IBKR 연동시 자동 매수/매도 실행")
-    print("4. 🛡️ 자동 손절(-10%) / 익절(+20%) 시스템")
-    print("5. 📊 실시간 포지션 모니터링")
-    print("6. 🔄 월 1회 리밸런싱으로 수익 극대화")
-    
-    print("\n🇮🇳 전설급 인도 투자전략 + IBKR 자동매매 완료! 🚀")
-    print("💎 이제 진짜 자동으로 돈을 벌 수 있습니다! 🔥")
-    print("="*70)
-    
-    print("\n🔧 === IBKR 연동 설정법 ===")
-    print("1. pip install ibapi")
-    print("2. TWS 또는 IB Gateway 실행")
-    print("3. API 설정 활성화 (포트 7497)")
-    print("4. 인도 주식 거래 권한 확인")
-    print("5. 이 스크립트 실행 → 모드 2 선택")
-    print("\n🏆 완전 자동화 달성! Let's make money! 💰") 
     
     # ================== 수요일 전용 월 5~7% 안정형 1주 스윙 시스템 ==================
     
@@ -1257,18 +964,25 @@ if __name__ == "__main__":
         ].nlargest(3, 'final_score')
         
         # 2. NEXT50 중에서 1개 (성장주)
-        mid_cap = filtered_df[
-            (filtered_df['index_category'].str.contains('NEXT50', na=False))
-        ].nlargest(1, 'final_score')
+        if 'NEXT50' in str(filtered_df['index_category'].values):
+            mid_cap = filtered_df[
+                (filtered_df['index_category'].str.contains('NEXT50', na=False))
+            ].nlargest(1, 'final_score')
+        else:
+            mid_cap = pd.DataFrame()
         
         # 3. 최종 조합
-        selected_stocks = pd.concat([large_cap, mid_cap], ignore_index=True)
+        if not mid_cap.empty:
+            selected_stocks = pd.concat([large_cap, mid_cap], ignore_index=True)
+        else:
+            selected_stocks = large_cap
         selected_stocks = selected_stocks.head(max_stocks)
         
         # 추가 안전장치: 섹터 분산 체크
-        sector_counts = selected_stocks['Sector'].value_counts()
-        if sector_counts.max() > 2:  # 한 섹터에 2개 초과 금지
-            print("⚠️ 섹터 집중도 경고 - 분산 조정")
+        if not selected_stocks.empty:
+            sector_counts = selected_stocks['Sector'].value_counts()
+            if sector_counts.max() > 2:  # 한 섹터에 2개 초과 금지
+                print("⚠️ 섹터 집중도 경고 - 분산 조정")
         
         return selected_stocks
     
@@ -1297,11 +1011,11 @@ if __name__ == "__main__":
             
             # 리스크 기반 포지션 사이징
             risk_per_share = price * stop_loss_pct
-            max_shares_by_risk = int(risk_budget_per_trade / risk_per_share)
+            max_shares_by_risk = int(risk_budget_per_trade / risk_per_share) if risk_per_share > 0 else 0
             
             # 실제 배분
             allocation = min(base_allocation * score_weight, max_investment_per_stock)
-            shares_by_capital = int(allocation / price)
+            shares_by_capital = int(allocation / price) if price > 0 else 0
             
             # 최종 주식 수 (리스크 제한 적용)
             final_shares = min(shares_by_capital, max_shares_by_risk)
@@ -1316,7 +1030,7 @@ if __name__ == "__main__":
                 'take_profit': stock.get('conservative_take_profit', price * 1.06),
                 'weekly_target': stock.get('target_weekly_return', 6),
                 'risk_amount': final_shares * risk_per_share,
-                'weight_pct': (final_allocation / total_capital) * 100
+                'weight_pct': (final_allocation / total_capital) * 100 if total_capital > 0 else 0
             }
         
         return portfolio
@@ -1449,7 +1163,218 @@ if __name__ == "__main__":
         else:
             alerts.append(f"📈 월간 목표까지: {monthly_target - monthly_projection:.1f}%p 더 필요")
         
-        return alerts    # 결과 상세 출력 (안정형 월 5~7% 버전)
+        return alerts
+    
+    def execute_conservative_trading(self, selected_stocks, max_investment=2000000):
+        """안정형 자동 거래 실행 (월 5~7% 목표)"""
+        if not self.ibkr.connected:
+            print("❌ IBKR 연결이 필요합니다")
+            return
+        
+        print("\n🎯 안정형 자동 거래 시작 (주간 1~2% 목표)...")
+        
+        # 엄격한 진입 조건 재확인
+        for _, stock in selected_stocks.iterrows():
+            symbol = stock['ticker']
+            price = stock['close']
+            score = stock['final_score']
+            
+            # 재확인: 점수 20점 이상만
+            if score < 20:
+                print(f"⚠️ {symbol} 점수 부족 ({score:.1f}) - 패스")
+                continue
+            
+            # 포지션 사이즈 계산 (보수적)
+            investment = min(max_investment / len(selected_stocks), 500000)  # 최대 50만
+            quantity = int(investment / price)
+            
+            if quantity > 0:
+                success = self.ibkr.place_buy_order(symbol, quantity, price)
+                if success:
+                    stop_loss = stock.get('conservative_stop_loss', price * 0.97)
+                    take_profit = stock.get('conservative_take_profit', price * 1.06)
+                    
+                    print(f"✅ 안정형 매수: {symbol} {quantity}주")
+                    print(f"   💰 진입가: ₹{price:.2f}")
+                    print(f"   🛑 손절가: ₹{stop_loss:.2f} (-{stock.get('weekly_stop_pct', 3):.1f}%)")
+                    print(f"   🎯 익절가: ₹{take_profit:.2f} (+{stock.get('weekly_profit_pct', 6):.1f}%)")
+                    print(f"   📊 신뢰도: {score:.1f}/30점")
+                    time.sleep(1)
+        
+        print("📊 다음 수요일까지 포지션 유지 예정")
+    
+    def run_conservative_strategy(self, df, enable_trading=False):
+        """안정형 월 5~7% 수요일 전용 전략 실행"""
+        print("🎯 월 5~7% 안정형 수요일 전용 인도 투자전략 실행 중...")
+        
+        # 수요일 체크
+        wednesday_status = self.wednesday_only_filter()
+        print(f"📅 오늘: {wednesday_status['current_day']} | 거래가능: {wednesday_status['is_wednesday']}")
+        
+        # 1. 기술지표 계산
+        df = self.calculate_all_indicators(df)
+        print("✅ 전설급 기술지표 계산 완료")
+        
+        # 2. 전설 전략 적용
+        df = self.apply_all_strategies(df)
+        print("✅ 5대 전설 전략 적용 완료")
+        
+        # 3. 통합 점수 생성
+        df = self.generate_master_score(df)
+        print("✅ 마스터 점수 생성 완료")
+        
+        # 4. 지수별 맞춤 전략 적용
+        df = self.apply_index_specific_strategy(df)
+        print("✅ 지수별 맞춤 전략 적용 완료")
+        
+        # 5. 안정형 1주 스윙 손익절 계산
+        df = self.calculate_conservative_weekly_stops(df)
+        print("✅ 안정형 1주 스윙 손익절 시스템 적용 완료")
+        
+        # 6. 안정형 종목 선별 (엄격한 기준)
+        selected_stocks = self.conservative_stock_selection(df, max_stocks=4)
+        print(f"✅ 안정형 {len(selected_stocks)}개 종목 선별 완료")
+        
+        # 7. 수요일 IBKR 자동매매
+        if enable_trading and wednesday_status['is_wednesday']:
+            print("\n💰 수요일 안정형 자동매매 시작...")
+            if self.connect_ibkr():
+                self.execute_conservative_trading(selected_stocks)
+                print("✅ 안정형 자동매매 완료")
+            else:
+                print("❌ IBKR 연결 실패 - 분석만 진행")
+        elif enable_trading and not wednesday_status['is_wednesday']:
+            print(f"📅 오늘은 {wednesday_status['current_day']} - 거래 없음 (수요일만 거래)")
+        
+        # 8. 안정형 포트폴리오 구성
+        portfolio = self.calculate_position_sizing_conservative(selected_stocks)
+        print("✅ 안정형 포트폴리오 구성 완료")
+        
+        # 9. 리스크 평가
+        risk_metrics = self.risk_management(df)
+        print("✅ 리스크 평가 완료")
+        
+        # 10. 주간 포지션 추적
+        position_status = self.weekly_position_tracker()
+        print("✅ 주간 포지션 추적 완료")
+        
+        # 11. 안정형 알림 생성
+        alerts = self.conservative_alerts()
+        print("✅ 안정형 알림 시스템 완료")
+        
+        return {
+            'selected_stocks': selected_stocks,
+            'portfolio': portfolio,
+            'risk_metrics': risk_metrics,
+            'position_status': position_status,
+            'alerts': alerts,
+            'wednesday_status': wednesday_status,
+            'conservative_data': df[['ticker', 'close', 'weekly_stop_pct', 'weekly_profit_pct', 
+                                   'conservative_stop_loss', 'conservative_take_profit']].head(10) if all(col in df.columns for col in ['ticker', 'close', 'weekly_stop_pct', 'weekly_profit_pct', 'conservative_stop_loss', 'conservative_take_profit']) else pd.DataFrame(),
+            'ibkr_connected': getattr(self.ibkr, 'connected', False)
+        }
+    
+    # ================== 메인 실행 함수 (원본 + IBKR 추가) ==================
+    
+    def run_strategy(self, df, enable_trading=False):
+        """전체 전략 실행 - 안정형 월 5~7% 시스템"""
+        return self.run_conservative_strategy(df, enable_trading)
+    
+    # ================== 포트폴리오 관리 (원본) ==================
+    
+    def portfolio_management(self, selected_stocks, total_capital=10000000):
+        """포트폴리오 관리 (1천만원 기준)"""
+        n_stocks = len(selected_stocks)
+        if n_stocks == 0:
+            return {}
+        
+        # 균등 분할 + 점수 가중치
+        base_allocation = total_capital / n_stocks
+        
+        portfolio = {}
+        for _, stock in selected_stocks.iterrows():
+            weight = stock['final_score'] / selected_stocks['final_score'].sum()
+            allocation = base_allocation * (0.7 + 0.6 * weight)  # 70% 균등 + 30% 가중
+            
+            portfolio[stock['ticker']] = {
+                'allocation': allocation,
+                'shares': int(allocation / stock['close']),
+                'score': stock['final_score'],
+                'entry_price': stock['close']
+            }
+        
+        return portfolio
+    
+    def risk_management(self, df):
+        """리스크 관리"""
+        # 간단한 리스크 메트릭
+        risk_metrics = {
+            'portfolio_beta': 1.2,
+            'max_sector_concentration': 0.3,
+            'diversification_score': 0.7,
+            'avg_volatility': 0.25
+        }
+        
+        return risk_metrics
+
+# ================== 실제 실행 및 데모 (원본 + IBKR 추가) ==================
+
+def main():
+    """메인 실행 함수"""
+    print("🇮🇳 인도 전설 투자전략 + IBKR 자동매매 시스템")
+    print("=" * 70)
+    print("⚡ 추가된 IBKR 기능:")
+    print("🔥 실시간 자동매매 | 💰 스마트 손익절 | 📊 포지션 관리")
+    print("=" * 70)
+    
+    # 전략 시스템 초기화
+    strategy = LegendaryIndiaStrategy()
+    
+    # 실행 모드 선택
+    print("\n실행 모드를 선택하세요:")
+    print("1. 📊 백테스팅만 (IBKR 없이)")
+    print("2. 🚀 실제 거래 (IBKR 연동)")
+    print("3. 📈 포지션 확인 (IBKR)")
+    
+    choice = input("\n번호 입력 (기본값: 1): ").strip() or "1"
+    
+    if choice == "1":
+        # 백테스팅 모드
+        print("\n🔬 백테스팅 모드 시작...")
+        sample_df = strategy.create_sample_data()
+        results = strategy.run_strategy(sample_df, enable_trading=False)
+        
+    elif choice == "2":
+        # 실제 거래 모드
+        print("\n🚀 실제 거래 모드 시작...")
+        print("⚠️ 실제 자금이 사용됩니다. 신중하게 진행하세요!")
+        confirm = input("계속하시겠습니까? (yes/no): ")
+        
+        if confirm.lower() == 'yes':
+            sample_df = strategy.create_sample_data()
+            results = strategy.run_strategy(sample_df, enable_trading=True)
+        else:
+            print("❌ 취소되었습니다")
+            return
+            
+    elif choice == "3":
+        # 포지션 확인 모드
+        print("\n📈 포지션 확인 모드...")
+        if strategy.connect_ibkr():
+            positions = strategy.ibkr.get_positions()
+            print("\n현재 포지션:")
+            for symbol, pos in positions.items():
+                print(f"📊 {symbol}: {pos['quantity']}주 @₹{pos['avg_cost']}")
+        else:
+            print("❌ IBKR 연결 실패")
+        return
+    
+    else:
+        print("❌ 잘못된 선택 - 백테스팅 모드로 진행")
+        sample_df = strategy.create_sample_data()
+        results = strategy.run_strategy(sample_df, enable_trading=False)
+    
+    # 결과 상세 출력 - 안정형 월 5~7% 버전
     print("\n🎯 === 안정형 월 5~7% 인도 투자전략 결과 ===")
     print("="*80)
     
@@ -1585,4 +1510,7 @@ if __name__ == "__main__":
     
     print("\n🇮🇳 안정형 월 5~7% 인도 투자전략 완료! 🎯")
     print("💎 꾸준함이 부의 지름길입니다! 💰")
-    print("="*70)"""
+    print("="*70)
+
+if __name__ == "__main__":
+    main()
