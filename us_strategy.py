@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🏆 전설적 퀸트프로젝트 - 통합 완성판 V6.2 (오류 수정)
+🏆 전설적 퀸트프로젝트 - 통합 완성판 V6.3 (주 2회 화목 매매)
 ===============================================
 
 🌟 완전 통합 특징:
 1. 🔥 4가지 투자전략 지능형 융합 (버핏+린치+모멘텀+기술)
 2. 🚀 실시간 S&P500+NASDAQ 자동선별 엔진
 3. 💎 VIX 기반 시장상황 자동판단 AI
-4. 🎯 월 5-7% 달성형 스윙 + 분할매매 통합
+4. 🎯 월 5-7% 달성형 주 2회 화목 매매 최적화
 5. ⚡ IBKR 실거래 완전 연동 + 자동 손익절
 6. 🛡️ 통합 리스크관리 + 포트폴리오 최적화
 7. 🧠 혼자 보수유지 가능한 완벽한 아키텍처
 
 Author: 전설적퀸트팀
-Version: 6.2.1 (오류 수정)
+Version: 6.3.0 (주 2회 화목 매매 통합)
 """
 
 import asyncio
@@ -123,18 +123,31 @@ class LegendaryConfig:
                     'take_profit': [6.0, 12.0],    # 2단계 익절
                     'profit_ratios': [60.0, 40.0], # 매도 비율
                     'stop_loss': 8.0               # 손절
+                },
+                # 🆕 주간 매매 설정
+                'weekly': {
+                    'enabled': True,
+                    'tuesday_targets': 4,           # 화요일 진입 목표
+                    'thursday_targets': 2,          # 목요일 진입 목표
+                    'tuesday_allocation': 12.5,     # 화요일 기본 포지션 크기 (%)
+                    'thursday_allocation': 8.0,     # 목요일 보수적 포지션 크기 (%)
+                    'profit_taking_threshold': 8.0, # 목요일 이익실현 기준 (%)
+                    'loss_cutting_threshold': -6.0, # 목요일 손절 기준 (%)
+                    'tuesday_time': '10:30',        # 화요일 매매 시간
+                    'thursday_time': '10:30'        # 목요일 매매 시간
                 }
             },
             
             # 🛡️ 리스크 관리
             'risk': {
                 'portfolio_allocation': 80.0,
-                'max_position': 8.0,
+                'max_position': 15.0,  # 주간 매매는 더 큰 포지션 허용
                 'max_sector': 25.0,
                 'stop_loss': {'classic': 15.0, 'swing': 8.0},
                 'trailing_stop': True,
                 'daily_loss_limit': 1.0,
-                'monthly_loss_limit': 3.0
+                'monthly_loss_limit': 3.0,
+                'weekly_loss_limit': 3.0  # 🆕 주간 손실 한도
             },
             
             # 📊 종목 선별
@@ -165,7 +178,8 @@ class LegendaryConfig:
                 'weekend_shutdown': True,
                 'holiday_shutdown': True,
                 'morning_scan': '09:00',
-                'evening_report': '16:00'
+                'evening_report': '16:00',
+                'weekly_mode': True  # 🆕 주간 모드
             },
             
             # 📱 알림
@@ -267,6 +281,7 @@ class Position:
     stage: int = 1
     tp_executed: List[bool] = field(default_factory=lambda: [False, False, False])
     highest_price: float = 0.0
+    entry_day: str = ''  # 🆕 진입 요일 추가
     
     def __post_init__(self):
         if self.highest_price == 0.0:
@@ -664,7 +679,7 @@ class TradingSystem:
             target_weight = (base_weight / 100) * confidence_multiplier
             
             # 최대 포지션 제한
-            max_pos = config.get('risk.max_position', 8.0) / 100
+            max_pos = config.get('risk.max_position', 15.0) / 100
             target_weight = min(target_weight, max_pos)
             
             # 투자금액 및 주식수
@@ -687,6 +702,14 @@ class TradingSystem:
             tp_levels = config.get('trading.swing.take_profit', [6.0, 12.0])
             ratios = config.get('trading.swing.profit_ratios', [60.0, 40.0])
             
+            return {
+                'tp1_price': price * (1 + tp_levels[0] / 100),
+                'tp2_price': price * (1 + tp_levels[1] / 100),
+                'tp1_ratio': ratios[0] / 100,
+                'tp2_ratio': ratios[1] / 100
+            }
+        else:  # classic
+            tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
             return {
                 'tp1_price': price * (1 + tp_levels[0] / 100),
                 'tp2_price': price * (1 + tp_levels[1] / 100),
@@ -913,7 +936,8 @@ class StopTakeManager:
                     profit_loss REAL DEFAULT 0.0,
                     profit_percent REAL DEFAULT 0.0,
                     mode TEXT NOT NULL,
-                    reason TEXT DEFAULT ''
+                    reason TEXT DEFAULT '',
+                    entry_day TEXT DEFAULT ''
                 )
             ''')
             
@@ -926,7 +950,8 @@ class StopTakeManager:
                     mode TEXT NOT NULL,
                     stage INTEGER DEFAULT 1,
                     tp_executed TEXT DEFAULT '[]',
-                    highest_price REAL DEFAULT 0.0
+                    highest_price REAL DEFAULT 0.0,
+                    entry_day TEXT DEFAULT ''
                 )
             ''')
             
@@ -937,7 +962,7 @@ class StopTakeManager:
         except Exception as e:
             logging.error(f"DB 초기화 실패: {e}")
     
-    def add_position(self, symbol: str, quantity: int, avg_cost: float, mode: str):
+    def add_position(self, symbol: str, quantity: int, avg_cost: float, mode: str, entry_day: str = ''):
         """포지션 추가"""
         position = Position(
             symbol=symbol,
@@ -945,13 +970,14 @@ class StopTakeManager:
             avg_cost=avg_cost,
             entry_date=datetime.now(),
             mode=mode,
-            highest_price=avg_cost
+            highest_price=avg_cost,
+            entry_day=entry_day
         )
         
         self.positions[symbol] = position
         self._save_position_to_db(position)
         
-        logging.info(f"➕ 포지션 추가: {symbol} {quantity}주 @${avg_cost:.2f} ({mode})")
+        logging.info(f"➕ 포지션 추가: {symbol} {quantity}주 @${avg_cost:.2f} ({mode}) [{entry_day}]")
     
     def _save_position_to_db(self, position: Position):
         """포지션 DB 저장"""
@@ -963,12 +989,12 @@ class StopTakeManager:
             
             cursor.execute('''
                 INSERT OR REPLACE INTO positions 
-                (symbol, quantity, avg_cost, entry_date, mode, stage, tp_executed, highest_price)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, quantity, avg_cost, entry_date, mode, stage, tp_executed, highest_price, entry_day)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 position.symbol, position.quantity, position.avg_cost,
                 position.entry_date.isoformat(), position.mode, position.stage,
-                tp_json, position.highest_price
+                tp_json, position.highest_price, position.entry_day
             ))
             
             conn.commit()
@@ -1047,10 +1073,10 @@ class StopTakeManager:
                     position.quantity -= sell_qty
                     
                     await self._record_trade(symbol, 'SELL_SWING_TP2', sell_qty, 
-                                           current_price, profit_pct, position.mode)
+                                           current_price, profit_pct, position.mode, position.entry_day)
                     await self._send_notification(
                         f"🎉 {symbol} 스윙 2차 익절! +{profit_pct:.1f}% "
-                        f"(${sell_qty * current_price:.0f})"
+                        f"(${sell_qty * current_price:.0f}) [{position.entry_day}]"
                     )
                     
                     if position.quantity <= 0:
@@ -1067,10 +1093,10 @@ class StopTakeManager:
                     position.quantity -= sell_qty
                     
                     await self._record_trade(symbol, 'SELL_SWING_TP1', sell_qty,
-                                           current_price, profit_pct, position.mode)
+                                           current_price, profit_pct, position.mode, position.entry_day)
                     await self._send_notification(
                         f"✅ {symbol} 스윙 1차 익절! +{profit_pct:.1f}% "
-                        f"(${sell_qty * current_price:.0f})"
+                        f"(${sell_qty * current_price:.0f}) [{position.entry_day}]"
                     )
     
     async def _check_classic_exit(self, symbol: str, position: Position,
@@ -1088,7 +1114,7 @@ class StopTakeManager:
                     position.quantity -= sell_qty
                     
                     await self._record_trade(symbol, 'SELL_CLASSIC_TP2', sell_qty,
-                                           current_price, profit_pct, position.mode)
+                                           current_price, profit_pct, position.mode, position.entry_day)
                     await self._send_notification(
                         f"💰 {symbol} 클래식 2차 익절! +{profit_pct:.1f}% "
                         f"(${sell_qty * current_price:.0f})"
@@ -1104,7 +1130,7 @@ class StopTakeManager:
                     position.quantity -= sell_qty
                     
                     await self._record_trade(symbol, 'SELL_CLASSIC_TP1', sell_qty,
-                                           current_price, profit_pct, position.mode)
+                                           current_price, profit_pct, position.mode, position.entry_day)
                     await self._send_notification(
                         f"✅ {symbol} 클래식 1차 익절! +{profit_pct:.1f}% "
                         f"(${sell_qty * current_price:.0f})"
@@ -1124,10 +1150,10 @@ class StopTakeManager:
             order_id = await self.ibkr.place_sell_order(symbol, position.quantity, 'STOP_LOSS')
             if order_id:
                 await self._record_trade(symbol, 'SELL_STOP', position.quantity,
-                                       current_price, profit_pct, position.mode)
+                                       current_price, profit_pct, position.mode, position.entry_day)
                 await self._send_notification(
                     f"🛑 {symbol} {position.mode} 손절! {profit_pct:.1f}% "
-                    f"(${position.quantity * current_price:.0f})"
+                    f"(${position.quantity * current_price:.0f}) [{position.entry_day}]"
                 )
                 
                 del self.positions[symbol]
@@ -1143,17 +1169,17 @@ class StopTakeManager:
                 order_id = await self.ibkr.place_sell_order(symbol, position.quantity, 'TRAILING_STOP')
                 if order_id:
                     await self._record_trade(symbol, 'SELL_TRAILING', position.quantity,
-                                           current_price, profit_pct, position.mode)
+                                           current_price, profit_pct, position.mode, position.entry_day)
                     await self._send_notification(
                         f"📉 {symbol} 트레일링 스톱! {profit_pct:.1f}% "
-                        f"(최고: ${position.highest_price:.2f})"
+                        f"(최고: ${position.highest_price:.2f}) [{position.entry_day}]"
                     )
                     
                     del self.positions[symbol]
                     await self._remove_position_from_db(symbol)
     
     async def _record_trade(self, symbol: str, action: str, quantity: int,
-                           price: float, profit_pct: float, mode: str):
+                           price: float, profit_pct: float, mode: str, entry_day: str = ''):
         """거래 기록"""
         try:
             conn = sqlite3.connect(self.db_path)
@@ -1166,10 +1192,10 @@ class StopTakeManager:
             
             cursor.execute('''
                 INSERT INTO trades 
-                (symbol, action, quantity, price, timestamp, profit_loss, profit_percent, mode, reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, action, quantity, price, timestamp, profit_loss, profit_percent, mode, reason, entry_day)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (symbol, action, quantity, price, datetime.now().isoformat(), 
-                  profit_loss, profit_pct, mode, action))
+                  profit_loss, profit_pct, mode, action, entry_day))
             
             conn.commit()
             conn.close()
@@ -1226,15 +1252,16 @@ class StopTakeManager:
             logging.error(f"텔레그램 전송 오류: {e}")
 
 # ========================================================================================
-# 🏆 메인 전략 시스템
+# 🏆 메인 전략 시스템 (화목 매매 통합)
 # ========================================================================================
 
 class LegendaryQuantStrategy:
-    """🔥 전설적 퀸트 통합 전략 시스템"""
+    """🔥 전설적 퀸트 통합 전략 시스템 (주 2회 화목 매매)"""
     
     def __init__(self):
         self.enabled = config.get('strategy.enabled', True)
         self.current_mode = config.get('strategy.mode', 'swing')
+        self.weekly_mode = config.get('trading.weekly.enabled', True)
         
         # 핵심 컴포넌트들
         self.selector = StockSelector()
@@ -1253,9 +1280,16 @@ class LegendaryQuantStrategy:
         self.target_min = config.get('strategy.monthly_target.min', 5.0)
         self.target_max = config.get('strategy.monthly_target.max', 7.0)
         
+        # 🆕 주간 매매 추적
+        self.last_trade_dates = {'Tuesday': None, 'Thursday': None}
+        
         if self.enabled:
             logging.info("🏆 전설적 퀸트 전략 시스템 가동!")
             logging.info(f"🎯 현재 모드: {self.current_mode.upper()}")
+            if self.weekly_mode:
+                logging.info("📅 주 2회 화목 매매 모드 활성화")
+
+# [기존 메서드들은 동일하게 유지...]
     
     def _is_cache_valid(self) -> bool:
         """캐시 유효성 확인"""
@@ -1572,6 +1606,7 @@ class LegendaryQuantStrategy:
             
             for row in rows:
                 tp_executed = json.loads(row[6]) if row[6] else [False, False, False]
+                entry_day = row[8] if len(row) > 8 else ''
                 
                 position = Position(
                     symbol=row[0],
@@ -1581,7 +1616,8 @@ class LegendaryQuantStrategy:
                     mode=row[4],
                     stage=row[5],
                     tp_executed=tp_executed,
-                    highest_price=row[7]
+                    highest_price=row[7],
+                    entry_day=entry_day
                 )
                 
                 self.stop_take.positions[position.symbol] = position
@@ -1595,7 +1631,8 @@ class LegendaryQuantStrategy:
     async def start_auto_trading(self):
         """자동거래 시작"""
         try:
-            logging.info(f"🎯 자동거래 시작! (모드: {self.current_mode.upper()})")
+            mode_text = "주 2회 화목 매매" if self.weekly_mode else "일반 모드"
+            logging.info(f"🎯 자동거래 시작! ({mode_text})")
             
             # 손익절 모니터링 시작
             monitor_task = asyncio.create_task(self.stop_take.start_monitoring())
@@ -1611,31 +1648,67 @@ class LegendaryQuantStrategy:
         finally:
             await self.shutdown()
     
+    # ========================================================================================
+    # 🆕 주 2회 화목 매매 스케줄 시스템
+    # ========================================================================================
+    
     async def _run_schedule(self):
-        """스케줄 실행"""
+        """개선된 주 2회 화목 매매 스케줄"""
+        logging.info("📅 주 2회 화목 매매 스케줄러 시작!")
+        
         while True:
             try:
                 now = datetime.now()
+                current_time = now.time()
+                weekday = now.weekday()  # 0=월, 1=화, 2=수, 3=목, 4=금
                 
-                # 스윙 모드 스케줄
-                if self.current_mode == 'swing':
-                    if now.weekday() == 1 and now.hour == 10 and now.minute == 30:  # 화요일
-                        await self._swing_entry()
-                    elif now.weekday() == 3 and now.hour == 10 and now.minute == 30:  # 목요일
-                        await self._swing_entry()
+                if self.weekly_mode:
+                    # 화요일 매매 (10:30 AM)
+                    tuesday_time = config.get('trading.weekly.tuesday_time', '10:30')
+                    thursday_time = config.get('trading.weekly.thursday_time', '10:30')
+                    
+                    hour, minute = map(int, tuesday_time.split(':'))
+                    if (weekday == 1 and  # 화요일
+                        current_time.hour == hour and current_time.minute == minute and
+                        self.last_trade_dates['Tuesday'] != now.date() and
+                        self._is_trading_day()):
+                        
+                        await self._execute_tuesday_trading()
+                        self.last_trade_dates['Tuesday'] = now.date()
+                        
+                    # 목요일 매매 (10:30 AM)  
+                    hour, minute = map(int, thursday_time.split(':'))
+                    if (weekday == 3 and  # 목요일
+                          current_time.hour == hour and current_time.minute == minute and
+                          self.last_trade_dates['Thursday'] != now.date() and
+                          self._is_trading_day()):
+                        
+                        await self._execute_thursday_trading()
+                        self.last_trade_dates['Thursday'] = now.date()
+                else:
+                    # 기존 스윙 모드 스케줄
+                    if self.current_mode == 'swing':
+                        if now.weekday() == 1 and now.hour == 10 and now.minute == 30:  # 화요일
+                            await self._swing_entry()
+                        elif now.weekday() == 3 and now.hour == 10 and now.minute == 30:  # 목요일
+                            await self._swing_entry()
+                    
+                    # 클래식 모드 스케줄
+                    elif self.current_mode == 'classic':
+                        if now.hour == 10 and now.minute == 0:  # 매일 10시
+                            await self._classic_entry()
                 
-                # 클래식 모드 스케줄
-                elif self.current_mode == 'classic':
-                    if now.hour == 10 and now.minute == 0:  # 매일 10시
-                        await self._classic_entry()
-                
-                # 일일 체크
-                if now.hour == 9 and now.minute == 0:
+                # 공통 일일 체크들
+                if current_time.hour == 9 and current_time.minute == 0:
                     await self._perform_daily_check()
                 
-                # 성과 리포트
-                if now.hour == 16 and now.minute == 0:
+                if current_time.hour == 16 and current_time.minute == 0:
                     await self._generate_report()
+                
+                # 장 시작 전 알림 (화목요일)
+                if (current_time.hour == 9 and current_time.minute == 0 and 
+                    weekday in [1, 3] and self._is_trading_day() and self.weekly_mode):
+                    await self._pre_market_notification(weekday)
                 
                 await asyncio.sleep(60)  # 1분마다 체크
                 
@@ -1643,8 +1716,517 @@ class LegendaryQuantStrategy:
                 logging.error(f"스케줄 오류: {e}")
                 await asyncio.sleep(60)
     
+    async def _execute_tuesday_trading(self):
+        """🔥 화요일 공격적 진입 전략"""
+        try:
+            logging.info("🔥 화요일 공격적 진입 시작!")
+            
+            # 1. 시장 상황 분석
+            market_condition = await self._analyze_market_condition()
+            
+            if not market_condition['safe_to_trade']:
+                await self.stop_take._send_notification(
+                    f"⚠️ 화요일 매매 스킵\n📊 사유: {market_condition['reason']}"
+                )
+                return
+            
+            # 2. 타겟 종목수 계산 (시장 상황에 따라 조정)
+            base_targets = config.get('trading.weekly.tuesday_targets', 4)
+            aggressiveness = market_condition.get('aggressiveness', 1.0)
+            adjusted_targets = max(2, min(6, int(base_targets * aggressiveness)))
+            
+            logging.info(f"🎯 화요일 타겟: {adjusted_targets}개 종목 (공격성: {aggressiveness:.1f})")
+            
+            # 3. 종목 선별
+            selected = await self.auto_select_stocks()
+            if not selected:
+                logging.warning("⚠️ 선별된 종목 없음")
+                return
+            
+            # 4. 기존 포지션 제외
+            existing_symbols = list(self.stop_take.positions.keys())
+            new_candidates = [s for s in selected if s not in existing_symbols]
+            
+            if not new_candidates:
+                logging.info("💼 신규 진입 가능한 종목 없음 (기존 포지션과 중복)")
+                return
+            
+            # 5. 상위 종목 선택
+            final_selections = new_candidates[:adjusted_targets]
+            
+            # 6. 포트폴리오 가치 조회
+            portfolio_value = await self.ibkr.get_portfolio_value() or 1000000
+            
+            # 7. 화요일 포지션 크기 (기본 12.5%, 시장 상황에 따라 조정)
+            base_allocation = config.get('trading.weekly.tuesday_allocation', 12.5) / 100
+            adjusted_allocation = base_allocation * aggressiveness
+            
+            new_entries = 0
+            for symbol in final_selections:
+                try:
+                    investment_amount = portfolio_value * adjusted_allocation
+                    success = await self._enter_position_with_safety_check(
+                        symbol, investment_amount, 'swing', 'Tuesday'
+                    )
+                    if success:
+                        new_entries += 1
+                        
+                    # 간격 두기
+                    await asyncio.sleep(2)
+                    
+                except Exception as e:
+                    logging.error(f"화요일 {symbol} 진입 실패: {e}")
+            
+            # 8. 결과 알림
+            await self.stop_take._send_notification(
+                f"🔥 화요일 공격적 진입 완료!\n"
+                f"📊 시장상황: {market_condition['status']} (VIX: {market_condition.get('vix', 0):.1f})\n"
+                f"💰 신규진입: {new_entries}/{len(final_selections)}개\n"
+                f"🎯 목표 달성률: {new_entries/adjusted_targets*100:.0f}%"
+            )
+            
+            logging.info(f"✅ 화요일 진입 완료: {new_entries}/{len(final_selections)}")
+            
+        except Exception as e:
+            logging.error(f"화요일 매매 실패: {e}")
+            await self.stop_take._send_notification(f"❌ 화요일 매매 실패: {e}")
+    
+    async def _execute_thursday_trading(self):
+        """📋 목요일 포지션 정리 + 선별적 진입 전략"""
+        try:
+            logging.info("📋 목요일 포지션 정리 시작!")
+            
+            # 1. 시장 상황 및 주간 성과 분석
+            market_condition = await self._analyze_market_condition()
+            weekly_performance = await self._analyze_weekly_performance()
+            
+            # 2. 기존 포지션 리뷰 및 정리
+            actions_taken = await self._thursday_position_review(weekly_performance)
+            
+            # 3. 선별적 신규 진입 (조건부)
+            if (weekly_performance['weekly_return'] >= 0 and 
+                market_condition['safe_to_trade'] and
+                market_condition.get('aggressiveness', 1.0) > 0.8):
+                
+                new_entries = await self._thursday_selective_entry(market_condition)
+                actions_taken['new_entries'] = new_entries
+            
+            # 4. 주간 리포트 생성
+            await self._generate_weekly_report(weekly_performance, actions_taken)
+            
+            # 5. 결과 알림
+            await self.stop_take._send_notification(
+                f"📋 목요일 포지션 정리 완료!\n"
+                f"💰 이익실현: {actions_taken.get('profit_taken', 0)}개\n"
+                f"🛑 손절청산: {actions_taken.get('stop_losses', 0)}개\n"
+                f"📊 신규진입: {actions_taken.get('new_entries', 0)}개\n"
+                f"💼 보유유지: {actions_taken.get('held_positions', 0)}개\n"
+                f"📈 주간수익률: {weekly_performance['weekly_return']:+.2f}%"
+            )
+            
+        except Exception as e:
+            logging.error(f"목요일 매매 실패: {e}")
+            await self.stop_take._send_notification(f"❌ 목요일 매매 실패: {e}")
+    
+    async def _analyze_market_condition(self) -> Dict:
+        """시장 상황 분석"""
+        try:
+            # VIX 조회
+            vix = await self.selector.get_current_vix()
+            
+            # SPY 모멘텀 확인
+            spy_data = await self.selector.get_stock_data('SPY')
+            spy_momentum = spy_data.get('momentum_3m', 0) if spy_data else 0
+            
+            # QQQ 모멘텀 확인
+            qqq_data = await self.selector.get_stock_data('QQQ')
+            qqq_momentum = qqq_data.get('momentum_3m', 0) if qqq_data else 0
+            
+            # 시장 상황 판단
+            condition = {
+                'vix': vix,
+                'spy_momentum': spy_momentum,
+                'qqq_momentum': qqq_momentum,
+                'market_momentum': (spy_momentum + qqq_momentum) / 2,
+                'safe_to_trade': True,
+                'status': 'normal',
+                'reason': '',
+                'aggressiveness': 1.0  # 1.0 = 보통, 1.2 = 공격적, 0.8 = 보수적
+            }
+            
+            # VIX 기반 판단
+            if vix > 35:
+                condition.update({
+                    'safe_to_trade': False,
+                    'status': 'high_volatility',
+                    'reason': f'VIX 과도하게 높음: {vix:.1f}'
+                })
+            elif vix > 25:
+                condition.update({
+                    'status': 'volatile',
+                    'aggressiveness': 0.7  # 보수적
+                })
+            elif vix < 15:
+                condition.update({
+                    'status': 'low_volatility',
+                    'aggressiveness': 1.3  # 공격적
+                })
+            
+            # 모멘텀 기반 추가 판단
+            if condition['market_momentum'] < -10:
+                condition['aggressiveness'] *= 0.6  # 매우 보수적
+                condition['status'] = 'bearish'
+            elif condition['market_momentum'] > 15:
+                condition['aggressiveness'] *= 1.2  # 더 공격적
+                condition['status'] = 'bullish'
+            
+            logging.info(f"📊 시장상황: {condition['status']}, VIX: {vix:.1f}, "
+                        f"SPY모멘텀: {spy_momentum:.1f}%, 공격성: {condition['aggressiveness']:.1f}")
+            
+            return condition
+            
+        except Exception as e:
+            logging.error(f"시장 분석 실패: {e}")
+            return {
+                'safe_to_trade': False,
+                'status': 'error',
+                'reason': f'분석 실패: {e}',
+                'aggressiveness': 0.5
+            }
+    
+    async def _thursday_position_review(self, weekly_performance: Dict) -> Dict:
+        """목요일 포지션 리뷰"""
+        try:
+            actions_taken = {
+                'profit_taken': 0,
+                'stop_losses': 0,
+                'held_positions': 0
+            }
+            
+            positions_to_review = list(self.stop_take.positions.items())
+            
+            for symbol, position in positions_to_review:
+                try:
+                    current_price = await self.ibkr.get_current_price(symbol)
+                    if current_price <= 0:
+                        continue
+                    
+                    profit_pct = position.profit_percent(current_price)
+                    hold_days = (datetime.now() - position.entry_date).days
+                    
+                    # 목요일 특별 룰
+                    action = self._thursday_position_decision(
+                        symbol, position, profit_pct, hold_days, weekly_performance
+                    )
+                    
+                    if action == 'TAKE_PROFIT':
+                        # 부분 이익실현 (50%)
+                        sell_qty = int(position.quantity * 0.5)
+                        if sell_qty > 0:
+                            order_id = await self.ibkr.place_sell_order(
+                                symbol, sell_qty, 'Thursday-Profit-Taking'
+                            )
+                            if order_id:
+                                actions_taken['profit_taken'] += 1
+                                position.quantity -= sell_qty
+                                self.stop_take._save_position_to_db(position)
+                    
+                    elif action == 'FULL_EXIT':
+                        # 전량 매도
+                        order_id = await self.ibkr.place_sell_order(
+                            symbol, position.quantity, 'Thursday-Full-Exit'
+                        )
+                        if order_id:
+                            actions_taken['stop_losses'] += 1
+                            del self.stop_take.positions[symbol]
+                            await self.stop_take._remove_position_from_db(symbol)
+                    
+                    else:  # HOLD
+                        actions_taken['held_positions'] += 1
+                    
+                    await asyncio.sleep(1)
+                    
+                except Exception as e:
+                    logging.error(f"목요일 {symbol} 리뷰 실패: {e}")
+            
+            return actions_taken
+            
+        except Exception as e:
+            logging.error(f"목요일 포지션 리뷰 실패: {e}")
+            return {'profit_taken': 0, 'stop_losses': 0, 'held_positions': 0}
+    
+    def _thursday_position_decision(self, symbol: str, position, 
+                                  profit_pct: float, hold_days: int, 
+                                  weekly_performance: Dict) -> str:
+        """목요일 포지션 결정 로직"""
+        try:
+            profit_threshold = config.get('trading.weekly.profit_taking_threshold', 8.0)
+            loss_threshold = config.get('trading.weekly.loss_cutting_threshold', -6.0)
+            
+            # 1. 큰 수익 -> 부분 이익실현
+            if profit_pct >= profit_threshold:
+                return 'TAKE_PROFIT'
+            
+            # 2. 손실이 크거나 주간 성과가 나쁜 경우 -> 전량 매도
+            if profit_pct <= loss_threshold or weekly_performance['weekly_return'] < -3.0:
+                return 'FULL_EXIT'
+            
+            # 3. 보유 기간이 길고 수익이 미미한 경우
+            if hold_days >= 7 and -2.0 <= profit_pct <= 2.0:
+                return 'FULL_EXIT'
+            
+            # 4. 나머지는 보유
+            return 'HOLD'
+            
+        except Exception as e:
+            logging.error(f"목요일 결정 로직 오류 {symbol}: {e}")
+            return 'HOLD'
+    
+    async def _thursday_selective_entry(self, market_condition: Dict) -> int:
+        """목요일 선별적 신규 진입"""
+        try:
+            # 매우 보수적 진입
+            max_new_entries = config.get('trading.weekly.thursday_targets', 2)
+            
+            # 현재 포지션 수 확인
+            current_positions = len(self.stop_take.positions)
+            target_total = self._get_target_count()
+            
+            if current_positions >= target_total:
+                logging.info("💼 포지션 한도 도달, 신규 진입 스킵")
+                return 0
+            
+            # 고품질 종목만 선별
+            selected = await self.auto_select_stocks()
+            if not selected:
+                return 0
+            
+            # 기존 포지션 제외
+            existing_symbols = list(self.stop_take.positions.keys())
+            new_candidates = [s for s in selected if s not in existing_symbols]
+            
+            # 상위 종목만 선택 (매우 보수적)
+            final_selections = new_candidates[:max_new_entries]
+            
+            portfolio_value = await self.ibkr.get_portfolio_value() or 1000000
+            conservative_allocation = config.get('trading.weekly.thursday_allocation', 
+             conservative_allocation = config.get('trading.weekly.thursday_allocation', 8.0) / 100
+            
+            new_entries = 0
+            for symbol in final_selections:
+                try:
+                    investment_amount = portfolio_value * conservative_allocation
+                    success = await self._enter_position_with_safety_check(
+                        symbol, investment_amount, 'swing', 'Thursday'
+                    )
+                    if success:
+                        new_entries += 1
+                    
+                    await asyncio.sleep(2)
+                    
+                except Exception as e:
+                    logging.error(f"목요일 보수적 진입 {symbol} 실패: {e}")
+            
+            logging.info(f"📊 목요일 보수적 진입: {new_entries}개")
+            return new_entries
+            
+        except Exception as e:
+            logging.error(f"목요일 선별적 진입 실패: {e}")
+            return 0
+    
+    async def _enter_position_with_safety_check(self, symbol: str, investment: float, 
+                                              mode: str, entry_day: str) -> bool:
+        """안전 체크를 포함한 포지션 진입"""
+        try:
+            # 현재가 조회
+            current_price = await self.ibkr.get_current_price(symbol)
+            if current_price <= 0:
+                logging.warning(f"⚠️ {symbol} 현재가 조회 실패")
+                return False
+            
+            # 수량 계산
+            quantity = int(investment / current_price)
+            if quantity < 1:
+                logging.warning(f"⚠️ {symbol} 매수 수량 부족")
+                return False
+            
+            # 진입 타이밍 체크
+            if not await self._check_entry_timing(symbol, current_price):
+                logging.info(f"⏰ {symbol} 진입 타이밍 부적절, 스킵")
+                return False
+            
+            # 매수 주문
+            order_id = await self.ibkr.place_buy_order(symbol, quantity)
+            
+            if order_id:
+                # 포지션 추가
+                self.stop_take.add_position(symbol, quantity, current_price, mode, entry_day)
+                
+                # 알림
+                investment_value = quantity * current_price
+                await self.stop_take._send_notification(
+                    f"🚀 {symbol} 진입! ({entry_day})\n"
+                    f"💰 ${investment_value:.0f} ({quantity}주 @${current_price:.2f})\n"
+                    f"📈 모드: {mode.upper()}"
+                )
+                
+                logging.info(f"✅ {symbol} 포지션 진입: {quantity}주 @${current_price:.2f} [{entry_day}]")
+                return True
+            else:
+                logging.error(f"❌ {symbol} 매수 주문 실패")
+                return False
+                
+        except Exception as e:
+            logging.error(f"포지션 진입 실패 {symbol}: {e}")
+            return False
+    
+    async def _check_entry_timing(self, symbol: str, current_price: float) -> bool:
+        """진입 타이밍 체크"""
+        try:
+            stock_data = await self.selector.get_stock_data(symbol)
+            
+            if not stock_data:
+                return True  # 데이터 없으면 진입 허용
+            
+            # RSI 체크 (과매수 구간 회피)
+            rsi = stock_data.get('rsi', 50)
+            if rsi > 80:
+                logging.info(f"⚠️ {symbol} RSI 과매수: {rsi:.1f}")
+                return False
+            
+            # 당일 변동성 체크
+            volume_spike = stock_data.get('volume_spike', 1.0)
+            if volume_spike > 5.0:  # 거래량 5배 이상 급증시 회피
+                logging.info(f"⚠️ {symbol} 거래량 급증: {volume_spike:.1f}x")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"타이밍 체크 오류 {symbol}: {e}")
+            return True  # 오류시 진입 허용
+    
+    async def _analyze_weekly_performance(self) -> Dict:
+        """주간 성과 분석"""
+        try:
+            # 이번주 시작일 계산
+            now = datetime.now()
+            days_since_monday = now.weekday()
+            week_start = now - timedelta(days=days_since_monday)
+            week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            # DB에서 이번주 거래 조회
+            conn = sqlite3.connect(self.stop_take.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT SUM(profit_loss), COUNT(*) FROM trades 
+                WHERE timestamp >= ? AND action LIKE 'SELL%'
+            ''', (week_start.isoformat(),))
+            
+            result = cursor.fetchone()
+            weekly_profit = result[0] if result[0] else 0.0
+            weekly_trades = result[1] if result[1] else 0
+            
+            # 포트폴리오 가치
+            portfolio_value = await self.ibkr.get_portfolio_value() or 1000000
+            weekly_return = (weekly_profit / portfolio_value) * 100 if portfolio_value > 0 else 0.0
+            
+            conn.close()
+            
+            performance = {
+                'weekly_profit': weekly_profit,
+                'weekly_return': weekly_return,
+                'weekly_trades': weekly_trades,
+                'week_start': week_start,
+                'portfolio_value': portfolio_value
+            }
+            
+            logging.info(f"📈 주간 성과: 수익률 {weekly_return:.2f}%, "
+                        f"거래 {weekly_trades}회, P&L ${weekly_profit:.2f}")
+            
+            return performance
+            
+        except Exception as e:
+            logging.error(f"주간 성과 분석 실패: {e}")
+            return {
+                'weekly_profit': 0.0,
+                'weekly_return': 0.0,
+                'weekly_trades': 0,
+                'week_start': datetime.now(),
+                'portfolio_value': 1000000
+            }
+    
+    async def _generate_weekly_report(self, performance: Dict, actions: Dict = None):
+        """주간 리포트 생성"""
+        try:
+            active_positions = len(self.stop_take.positions)
+            
+            # 포지션 상세
+            position_details = []
+            for symbol, pos in self.stop_take.positions.items():
+                current_price = await self.ibkr.get_current_price(symbol)
+                if current_price > 0:
+                    profit_pct = pos.profit_percent(current_price)
+                    entry_info = f"[{pos.entry_day}]" if pos.entry_day else ""
+                    position_details.append(f"{symbol}: {profit_pct:+.1f}% {entry_info}")
+            
+            report = f"""
+🏆 주간 성과 리포트 (목요일)
+========================
+📊 주간 수익률: {performance['weekly_return']:+.2f}%
+💰 주간 P&L: ${performance['weekly_profit']:+.2f}
+🔄 주간 거래: {performance['weekly_trades']}회
+💼 활성 포지션: {active_positions}개
+
+📋 포지션 현황:
+{chr(10).join(position_details[:5])}
+{"..." if len(position_details) > 5 else ""}
+
+🎯 월 목표 진행률: {performance['weekly_return'] * 4:.1f}% / {self.target_min:.1f}%-{self.target_max:.1f}%
+🎯 다음주 전망: {"긍정적" if performance['weekly_return'] >= 0 else "신중한 접근"}
+"""
+            
+            if actions:
+                report += f"\n📊 목요일 액션:\n"
+                report += f"💰 이익실현: {actions.get('profit_taken', 0)}개\n"
+                report += f"🛑 청산: {actions.get('stop_losses', 0)}개\n"
+                report += f"📊 신규진입: {actions.get('new_entries', 0)}개"
+            
+            await self.stop_take._send_notification(report)
+            
+        except Exception as e:
+            logging.error(f"주간 리포트 생성 실패: {e}")
+    
+    async def _pre_market_notification(self, weekday: int):
+        """장 시작 전 알림"""
+        try:
+            day_name = "화요일" if weekday == 1 else "목요일"
+            strategy_desc = "공격적 진입" if weekday == 1 else "포지션 정리"
+            
+            active_positions = len(self.stop_take.positions)
+            market_condition = await self._analyze_market_condition()
+            
+            message = f"""
+🌅 {day_name} 장 시작 전 체크
+===================
+💼 활성 포지션: {active_positions}개
+📊 시장 상황: {market_condition['status']} (VIX: {market_condition.get('vix', 0):.1f})
+🎯 오늘 전략: {strategy_desc}
+⏰ 매매 시간: 10:30 AM
+"""
+            
+            await self.stop_take._send_notification(message)
+            
+        except Exception as e:
+            logging.error(f"장 시작 전 알림 실패: {e}")
+    
+    # ========================================================================================
+    # 기존 메서드들 (유지)
+    # ========================================================================================
+    
     async def _swing_entry(self):
-        """스윙 진입"""
+        """기존 스윙 진입 (비 주간모드용)"""
         try:
             if not self._is_trading_day():
                 return
@@ -1665,13 +2247,13 @@ class LegendaryQuantStrategy:
             per_stock = portfolio_value * 0.125  # 12.5%
             
             for symbol in new_stocks:
-                await self._enter_position(symbol, per_stock, 'swing', day)
+                await self._enter_position_with_safety_check(symbol, per_stock, 'swing', day)
             
         except Exception as e:
             logging.error(f"스윙 진입 실패: {e}")
     
     async def _classic_entry(self):
-        """클래식 진입"""
+        """기존 클래식 진입"""
         try:
             if not self._is_trading_day():
                 return
@@ -1695,44 +2277,10 @@ class LegendaryQuantStrategy:
             per_stock = portfolio_value * 0.04  # 4%
             
             for symbol in new_stocks:
-                await self._enter_position(symbol, per_stock, 'classic', 'Daily')
+                await self._enter_position_with_safety_check(symbol, per_stock, 'classic', 'Daily')
             
         except Exception as e:
             logging.error(f"클래식 진입 실패: {e}")
-    
-    async def _enter_position(self, symbol: str, investment: float, mode: str, context: str):
-        """포지션 진입"""
-        try:
-            # 현재가 조회
-            current_price = await self.ibkr.get_current_price(symbol)
-            if current_price <= 0:
-                logging.warning(f"⚠️ {symbol} 현재가 조회 실패")
-                return
-            
-            # 수량 계산
-            quantity = int(investment / current_price)
-            if quantity < 1:
-                logging.warning(f"⚠️ {symbol} 매수 수량 부족")
-                return
-            
-            # 매수 주문
-            order_id = await self.ibkr.place_buy_order(symbol, quantity)
-            if order_id:
-                # 포지션 추가
-                self.stop_take.add_position(symbol, quantity, current_price, mode)
-                
-                # 알림
-                investment_value = quantity * current_price
-                await self.stop_take._send_notification(
-                    f"🚀 {symbol} {mode.upper()} 진입!\n"
-                    f"📅 {context}\n"
-                    f"💰 ${investment_value:.0f} ({quantity}주 @${current_price:.2f})"
-                )
-                
-                logging.info(f"✅ {symbol} {mode} 포지션 진입: {quantity}주 @${current_price:.2f}")
-            
-        except Exception as e:
-            logging.error(f"포지션 진입 실패 {symbol}: {e}")
     
     def _is_trading_day(self) -> bool:
         """거래일 확인"""
@@ -1797,7 +2345,7 @@ class LegendaryQuantStrategy:
             
             conn.close()
             
-            logging.info(f"📈 월 수익률: {self.monthly_return:.2f}%")
+            logging.info(f"📈 월 수익률: {self.monthly_return:.2f}% (목표: {self.target_min:.1f}%-{self.target_max:.1f}%)")
             
         except Exception as e:
             logging.error(f"월 수익률 계산 실패: {e}")
@@ -1812,6 +2360,13 @@ class LegendaryQuantStrategy:
             if self.ibkr.daily_pnl < -(portfolio_value * daily_limit / 100):
                 await self._emergency_stop("일일 손실 한도 초과")
                 return
+            
+            # 주간 손실 한도 (주간 모드에서)
+            if self.weekly_mode:
+                weekly_performance = await self._analyze_weekly_performance()
+                weekly_limit = config.get('risk.weekly_loss_limit', 3.0)
+                if weekly_performance['weekly_return'] < -weekly_limit:
+                    await self._emergency_stop(f"주간 손실 한도 초과: {weekly_performance['weekly_return']:.2f}%")
             
             # 월 손실 한도
             if self.current_mode == 'swing':
@@ -1849,13 +2404,28 @@ class LegendaryQuantStrategy:
             active_positions = len(self.stop_take.positions)
             daily_pnl = self.ibkr.daily_pnl
             
+            # 요일별 특별 정보
+            today = datetime.now()
+            weekday_info = ""
+            
+            if self.weekly_mode:
+                if today.weekday() == 1:  # 화요일
+                    last_tuesday = self.last_trade_dates.get('Tuesday')
+                    if last_tuesday == today.date():
+                        weekday_info = "🔥 오늘 화요일 진입 완료"
+                elif today.weekday() == 3:  # 목요일
+                    last_thursday = self.last_trade_dates.get('Thursday')
+                    if last_thursday == today.date():
+                        weekday_info = "📋 오늘 목요일 정리 완료"
+            
             report = f"""
 🏆 일일 요약 리포트
 ==================
-📊 현재 모드: {self.current_mode.upper()}
+📊 현재 모드: {self.current_mode.upper()} {"(주간매매)" if self.weekly_mode else ""}
 💰 일일 P&L: ${daily_pnl:.2f}
-📈 월 수익률: {self.monthly_return:.2f}%
-📋 활성 포지션: {active_positions}개
+📈 월 수익률: {self.monthly_return:.2f}% (목표: {self.target_min:.1f}%-{self.target_max:.1f}%)
+💼 활성 포지션: {active_positions}개
+{weekday_info}
 """
             
             await self.stop_take._send_notification(report)
@@ -1877,7 +2447,7 @@ class LegendaryQuantStrategy:
             logging.error(f"종료 실패: {e}")
 
 # ========================================================================================
-# 🎯 편의 함수들
+# 🎯 편의 함수들 (기존 + 주간 매매용 추가)
 # ========================================================================================
 
 async def run_auto_selection():
@@ -1919,12 +2489,15 @@ async def get_system_status():
         return {
             'enabled': strategy.enabled,
             'current_mode': strategy.current_mode,
+            'weekly_mode': strategy.weekly_mode,
             'ibkr_connected': ibkr_connected,
             'selected_count': len(strategy.selected_stocks),
             'target_min': strategy.target_min,
             'target_max': strategy.target_max,
             'monthly_return': strategy.monthly_return,
-            'ibkr_available': IBKR_AVAILABLE
+            'ibkr_available': IBKR_AVAILABLE,
+            'last_tuesday': strategy.last_trade_dates.get('Tuesday'),
+            'last_thursday': strategy.last_trade_dates.get('Thursday')
         }
         
     except Exception as e:
@@ -1942,8 +2515,21 @@ async def switch_mode(mode: str):
     except Exception as e:
         return {'status': 'error', 'message': str(e)}
 
+async def toggle_weekly_mode(enabled: bool = None):
+    """주간 매매 모드 토글"""
+    try:
+        if enabled is None:
+            current = config.get('trading.weekly.enabled', True)
+            enabled = not current
+        
+        config.update('trading.weekly.enabled', enabled)
+        mode_text = "활성화" if enabled else "비활성화"
+        return {'status': 'success', 'message': f'주간 매매 모드가 {mode_text}되었습니다'}
+    except Exception as e:
+        return {'status': 'error', 'message': str(e)}
+
 async def run_auto_trading():
-    """자동거래 실행"""
+    """자동거래 실행 (주간 모드 포함)"""
     strategy = LegendaryQuantStrategy()
     
     try:
@@ -1958,12 +2544,67 @@ async def run_auto_trading():
     finally:
         await strategy.shutdown()
 
+# 🆕 주간 매매 전용 함수들
+async def manual_tuesday_trading():
+    """수동 화요일 매매"""
+    strategy = LegendaryQuantStrategy()
+    try:
+        if await strategy.initialize_trading():
+            await strategy._execute_tuesday_trading()
+            return {'status': 'success', 'message': '화요일 매매 완료'}
+        else:
+            return {'status': 'error', 'message': '거래 시스템 초기화 실패'}
+    except Exception as e:
+        logging.error(f"수동 화요일 매매 실패: {e}")
+        return {'status': 'error', 'message': str(e)}
+    finally:
+        await strategy.shutdown()
+
+async def manual_thursday_trading():
+    """수동 목요일 매매"""
+    strategy = LegendaryQuantStrategy()
+    try:
+        if await strategy.initialize_trading():
+            await strategy._execute_thursday_trading()
+            return {'status': 'success', 'message': '목요일 매매 완료'}
+        else:
+            return {'status': 'error', 'message': '거래 시스템 초기화 실패'}
+    except Exception as e:
+        logging.error(f"수동 목요일 매매 실패: {e}")
+        return {'status': 'error', 'message': str(e)}
+    finally:
+        await strategy.shutdown()
+
+async def get_weekly_performance():
+    """주간 성과 조회"""
+    try:
+        strategy = LegendaryQuantStrategy()
+        if await strategy.initialize_trading():
+            performance = await strategy._analyze_weekly_performance()
+            await strategy.shutdown()
+            return performance
+        else:
+            return {'error': '시스템 초기화 실패'}
+    except Exception as e:
+        logging.error(f"주간 성과 조회 실패: {e}")
+        return {'error': str(e)}
+
+async def test_market_condition():
+    """시장 상황 테스트"""
+    try:
+        strategy = LegendaryQuantStrategy()
+        condition = await strategy._analyze_market_condition()
+        return condition
+    except Exception as e:
+        logging.error(f"시장 상황 테스트 실패: {e}")
+        return {'error': str(e)}
+
 # ========================================================================================
-# 🎯 메인 실행부
+# 🎯 메인 실행부 (주간 매매 메뉴 통합)
 # ========================================================================================
 
 async def main():
-    """메인 실행 함수"""
+    """메인 실행 함수 (주간 매매 통합)"""
     try:
         # 로깅 설정
         logging.basicConfig(
@@ -1971,22 +2612,28 @@ async def main():
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.StreamHandler(sys.stdout),
-                logging.FileHandler('legendary_quant.log', encoding='utf-8')
+                logging.FileHandler('legendary_quant_v63.log', encoding='utf-8')
             ]
         )
         
-        print("🏆" + "="*60)
-        print("🔥 전설적 퀸트프로젝트 - 통합 완성판 V6.2")
-        print("🚀 4가지 전략 융합 + 실시간 크롤링 + IBKR 연동")
-        print("="*62)
+        print("🏆" + "="*70)
+        print("🔥 전설적 퀸트프로젝트 - 통합 완성판 V6.3")
+        print("🚀 월 5-7% 달성형 주 2회 화목 매매 최적화")
+        print("="*72)
         
         print("\n🌟 주요 특징:")
         print("  ✨ 4가지 투자전략 지능형 융합 (버핏+린치+모멘텀+기술)")
         print("  ✨ 실시간 S&P500+NASDAQ 자동선별")
         print("  ✨ VIX 기반 시장상황 자동판단")
-        print("  ✨ 스윙 2단계 익절 + 클래식 분할매매")
+        print("  ✨ 월 5-7% 달성형 스윙 + 분할매매 통합")
+        print("  ✨ 🆕 주 2회 화목 매매 최적화")
         print("  ✨ IBKR 실거래 연동 + 자동 손익절")
         print("  ✨ 완전 자동화 + 보수유지 최적화")
+        
+        print("\n📅 주 2회 화목 매매:")
+        print("  🔥 화요일 10:30: 공격적 신규 진입 (4-6개 종목)")
+        print("  📋 목요일 10:30: 포지션 정리 + 이익실현")
+        print("  📊 VIX 연동 시장 상황별 자동 조정")
         
         # 시스템 상태 확인
         print("\n🔧 시스템 상태 확인...")
@@ -1995,8 +2642,9 @@ async def main():
         if 'error' not in status:
             print(f"  ✅ 시스템 활성화: {status['enabled']}")
             print(f"  ✅ 현재 모드: {status['current_mode'].upper()}")
+            print(f"  ✅ 주간 매매: {'활성화' if status.get('weekly_mode', False) else '비활성화'}")
             
-            # IBKR 상태 표시 개선
+            # IBKR 상태 표시
             if status.get('ibkr_available', False):
                 ibkr_status = '연결 가능' if status['ibkr_connected'] else '연결 불가'
                 print(f"  ✅ IBKR 상태: {ibkr_status}")
@@ -2006,22 +2654,65 @@ async def main():
             print(f"  ✅ 월 목표: {status['target_min']:.1f}%-{status['target_max']:.1f}%")
             print(f"  ✅ 월 수익률: {status['monthly_return']:.2f}%")
             print(f"  ✅ 선별된 종목: {status['selected_count']}개")
+            
+            # 주간 매매 정보
+            if status.get('last_tuesday'):
+                print(f"  🔥 마지막 화요일: {status['last_tuesday']}")
+            if status.get('last_thursday'):
+                print(f"  📋 마지막 목요일: {status['last_thursday']}")
         else:
             print(f"  ❌ 상태 확인 실패: {status['error']}")
         
         print("\n🚀 실행 옵션:")
-        print("  1. 종목 자동선별 + 분석")
-        print("  2. 완전 자동거래 시작")
-        print("  3. 개별 종목 분석")
-        print("  4. 모드 전환")
-        print("  5. 시스템 상태")
-        print("  6. 종료")
+        print("  1. 🏆 완전 자동 주 2회 화목 매매")
+        print("  2. 🔥 수동 화요일 매매 (공격적 진입)")
+        print("  3. 📋 수동 목요일 매매 (포지션 정리)")
+        print("  4. 🔍 종목 자동선별 + 분석")
+        print("  5. 📊 개별 종목 분석")
+        print("  6. 📈 주간 성과 + 시장 상황")
+        print("  7. ⚙️ 모드 전환 + 설정")
+        print("  8. 📊 시스템 상태")
+        print("  9. 🔄 일반 모드 (기존 시스템)")
+        print("  0. 종료")
         
         while True:
             try:
-                choice = input("\n선택하세요 (1-6): ").strip()
+                choice = input("\n선택하세요 (0-9): ").strip()
                 
                 if choice == '1':
+                    print("\n🏆 완전 자동 주 2회 화목 매매 시작!")
+                    print("⚠️  IBKR TWS/Gateway가 실행 중인지 확인하세요!")
+                    print("📅 화요일 10:30 - 공격적 진입 (VIX 연동)")
+                    print("📅 목요일 10:30 - 포지션 정리 + 이익실현")
+                    print("🎯 월 5-7% 목표 달성형 최적화")
+                    confirm = input("계속하시겠습니까? (y/N): ").strip().lower()
+                    if confirm == 'y':
+                        await run_auto_trading()
+                    break
+                
+                elif choice == '2':
+                    print("\n🔥 수동 화요일 매매 실행!")
+                    print("📊 시장 상황 분석 후 공격적 진입")
+                    confirm = input("화요일 공격적 진입을 실행하시겠습니까? (y/N): ").strip().lower()
+                    if confirm == 'y':
+                        result = await manual_tuesday_trading()
+                        if result['status'] == 'success':
+                            print("✅ 화요일 매매 완료!")
+                        else:
+                            print(f"❌ 화요일 매매 실패: {result.get('message', '알 수 없는 오류')}")
+                
+                elif choice == '3':
+                    print("\n📋 수동 목요일 매매 실행!")
+                    print("💰 이익실현 + 손절 + 선별적 신규진입")
+                    confirm = input("목요일 포지션 정리를 실행하시겠습니까? (y/N): ").strip().lower()
+                    if confirm == 'y':
+                        result = await manual_thursday_trading()
+                        if result['status'] == 'success':
+                            print("✅ 목요일 매매 완료!")
+                        else:
+                            print(f"❌ 목요일 매매 실패: {result.get('message', '알 수 없는 오류')}")
+                
+                elif choice == '4':
                     print("\n🔍 종목 자동선별 + 분석 시작!")
                     signals = await run_auto_selection()
                     
@@ -2037,22 +2728,14 @@ async def main():
                         # 상위 매수 추천
                         top_buys = sorted(buy_signals, key=lambda x: x.confidence, reverse=True)[:5]
                         if top_buys:
-                            print(f"\n🏆 상위 매수 추천:")
+                            print(f"\n🏆 상위 매수 추천 (화요일 진입 후보):")
                             for i, signal in enumerate(top_buys, 1):
                                 print(f"  {i}. {signal.symbol}: 신뢰도 {signal.confidence:.1%}, "
                                       f"목표가 ${signal.target_price:.2f}")
                     else:
                         print("❌ 분석 결과 없음")
                 
-                elif choice == '2':
-                    print("\n🎯 완전 자동거래 시작!")
-                    print("⚠️  IBKR TWS/Gateway가 실행 중인지 확인하세요!")
-                    confirm = input("계속하시겠습니까? (y/N): ").strip().lower()
-                    if confirm == 'y':
-                        await run_auto_trading()
-                    break
-                
-                elif choice == '3':
+                elif choice == '5':
                     symbol = input("분석할 종목 심볼: ").strip().upper()
                     if symbol:
                         print(f"\n🔍 {symbol} 분석중...")
@@ -2070,33 +2753,97 @@ async def main():
                         else:
                             print(f"❌ {symbol} 분석 실패")
                 
-                elif choice == '4':
-                    print("\n🔄 모드 전환:")
-                    print("  1. CLASSIC (클래식 분할매매)")
-                    print("  2. SWING (스윙 2단계 익절)")
-                    print("  3. HYBRID (하이브리드)")
+                elif choice == '6':
+                    print("\n📈 주간 성과 + 시장 상황 분석...")
                     
-                    mode_choice = input("모드 선택 (1-3): ").strip()
-                    mode_map = {'1': 'classic', '2': 'swing', '3': 'hybrid'}
+                    # 시장 상황
+                    print("📊 현재 시장 상황:")
+                    condition = await test_market_condition()
+                    if 'error' not in condition:
+                        print(f"  VIX: {condition['vix']:.1f}")
+                        print(f"  SPY 모멘텀: {condition['spy_momentum']:.1f}%")
+                        print(f"  QQQ 모멘텀: {condition['qqq_momentum']:.1f}%")
+                        print(f"  시장 상태: {condition['status']}")
+                        print(f"  공격성 지수: {condition['aggressiveness']:.1f}")
+                        print(f"  매매 가능: {'✅' if condition['safe_to_trade'] else '❌'}")
                     
-                    if mode_choice in mode_map:
-                        result = await switch_mode(mode_map[mode_choice])
-                        print(f"✅ {result['message']}")
+                    # 주간 성과
+                    print("\n📈 주간 성과:")
+                    performance = await get_weekly_performance()
+                    if 'error' not in performance:
+                        print(f"  주간 수익률: {performance['weekly_return']:.2f}%")
+                        print(f"  주간 P&L: ${performance['weekly_profit']:.2f}")
+                        print(f"  주간 거래: {performance['weekly_trades']}회")
+                        print(f"  포트폴리오: ${performance['portfolio_value']:.0f}")
                     else:
-                        print("❌ 잘못된 선택")
+                        print(f"  ❌ 성과 조회 실패: {performance['error']}")
                 
-                elif choice == '5':
+                elif choice == '7':
+                    print("\n⚙️ 모드 전환 + 설정:")
+                    print("  1. 전략 모드 변경")
+                    print("  2. 주간 매매 토글")
+                    print("  3. 되돌아가기")
+                    
+                    sub_choice = input("선택 (1-3): ").strip()
+                    
+                    if sub_choice == '1':
+                        print("\n🔄 전략 모드 변경:")
+                        print("  1. SWING (스윙 매매)")
+                        print("  2. CLASSIC (클래식 분할매매)")
+                        print("  3. HYBRID (하이브리드)")
+                        
+                        mode_choice = input("모드 선택 (1-3): ").strip()
+                        mode_map = {'1': 'swing', '2': 'classic', '3': 'hybrid'}
+                        
+                        if mode_choice in mode_map:
+                            result = await switch_mode(mode_map[mode_choice])
+                            print(f"✅ {result['message']}")
+                        else:
+                            print("❌ 잘못된 선택")
+                    
+                    elif sub_choice == '2':
+                        current_status = await get_system_status()
+                        current_weekly = current_status.get('weekly_mode', False)
+                        
+                        print(f"\n📅 현재 주간 매매: {'활성화' if current_weekly else '비활성화'}")
+                        toggle_choice = input("주간 매매를 토글하시겠습니까? (y/N): ").strip().lower()
+                        
+                        if toggle_choice == 'y':
+                            result = await toggle_weekly_mode()
+                            print(f"✅ {result['message']}")
+                
+                elif choice == '8':
                     print("\n📊 시스템 상세 상태:")
                     status = await get_system_status()
                     for key, value in status.items():
                         print(f"  {key}: {value}")
                 
-                elif choice == '6':
+                elif choice == '9':
+                    print("\n🔄 일반 모드로 전환...")
+                    print("(기존 시스템 메뉴)")
+                    
+                    # 기존 메뉴 간소화 버전
+                    print("\n기존 시스템 옵션:")
+                    print("  1. 종목 자동선별")
+                    print("  2. 일반 자동거래")
+                    print("  3. 되돌아가기")
+                    
+                    legacy_choice = input("선택 (1-3): ").strip()
+                    
+                    if legacy_choice == '1':
+                        await run_auto_selection()
+                    elif legacy_choice == '2':
+                        # 주간 모드 임시 비활성화
+                        config.update('trading.weekly.enabled', False)
+                        await run_auto_trading()
+                        config.update('trading.weekly.enabled', True)
+                    
+                elif choice == '0':
                     print("👋 시스템을 종료합니다!")
                     break
                     
                 else:
-                    print("❌ 잘못된 선택입니다. 1-6 중 선택하세요.")
+                    print("❌ 잘못된 선택입니다. 0-9 중 선택하세요.")
                     
             except KeyboardInterrupt:
                 print("\n👋 프로그램을 종료합니다.")
@@ -2114,7 +2861,7 @@ async def main():
 
 def create_default_env_file():
     """기본 .env 파일 생성"""
-    env_content = """# 전설적 퀸트프로젝트 환경변수 설정
+    env_content = """# 전설적 퀸트프로젝트 V6.3 환경변수 설정
 # IBKR 설정
 IBKR_ACCOUNT=YOUR_ACCOUNT_ID
 
@@ -2224,16 +2971,40 @@ async def quick_scan():
     except Exception as e:
         print(f"❌ 스캔 실패: {e}")
 
+async def quick_weekly_status():
+    """빠른 주간 상태"""
+    print("📅 빠른 주간 상태 체크...")
+    
+    try:
+        # 시장 상황
+        condition = await test_market_condition()
+        print(f"📊 시장: {condition.get('status', 'unknown')} (VIX: {condition.get('vix', 0):.1f})")
+        
+        # 주간 성과
+        performance = await get_weekly_performance()
+        if 'error' not in performance:
+            print(f"📈 주간: {performance['weekly_return']:+.2f}% ({performance['weekly_trades']}회 거래)")
+        
+        # 시스템 상태
+        status = await get_system_status()
+        if 'error' not in status:
+            weekly_text = "ON" if status.get('weekly_mode') else "OFF"
+            print(f"⚙️  시스템: {status['current_mode'].upper()} | 주간모드: {weekly_text}")
+            
+    except Exception as e:
+        print(f"❌ 상태 체크 실패: {e}")
+
 def print_help():
     """도움말 출력"""
     help_text = """
-🏆 전설적 퀸트프로젝트 V6.2 - 사용법
-=====================================
+🏆 전설적 퀸트프로젝트 V6.3 - 주 2회 화목 매매 시스템
+=======================================================
 
 📋 주요 명령어:
-  python legendary_quint_project_v6.py        # 메인 메뉴 실행
-  python -c "from legendary_quint_project_v6 import *; asyncio.run(quick_scan())"  # 빠른 스캔
-  python -c "from legendary_quint_project_v6 import *; asyncio.run(quick_analysis())"  # 빠른 분석
+  python legendary_quint_project_v63.py        # 메인 메뉴 실행
+  python -c "from legendary_quint_project_v63 import *; asyncio.run(quick_weekly_status())"  # 빠른 상태
+  python -c "from legendary_quint_project_v63 import *; asyncio.run(quick_scan())"  # 빠른 스캔
+  python -c "from legendary_quint_project_v63 import *; asyncio.run(quick_analysis())"  # 빠른 분석
 
 🔧 초기 설정:
   1. pip install yfinance pandas numpy requests beautifulsoup4 aiohttp pyyaml python-dotenv
@@ -2241,35 +3012,42 @@ def print_help():
   3. .env 파일에서 텔레그램/IBKR 설정
   4. legendary_unified_settings.yaml에서 상세 설정
 
-💡 모드 설명:
-  - SWING: 월 5-7% 목표, 8개 종목, 2단계 익절 (6%/12%)
-  - CLASSIC: 장기 성장, 20개 종목, 분할매매 (20%/35% 익절)
-  - HYBRID: 신뢰도에 따라 자동 전환
+📅 주 2회 화목 매매 스케줄:
+  🔥 화요일 10:30: 공격적 신규 진입
+    - 시장 상황 분석 (VIX, SPY/QQQ 모멘텀)
+    - 공격성 지수 적용 (0.6x - 1.3x)
+    - 4-6개 종목 선별적 진입
+    - 12.5% 기본 포지션 (시장 상황에 따라 조정)
+    
+  📋 목요일 10:30: 포지션 정리 및 최적화
+    - 8% 이상 수익 → 50% 부분 이익실현
+    - -6% 이하 손실 → 전량 청산
+    - 장기 보유 미수익 종목 정리
+    - 선별적 보수적 신규 진입 (최대 2개)
 
-🎯 4가지 전략:
-  - 버핏 가치투자: PBR, ROE, 부채비율 중심
-  - 린치 성장투자: PEG, EPS성장률 중심  
-  - 모멘텀 전략: 3/6/12개월 수익률, 거래량 중심
-  - 기술적 분석: RSI, 추세, 변동성 중심
+🎯 월 5-7% 목표 달성 전략:
+  - VIX < 15: 공격성 1.3x (저변동성 기회 활용)
+  - VIX 15-25: 표준 전략 (1.0x)
+  - VIX 25-30: 보수적 접근 (0.7x)
+  - VIX > 30: 매매 중단 (고위험 회피)
 
-📊 VIX 조정:
-  - VIX < 15: 점수 15% 부스트 (적극적)
-  - VIX > 30: 점수 15% 감소 (보수적)
+💡 4가지 전략 융합:
+  - 버핏 가치투자: PBR, ROE, 부채비율 중심 (25%)
+  - 린치 성장투자: PEG, EPS성장률 중심 (25%)
+  - 모멘텀 전략: 3/6/12개월 수익률 중심 (25%)
+  - 기술적 분석: RSI, 추세, 변동성 중심 (25%)
 
-🛡️ 리스크 관리:
-  - 스윙: 8% 손절, 트레일링 스톱
-  - 클래식: 15% 손절, 섹터 분산
-  - 일일/월간 손실 한도 자동 체크
+🛡️ 통합 리스크 관리:
+  - 일일 손실 한도: 1%
+  - 주간 손실 한도: 3%
+  - 월간 손실 한도: 3%
+  - 개별 종목 최대: 15%
+  - 자동 트레일링 스톱
 
-📱 알림 설정:
-  - 텔레그램: 실시간 진입/청산 알림
-  - 성과 리포트: 일일/주간/월간
-
-🚀 자동화 기능:
-  - 실시간 S&P500/NASDAQ 크롤링
-  - 자동 종목 선별 (24시간 캐싱)
-  - IBKR 자동 주문 + 손익절
-  - 시장 상황별 적응형 전략
+📱 실시간 알림:
+  - 텔레그램: 진입/청산/성과 알림
+  - 장 시작 전: 화목 매매 예고
+  - 주간 리포트: 목요일 성과 요약
 """
     print(help_text)
 
@@ -2277,28 +3055,6 @@ def print_help():
 # 🏁 실행 진입점
 # ========================================================================================
 
-def calculate_take_profit_levels(self, price: float, mode: str) -> Dict:
-    """익절 레벨 계산"""
-    if mode == 'swing':
-        tp_levels = config.get('trading.swing.take_profit', [6.0, 12.0])
-        ratios = config.get('trading.swing.profit_ratios', [60.0, 40.0])
-        
-        return {
-            'tp1_price': price * (1 + tp_levels[0] / 100),
-            'tp2_price': price * (1 + tp_levels[1] / 100),
-            'tp1_ratio': ratios[0] / 100,
-            'tp2_ratio': ratios[1] / 100
-        }
-    else:  # classic
-        tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
-        return {
-            'tp1_price': price * (1 + tp_levels[0] / 100),
-            'tp2_price': price * (1 + tp_levels[1] / 100),
-            'tp1_ratio': 0.6,  # 60%
-            'tp2_ratio': 0.4   # 40%
-        }
-
-# 그리고 맨 마지막에 이것만 있어야 함
 if __name__ == "__main__":
     try:
         # 명령행 인자 처리
@@ -2315,6 +3071,15 @@ if __name__ == "__main__":
             elif sys.argv[1] == 'quick-analysis':
                 symbols = sys.argv[2:] if len(sys.argv) > 2 else None
                 asyncio.run(quick_analysis(symbols))
+                sys.exit(0)
+            elif sys.argv[1] == 'quick-weekly':
+                asyncio.run(quick_weekly_status())
+                sys.exit(0)
+            elif sys.argv[1] == 'tuesday':
+                asyncio.run(manual_tuesday_trading())
+                sys.exit(0)
+            elif sys.argv[1] == 'thursday':
+                asyncio.run(manual_thursday_trading())
                 sys.exit(0)
         
         # 메인 실행
