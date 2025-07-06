@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ⚡ LEGENDARY QUANT STRATEGY COMPLETE ⚡
-전설급 5대 시스템 + 완전한 매도 시스템
+전설급 5대 시스템 + 완전한 매도 시스템 (월 5-7% 최적화)
 
 🧠 Neural Quality Engine - 가중평균 기반 품질 스코어링
 🌊 Quantum Cycle Matrix - 27개 미시사이클 감지  
@@ -11,7 +11,13 @@
 🕸️ Correlation Web Optimizer - 네트워크 포트폴리오
 🎯 Position Manager - 포지션 관리 + 실시간 매도
 
-Author: 퀀트마스터 | Version: COMPLETE
+✨ 월 5-7% 최적화:
+- 0차 익절 추가 (5-7% 구간)
+- 3차 익절 삭제 (무제한 수익)
+- 타이트한 손절 (-5~8%)
+- 월금 매매 시스템
+
+Author: 퀀트마스터 | Version: MONTHLY 5-7% OPTIMIZED
 """
 
 import asyncio
@@ -425,17 +431,17 @@ class FractalFilteringPipeline:
             return 0.5
 
 # ============================================================================
-# 💎 DIAMOND HAND ALGORITHM - 켈리공식 기반 분할매매
+# 💎 DIAMOND HAND ALGORITHM - 켈리공식 기반 분할매매 (월 5-7% 최적화)
 # ============================================================================
 class DiamondHandAlgorithm:
-    """켈리 공식 기반 다이아몬드 핸드 알고리즘"""
+    """켈리 공식 기반 다이아몬드 핸드 알고리즘 (월 5-7% 최적화)"""
     
     def __init__(self, portfolio_value: float):
         self.portfolio_value = portfolio_value
     
     def calculate_diamond_strategy(self, symbol: str, price: float, confidence: float, 
                                  cycle: str, quality_score: float) -> Dict:
-        """다이아몬드 핸드 전략 계산"""
+        """다이아몬드 핸드 전략 계산 (월 5-7% 최적화)"""
         try:
             # 켈리 비율 계산 (단순화)
             kelly_fraction = self._kelly_criterion(confidence, quality_score)
@@ -461,30 +467,31 @@ class DiamondHandAlgorithm:
                 price * 0.90     # -10% 추가 진입
             ]
             
-            # ✅ 2주 40% 전략 (품질 점수 반영)
+            # ✅ 월 5-7% 최적화: 0차 익절 추가 + 3차 익절 삭제 + 타이트한 손절
             if quality_score >= 0.8:  # 고품질 (BTC, ETH급)
                 take_profits = [
-                    price * 1.18,  # 1차 익절 (+18%)
-                    price * 1.30,  # 2차 익절 (+30%)
-                    price * 1.50   # 3차 익절 (+50%)
+                    price * 1.06,  # 0차 익절 (+6%, 20% 매도) ← 새로 추가
+                    price * 1.15,  # 1차 익절 (+15%, 30% 매도)
+                    price * 1.25   # 2차 익절 (+25%, 50% 매도)
+                    # 3차 익절 삭제 (무제한 홀딩)
                 ]
-                stop_loss = price * 0.90  # -10% 손절
+                stop_loss = price * 0.95  # -5% 손절 (타이트)
 
             elif quality_score >= 0.6:  # 중품질
                 take_profits = [
-                    price * 1.15,  # 1차 익절 (+15%)
-                    price * 1.25,  # 2차 익절 (+25%)
-                    price * 1.40   # 3차 익절 (+40%)
+                    price * 1.05,  # 0차 익절 (+5%, 20% 매도)
+                    price * 1.12,  # 1차 익절 (+12%, 30% 매도)
+                    price * 1.20   # 2차 익절 (+20%, 50% 매도)
                 ]
-                stop_loss = price * 0.92  # -8% 손절
+                stop_loss = price * 0.93  # -7% 손절
 
             else:  # 저품질
                 take_profits = [
-                    price * 1.12,  # 1차 익절 (+12%)
-                    price * 1.20,  # 2차 익절 (+20%)
-                    price * 1.30   # 3차 익절 (+30%)
+                    price * 1.04,  # 0차 익절 (+4%, 25% 매도)
+                    price * 1.10,  # 1차 익절 (+10%, 35% 매도)
+                    price * 1.15   # 2차 익절 (+15%, 40% 매도)
                 ]
-                stop_loss = price * 0.95  # -5% 손절
+                stop_loss = price * 0.92  # -8% 손절
             
             return {
                 'symbol': symbol,
@@ -531,8 +538,8 @@ class DiamondHandAlgorithm:
             'kelly_fraction': 0.05, 'emotion_factor': 1.0,
             'stage_amounts': [base_investment * 0.5, base_investment * 0.3, base_investment * 0.2],
             'entry_prices': [price, price * 0.95, price * 0.90],
-            'take_profits': [price * 1.2, price * 1.5, price * 2.0],
-            'stop_loss': price * 0.85, 'portfolio_weight': 5.0
+            'take_profits': [price * 1.05, price * 1.15, price * 1.25],
+            'stop_loss': price * 0.92, 'portfolio_weight': 5.0
         }
 
 # ============================================================================
@@ -679,6 +686,7 @@ class PositionManager:
                     'avg_price': pos.avg_price,
                     'current_stage': pos.current_stage,
                     'stage_quantities': pos.stage_quantities,
+                    'stage_prices': pos.stage_prices,
                     'target_take_profits': pos.target_take_profits,
                     'stop_loss': pos.stop_loss,
                     'unrealized_pnl': pos.unrealized_pnl,
@@ -719,17 +727,18 @@ class PositionManager:
             logger.error(f"포지션 로드 실패: {e}")
 
 # ============================================================================
-# 🚨 EXIT STRATEGY ENGINE - 출구 전략 엔진 (2주 40% 전략)
+# 🚨 EXIT STRATEGY ENGINE - 출구 전략 엔진 (월 5-7% 최적화)
 # ============================================================================
 class ExitStrategyEngine:
-    """실시간 매도 전략 엔진"""
+    """실시간 매도 전략 엔진 (월 5-7% 최적화)"""
     
     def __init__(self, position_manager: PositionManager):
         self.position_manager = position_manager
         self.trailing_stop_ratio = 0.10  # 10% 트레일링 스톱
+        self.profit_taken_flags = {}  # 익절 실행 추적
     
     async def check_exit_conditions(self, symbol: str, current_price: float, current_cycle: str) -> Dict:
-        """매도 조건 체크"""
+        """매도 조건 체크 (월 5-7% 최적화)"""
         position = self.position_manager.get_position(symbol)
         if not position:
             return {'action': 'none', 'reason': 'no_position'}
@@ -740,7 +749,7 @@ class ExitStrategyEngine:
         # 수익률 계산
         profit_ratio = (current_price - position.avg_price) / position.avg_price
         
-        # 1. 손절 체크
+        # 1. 손절 체크 (타이트한 손절)
         if current_price <= position.stop_loss:
             return {
                 'action': 'sell_all',
@@ -753,7 +762,7 @@ class ExitStrategyEngine:
         # 2. 시간 기반 매도 (2주 = 14일)
         holding_days = (datetime.now() - position.created_at).days
         if holding_days >= 14:
-            if profit_ratio > 0.05:  # 5% 이상 수익시
+            if profit_ratio > 0.03:  # 3% 이상 수익시
                 return {
                     'action': 'sell_all',
                     'reason': 'time_limit_profit',
@@ -770,41 +779,70 @@ class ExitStrategyEngine:
                 'details': f'강제매도: {holding_days}일 초과'
             }
         
-        # 3. 익절 체크 (단계별)
-        # 1차 익절 (15% 수익시 30% 매도)
-        if (current_price >= position.target_take_profits[0] and profit_ratio >= 0.15):
-            sell_quantity = position.total_quantity * 0.3
+        # 3. 익절 체크 (0차 익절 추가)
+        profit_flags = self.profit_taken_flags.get(symbol, [False, False, False])
+        
+        # 0차 익절 (4-6% 수익시 20-25% 매도)
+        if (len(position.target_take_profits) >= 1 and 
+            current_price >= position.target_take_profits[0] and 
+            profit_ratio >= 0.04 and not profit_flags[0]):
+            
+            sell_ratio = 0.25 if profit_ratio < 0.05 else 0.20
+            sell_quantity = position.total_quantity * sell_ratio
+            
+            # 익절 플래그 설정
+            if symbol not in self.profit_taken_flags:
+                self.profit_taken_flags[symbol] = [False, False, False]
+            self.profit_taken_flags[symbol][0] = True
+            
+            return {
+                'action': 'sell_partial',
+                'reason': 'take_profit_0',
+                'price': current_price,
+                'quantity': sell_quantity,
+                'details': f'0차 익절: {profit_ratio*100:.1f}% 수익으로 {sell_ratio*100:.0f}% 매도'
+            }
+        
+        # 1차 익절 (10-15% 수익시 30-35% 매도)
+        if (len(position.target_take_profits) >= 2 and
+            current_price >= position.target_take_profits[1] and 
+            profit_ratio >= 0.10 and not profit_flags[1]):
+            
+            sell_ratio = 0.35 if profit_ratio < 0.12 else 0.30
+            sell_quantity = position.total_quantity * sell_ratio
+            
+            self.profit_taken_flags[symbol][1] = True
+            
             return {
                 'action': 'sell_partial',
                 'reason': 'take_profit_1',
                 'price': current_price,
                 'quantity': sell_quantity,
-                'details': '1차 익절: 30% 매도'
+                'details': f'1차 익절: {profit_ratio*100:.1f}% 수익으로 {sell_ratio*100:.0f}% 매도'
             }
         
-        # 2차 익절 (25% 수익시 40% 매도)
-        if (current_price >= position.target_take_profits[1] and profit_ratio >= 0.25):
-            sell_quantity = position.total_quantity * 0.4
+        # 2차 익절 (15-25% 수익시 40-50% 매도)
+        if (len(position.target_take_profits) >= 3 and
+            current_price >= position.target_take_profits[2] and 
+            profit_ratio >= 0.15 and not profit_flags[2]):
+            
+            sell_ratio = 0.50 if profit_ratio < 0.20 else 0.40
+            sell_quantity = position.total_quantity * sell_ratio
+            
+            self.profit_taken_flags[symbol][2] = True
+            
             return {
                 'action': 'sell_partial',
                 'reason': 'take_profit_2',
                 'price': current_price,
                 'quantity': sell_quantity,
-                'details': '2차 익절: 40% 매도'
+                'details': f'2차 익절: {profit_ratio*100:.1f}% 수익으로 {sell_ratio*100:.0f}% 매도'
             }
         
-        # 3차 익절 (40% 수익시 전량 매도)
-        if (current_price >= position.target_take_profits[2] and profit_ratio >= 0.40):
-            return {
-                'action': 'sell_all',
-                'reason': 'take_profit_3',
-                'price': current_price,
-                'quantity': position.total_quantity,
-                'details': '3차 익절: 전량 매도'
-            }
+        # 3차 익절 삭제됨 - 무제한 홀딩!
         
         # 4. 사이클 변화 매도
-        if profit_ratio > 0.05 and current_cycle in ['strong_bear', 'reversal_phase']:
+        if profit_ratio > 0.03 and current_cycle in ['strong_bear', 'reversal_phase']:
             return {
                 'action': 'sell_all',
                 'reason': 'cycle_change',
@@ -813,8 +851,28 @@ class ExitStrategyEngine:
                 'details': f'사이클 변화 매도: {current_cycle}'
             }
         
-        # 5. 트레일링 스톱
-        if profit_ratio > 0.08:  # 8% 이상 수익시 트레일링 스톱 적용
+        # 5. 강화된 트레일링 스톱 (40% 이후)
+        if profit_ratio > 0.40:  # 40% 이상 수익시 20% 트레일링 스톱
+            dynamic_stop = position.avg_price * (1 + profit_ratio - 0.20)
+            if current_price <= dynamic_stop:
+                return {
+                    'action': 'sell_all',
+                    'reason': 'trailing_stop_40',
+                    'price': current_price,
+                    'quantity': position.total_quantity,
+                    'details': f'40%+ 트레일링 스톱: {current_price} <= {dynamic_stop}'
+                }
+        elif profit_ratio > 0.20:  # 20% 이상 수익시 15% 트레일링 스톱
+            dynamic_stop = position.avg_price * (1 + profit_ratio - 0.15)
+            if current_price <= dynamic_stop:
+                return {
+                    'action': 'sell_all',
+                    'reason': 'trailing_stop_20',
+                    'price': current_price,
+                    'quantity': position.total_quantity,
+                    'details': f'20%+ 트레일링 스톱: {current_price} <= {dynamic_stop}'
+                }
+        elif profit_ratio > 0.08:  # 8% 이상 수익시 기본 10% 트레일링 스톱
             dynamic_stop = position.avg_price * (1 + profit_ratio - self.trailing_stop_ratio)
             if current_price <= dynamic_stop:
                 return {
@@ -826,46 +884,12 @@ class ExitStrategyEngine:
                 }
         
         return {'action': 'hold', 'reason': 'no_exit_condition'}
-    
-    def _check_cycle_exit(self, position: Position, current_cycle: str, profit_ratio: float) -> Optional[Dict]:
-        """사이클 변화 매도 체크"""
-        # 수익 상태에서 약세 사이클로 전환 시 매도
-        if profit_ratio > 0.05 and current_cycle in ['strong_bear', 'reversal_phase']:
-            return {
-                'action': 'sell_all',
-                'reason': 'cycle_change',
-                'price': 0,  # 현재가로 매도
-                'quantity': position.total_quantity,
-                'details': f'사이클 변화 매도: {current_cycle}'
-            }
-        
-        return None
-    
-    def _check_trailing_stop(self, position: Position, current_price: float) -> Optional[Dict]:
-        """트레일링 스톱 체크"""
-        # 수익이 8% 이상일 때만 트레일링 스톱 적용
-        profit_ratio = (current_price - position.avg_price) / position.avg_price
-        
-        if profit_ratio > 0.08:
-            # 최고점 대비 10% 하락 시 매도
-            dynamic_stop = position.avg_price * (1 + profit_ratio - self.trailing_stop_ratio)
-            
-            if current_price <= dynamic_stop:
-                return {
-                    'action': 'sell_all',
-                    'reason': 'trailing_stop',
-                    'price': current_price,
-                    'quantity': position.total_quantity,
-                    'details': f'트레일링 스톱: {current_price} <= {dynamic_stop}'
-                }
-        
-        return None
-      
+
 # ============================================================================
-# 🎮 TRADE EXECUTOR - 거래 실행기
+# 🎮 TRADE EXECUTOR - 거래 실행기 (월금 매매)
 # ============================================================================
 class TradeExecutor:
-    """거래 실행 시스템"""
+    """거래 실행 시스템 (월금 매매)"""
     
     def __init__(self, position_manager: PositionManager, demo_mode: bool = True):
         self.position_manager = position_manager
@@ -877,9 +901,30 @@ class TradeExecutor:
             self.secret_key = os.getenv('UPBIT_SECRET_KEY')
             self.upbit = pyupbit.Upbit(self.access_key, self.secret_key)
     
+    def is_trading_day(self, action_type: str = 'buy') -> bool:
+        """거래 가능일 체크"""
+        today = datetime.now().weekday()
+        
+        if action_type == 'buy':
+            # 매수는 월요일만
+            return today == 0  # 월요일
+        elif action_type == 'sell':
+            # 매도는 금요일 + 응급시 언제든
+            return today == 4 or action_type == 'emergency_sell'  # 금요일
+        else:
+            return True  # 응급 매도는 언제든
+    
     async def execute_buy_signal(self, signal: LegendarySignal, stage: int) -> Dict:
-        """매수 신호 실행"""
+        """매수 신호 실행 (월요일만)"""
         try:
+            # 월요일 체크
+            if not self.is_trading_day('buy'):
+                return {
+                    'success': False, 
+                    'error': 'not_trading_day',
+                    'message': '매수는 월요일만 가능합니다'
+                }
+            
             symbol = signal.symbol
             target_price = signal.entry_prices[stage - 1]
             target_amount = signal.stage_amounts[stage - 1]
@@ -910,7 +955,7 @@ class TradeExecutor:
                 # 포지션 업데이트
                 self.position_manager.add_position(signal, stage, quantity, current_price)
                 
-                logger.info(f"📈 시뮬레이션 매수: {symbol} 단계{stage} {quantity:.6f}개 @ {current_price:,.0f}원")
+                logger.info(f"📈 [월요일] 시뮬레이션 매수: {symbol} 단계{stage} {quantity:.6f}개 @ {current_price:,.0f}원")
                 
             else:
                 # 실제 거래
@@ -930,7 +975,7 @@ class TradeExecutor:
                     # 포지션 업데이트
                     self.position_manager.add_position(signal, stage, quantity, current_price)
                     
-                    logger.info(f"📈 실제 매수: {symbol} 단계{stage} {quantity:.6f}개 @ {current_price:,.0f}원")
+                    logger.info(f"📈 [월요일] 실제 매수: {symbol} 단계{stage} {quantity:.6f}개 @ {current_price:,.0f}원")
                 else:
                     result = {'success': False, 'error': 'order_failed'}
             
@@ -940,9 +985,17 @@ class TradeExecutor:
             logger.error(f"매수 실행 실패 {signal.symbol}: {e}")
             return {'success': False, 'error': str(e)}
     
-    async def execute_sell_signal(self, symbol: str, sell_action: Dict) -> Dict:
-        """매도 신호 실행"""
+    async def execute_sell_signal(self, symbol: str, sell_action: Dict, emergency: bool = False) -> Dict:
+        """매도 신호 실행 (금요일 + 응급시)"""
         try:
+            # 응급 매도가 아니라면 금요일 체크
+            if not emergency and not self.is_trading_day('sell'):
+                return {
+                    'success': False, 
+                    'error': 'not_trading_day',
+                    'message': '정기 매도는 금요일만 가능합니다'
+                }
+            
             position = self.position_manager.get_position(symbol)
             if not position:
                 return {'success': False, 'error': 'no_position'}
@@ -953,6 +1006,8 @@ class TradeExecutor:
             
             sell_quantity = sell_action['quantity']
             sell_amount = sell_quantity * current_price
+            
+            day_type = "[응급]" if emergency else "[금요일]"
             
             if self.demo_mode:
                 # 시뮬레이션 모드
@@ -976,7 +1031,7 @@ class TradeExecutor:
                 profit = (current_price - position.avg_price) * sell_quantity
                 profit_ratio = (current_price - position.avg_price) / position.avg_price * 100
                 
-                logger.info(f"📉 시뮬레이션 매도: {symbol} {sell_quantity:.6f}개 @ {current_price:,.0f}원")
+                logger.info(f"📉 {day_type} 시뮬레이션 매도: {symbol} {sell_quantity:.6f}개 @ {current_price:,.0f}원")
                 logger.info(f"💰 손익: {profit:+,.0f}원 ({profit_ratio:+.1f}%) - {sell_action['reason']}")
                 
             else:
@@ -1003,7 +1058,7 @@ class TradeExecutor:
                     profit = (current_price - position.avg_price) * sell_quantity
                     profit_ratio = (current_price - position.avg_price) / position.avg_price * 100
                     
-                    logger.info(f"📉 실제 매도: {symbol} {sell_quantity:.6f}개 @ {current_price:,.0f}원")
+                    logger.info(f"📉 {day_type} 실제 매도: {symbol} {sell_quantity:.6f}개 @ {current_price:,.0f}원")
                     logger.info(f"💰 손익: {profit:+,.0f}원 ({profit_ratio:+.1f}%) - {sell_action['reason']}")
                 else:
                     result = {'success': False, 'error': 'order_failed'}
@@ -1015,10 +1070,10 @@ class TradeExecutor:
             return {'success': False, 'error': str(e)}
 
 # ============================================================================
-# 📊 REAL-TIME MONITOR - 실시간 모니터
+# 📊 REAL-TIME MONITOR - 실시간 모니터 (월금 매매 최적화)
 # ============================================================================
 class RealTimeMonitor:
-    """실시간 모니터링 시스템"""
+    """실시간 모니터링 시스템 (월금 매매 최적화)"""
     
     def __init__(self, position_manager: PositionManager, exit_engine: ExitStrategyEngine, 
                  trade_executor: TradeExecutor, quantum_cycle: QuantumCycleMatrix):
@@ -1029,12 +1084,17 @@ class RealTimeMonitor:
         self.monitoring = False
     
     async def start_monitoring(self, check_interval: int = 180):  # 3분마다
-        """실시간 모니터링 시작"""
+        """실시간 모니터링 시작 (월금 매매 고려)"""
         self.monitoring = True
-        logger.info("🔄 실시간 모니터링 시작")
+        logger.info("🔄 실시간 모니터링 시작 (월금 매매 모드)")
         
         while self.monitoring:
             try:
+                # 현재 요일 체크
+                current_weekday = datetime.now().weekday()
+                weekday_names = ['월', '화', '수', '목', '금', '토', '일']
+                today_name = weekday_names[current_weekday]
+                
                 # 현재 시장 사이클 확인
                 cycle_info = await self.quantum_cycle.detect_quantum_cycle()
                 current_cycle = cycle_info['cycle']
@@ -1043,7 +1103,7 @@ class RealTimeMonitor:
                 positions = self.position_manager.get_all_positions()
                 
                 if positions:
-                    logger.info(f"🔍 포지션 모니터링: {len(positions)}개 ({current_cycle})")
+                    logger.info(f"🔍 [{today_name}] 포지션 모니터링: {len(positions)}개 ({current_cycle})")
                 
                 for position in positions:
                     try:
@@ -1057,21 +1117,29 @@ class RealTimeMonitor:
                             position.symbol, current_price, current_cycle
                         )
                         
+                        # 응급 매도 조건 체크
+                        is_emergency = exit_action['reason'] in [
+                            'stop_loss', 'cycle_change', 'trailing_stop_40'
+                        ]
+                        
                         # 매도 실행
                         if exit_action['action'] in ['sell_all', 'sell_partial']:
-                            logger.info(f"🚨 매도 신호: {position.symbol} - {exit_action['reason']}")
-                            
-                            # 매도 실행
-                            sell_result = await self.trade_executor.execute_sell_signal(
-                                position.symbol, exit_action
-                            )
-                            
-                            if sell_result['success']:
-                                logger.info(f"✅ 매도 성공: {position.symbol}")
+                            if is_emergency or current_weekday == 4:  # 응급 또는 금요일
+                                logger.info(f"🚨 [{today_name}] 매도 신호: {position.symbol} - {exit_action['reason']}")
+                                
+                                # 매도 실행
+                                sell_result = await self.trade_executor.execute_sell_signal(
+                                    position.symbol, exit_action, emergency=is_emergency
+                                )
+                                
+                                if sell_result['success']:
+                                    logger.info(f"✅ 매도 성공: {position.symbol}")
+                                else:
+                                    logger.error(f"❌ 매도 실패: {position.symbol} - {sell_result.get('error')}")
                             else:
-                                logger.error(f"❌ 매도 실패: {position.symbol} - {sell_result.get('error')}")
+                                logger.info(f"⏳ [{today_name}] 매도 대기: {position.symbol} - {exit_action['reason']} (금요일 대기)")
                         
-                        # 미실현 손익 로그
+                        # 미실현 손익 로그 (중요한 변동만)
                         pnl_ratio = (current_price - position.avg_price) / position.avg_price * 100
                         if abs(pnl_ratio) > 5:  # 5% 이상 변동 시에만 로그
                             logger.info(f"💹 {position.symbol}: {pnl_ratio:+.1f}% @ {current_price:,.0f}원")
@@ -1093,10 +1161,10 @@ class RealTimeMonitor:
         logger.info("⏹️ 실시간 모니터링 중지")
 
 # ============================================================================
-# 🏆 LEGENDARY QUANT MASTER - 전설급 통합 시스템 (완전체)
+# 🏆 LEGENDARY QUANT MASTER - 전설급 통합 시스템 (월 5-7% 완전체)
 # ============================================================================
 class LegendaryQuantMaster:
-    """전설급 5대 시스템 + 완전한 매도 시스템 통합 마스터"""
+    """전설급 5대 시스템 + 완전한 매도 시스템 통합 마스터 (월 5-7% 최적화)"""
     
     def __init__(self, portfolio_value: float = 100_000_000, min_volume: float = 10_000_000_000, demo_mode: bool = True):
         self.portfolio_value = portfolio_value
@@ -1118,9 +1186,24 @@ class LegendaryQuantMaster:
         # 설정
         self.target_portfolio_size = 8
     
+    def is_trading_day(self) -> bool:
+        """월요일(0) 또는 금요일(4)만 거래"""
+        return datetime.now().weekday() in [0, 4]
+    
     async def execute_legendary_strategy(self) -> List[LegendarySignal]:
-        """전설급 전략 실행"""
-        logger.info("🏆 LEGENDARY QUANT STRATEGY COMPLETE 시작")
+        """전설급 전략 실행 (월 5-7% 최적화)"""
+        logger.info("🏆 LEGENDARY QUANT STRATEGY COMPLETE (월 5-7% 최적화) 시작")
+        
+        # 거래일 체크
+        current_weekday = datetime.now().weekday()
+        weekday_names = ['월', '화', '수', '목', '금', '토', '일']
+        today_name = weekday_names[current_weekday]
+        
+        if not self.is_trading_day():
+            logger.info(f"⏸️ [{today_name}] 비거래일: 모니터링만 실행")
+            return []
+        
+        logger.info(f"📈 [{today_name}] 거래일: 전설급 전략 실행")
         
         try:
             # 1단계: 양자 사이클 감지
@@ -1225,9 +1308,9 @@ class LegendaryQuantMaster:
             return None
     
     def print_legendary_results(self, signals: List[LegendarySignal]):
-        """전설급 결과 출력"""
+        """전설급 결과 출력 (월 5-7% 최적화)"""
         print("\n" + "="*80)
-        print("🏆 LEGENDARY QUANT STRATEGY COMPLETE RESULTS 🏆")
+        print("🏆 LEGENDARY QUANT STRATEGY COMPLETE - 월 5-7% 최적화 🏆")
         print("="*80)
         
         if not signals:
@@ -1237,17 +1320,33 @@ class LegendaryQuantMaster:
         buy_signals = [s for s in signals if s.action == 'BUY']
         total_investment = sum(s.total_investment for s in buy_signals)
         
+        # 현재 요일 정보
+        current_weekday = datetime.now().weekday()
+        weekday_names = ['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일']
+        today_name = weekday_names[current_weekday]
+        is_trading_day = current_weekday in [0, 4]
+        
         print(f"\n📊 전략 요약:")
         print(f"   분석 코인: {len(signals)}개")
         print(f"   매수 신호: {len(buy_signals)}개") 
         print(f"   총 투자금: {total_investment:,.0f}원")
         print(f"   포트폴리오 비중: {(total_investment/self.portfolio_value)*100:.1f}%")
         print(f"   운영 모드: {'시뮬레이션' if self.demo_mode else '실제거래'}")
+        print(f"   오늘: {today_name} ({'거래일' if is_trading_day else '비거래일'})")
         
         if signals:
             print(f"\n🌊 양자 사이클 상태:")
             print(f"   현재 사이클: {signals[0].quantum_cycle}")
             print(f"   신뢰도: {signals[0].cycle_confidence:.2f}")
+        
+        print(f"\n✨ 월 5-7% 최적화 특징:")
+        print(f"   • 0차 익절: 4-6% 수익시 20-25% 매도")
+        print(f"   • 1차 익절: 10-15% 수익시 30-35% 매도") 
+        print(f"   • 2차 익절: 15-25% 수익시 40-50% 매도")
+        print(f"   • 3차 익절: 삭제 (무제한 홀딩)")
+        print(f"   • 손절선: -5~8% (품질별 차등)")
+        print(f"   • 매매일: 월요일 매수, 금요일 매도")
+        print(f"   • 홀딩: 최대 2주")
         
         print(f"\n💎 전설급 매수 신호:")
         for i, signal in enumerate(buy_signals, 1):
@@ -1256,19 +1355,25 @@ class LegendaryQuantMaster:
             print(f"   AI 품질: {signal.neural_quality:.2f} | {signal.ai_explanation}")
             print(f"   켈리 비중: {signal.kelly_fraction:.1%}")
             print(f"   투자금액: {signal.total_investment:,.0f}원")
-            print(f"   3단계 진입: {[f'{p:,.0f}' for p in signal.entry_prices]}")
-            print(f"   3단계 익절: {[f'{p:,.0f}' for p in signal.take_profits]}")
-            print(f"   손절선: {signal.stop_loss:,.0f}원")
+            print(f"   진입가격: {[f'{p:,.0f}' for p in signal.entry_prices]}")
+            print(f"   익절가격: {[f'{p:,.0f}' for p in signal.take_profits]} (0차/1차/2차)")
+            print(f"   손절가격: {signal.stop_loss:,.0f}원")
+        
+        print(f"\n📈 월 5-7% 달성 전략:")
+        print(f"   • 포트폴리오 8개 중 2-3개 대박(50%+) → 월수익 견인")
+        print(f"   • 나머지 4-5개 소폭수익(5-25%) → 안정성 확보")
+        print(f"   • 1-2개 손실(-5~8%) → 손절로 제한")
+        print(f"   • 평균 월수익: 5-7% 목표")
         
         print("\n" + "="*80)
-        print("⚡ LEGENDARY STRATEGY COMPLETE ⚡")
+        print("⚡ LEGENDARY STRATEGY COMPLETE - 월 5-7% 최적화 ⚡")
 
 # ============================================================================
 # 🚀 메인 실행 함수들
 # ============================================================================
 async def main():
-    """전설급 퀀트 전략 메인 실행"""
-    print("⚡ LEGENDARY QUANT STRATEGY COMPLETE STARTING ⚡")
+    """전설급 퀀트 전략 메인 실행 (월 5-7% 최적화)"""
+    print("⚡ LEGENDARY QUANT STRATEGY COMPLETE - 월 5-7% 최적화 STARTING ⚡")
     print("🧠🌊⚡💎🕸️🎯🚨🎮📊 완전체 시스템 로딩...")
     
     # 전설급 마스터 초기화 (시뮬레이션 모드)
@@ -1295,7 +1400,7 @@ async def main():
 
 # 단일 코인 분석 함수
 async def analyze_single_coin(symbol: str):
-    """단일 코인 전설급 분석"""
+    """단일 코인 전설급 분석 (월 5-7% 최적화)"""
     master = LegendaryQuantMaster()
     
     try:
@@ -1316,18 +1421,34 @@ async def analyze_single_coin(symbol: str):
         signal = await master._analyze_legendary_coin(candidate, quantum_state)
         
         if signal:
-            print(f"\n🏆 {symbol} 전설급 분석 결과:")
+            print(f"\n🏆 {symbol} 전설급 분석 결과 (월 5-7% 최적화):")
             print(f"   액션: {signal.action}")
             print(f"   전설 점수: {signal.legendary_score:.3f}")
             print(f"   AI 설명: {signal.ai_explanation}")
             print(f"   양자 사이클: {signal.quantum_cycle}")
             print(f"   투자 권장: {signal.total_investment:,.0f}원")
+            print(f"   익절 계획: {[f'{p:,.0f}' for p in signal.take_profits]} (0차/1차/2차)")
+            print(f"   손절선: {signal.stop_loss:,.0f}원")
             
         return signal
         
     except Exception as e:
         print(f"❌ {symbol} 분석 실패: {e}")
         return None
+
+# 실시간 모니터링 시작 함수
+async def start_monitoring():
+    """실시간 모니터링 시작"""
+    master = LegendaryQuantMaster()
+    
+    print("🔄 실시간 모니터링 시작 (월금 매매 모드)")
+    print("Ctrl+C로 중지할 수 있습니다.")
+    
+    try:
+        await master.monitor.start_monitoring(check_interval=180)  # 3분마다
+    except KeyboardInterrupt:
+        print("\n⏹️ 실시간 모니터링을 중지합니다.")
+        master.monitor.stop_monitoring()
 
 if __name__ == "__main__":
     import sys
@@ -1341,10 +1462,14 @@ if __name__ == "__main__":
             if not symbol.startswith('KRW-'):
                 symbol = f'KRW-{symbol}'
             asyncio.run(analyze_single_coin(symbol))
+        elif command == 'monitor':
+            # 실시간 모니터링
+            asyncio.run(start_monitoring())
         else:
             print("사용법:")
             print("  python script.py              # 전체 전략 실행")
             print("  python script.py analyze:BTC  # 단일 코인 분석")
+            print("  python script.py monitor      # 실시간 모니터링")
     else:
         # 기본 실행: 전체 전략
         asyncio.run(main())
