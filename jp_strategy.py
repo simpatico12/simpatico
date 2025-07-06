@@ -876,8 +876,11 @@ class Signal:
     take_profit3: float
     max_hold_days: int
     position_size: int
-    timestamp: datetime =                         position.shares_sold_1st = shares_to_sell
-                        self.save_positions()
+    timestamp: datetime = None                        
+
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now()
                 
                 # 화목 강제 청산
                 elif self._should_force_exit(position, current_time):
