@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🏆 전설적 퀸트프로젝트 - 미국주식 마스터시스템 V6.0
-===============================================================
+🏆 전설적 퀸트프로젝트 - 통합 완성판 V6.2 (간결화)
+===============================================
 
-🌟 전설적 핵심 특징:
-1. 🔥 완벽한 설정 기반 아키텍처 (혼자 보수유지 가능)
+🌟 완전 통합 특징:
+1. 🔥 4가지 투자전략 지능형 융합 (버핏+린치+모멘텀+기술)
 2. 🚀 실시간 S&P500+NASDAQ 자동선별 엔진
-3. 💎 4가지 투자전략 지능형 융합 시스템
-4. 🧠 VIX 기반 시장상황 자동판단 AI
-5. ⚡ 분할매매 + 손절익절 자동화 시스템
+3. 💎 VIX 기반 시장상황 자동판단 AI
+4. 🎯 월 5-7% 달성형 스윙 + 분할매매 통합
+5. ⚡ IBKR 실거래 완전 연동 + 자동 손익절
 6. 🛡️ 통합 리스크관리 + 포트폴리오 최적화
+7. 🧠 혼자 보수유지 가능한 완벽한 아키텍처
 
 Author: 전설적퀸트팀
-Version: 6.0.0 (전설적 완성판)
-Project: 🏆 QuintProject - 혼자보수유지가능
+Version: 6.2.0 (보수유지 최적화)
 """
 
 import asyncio
@@ -37,8 +37,11 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
 import aiohttp
 from dotenv import load_dotenv
+import sqlite3
+import schedule
+from threading import Thread
 
-# IBKR 연동 (선택적 import)
+# IBKR 연동
 try:
     from ib_insync import *
     IBKR_AVAILABLE = True
@@ -50,181 +53,130 @@ except ImportError:
 warnings.filterwarnings('ignore')
 
 # ========================================================================================
-# 🔧 전설적 설정관리자 - 완벽한 자동화
+# 🔧 통합 설정관리자 - 완전 자동화
 # ========================================================================================
 
-class LegendaryConfigManager:
-    """🔥 전설적 설정관리자 - 혼자 보수유지 가능한 완벽한 시스템"""
+class LegendaryConfig:
+    """🔥 전설적 통합 설정관리자"""
     
-    def __init__(self, config_path: str = "quant_settings.yaml"):
+    def __init__(self, config_path: str = "legendary_unified_settings.yaml"):
         self.config_path = config_path
         self.config = {}
         self.env_loaded = False
-        self._initialize_legendary_config()
+        self._initialize_config()
     
-    def _initialize_legendary_config(self):
-        """전설적 설정 초기화"""
+    def _initialize_config(self):
+        """설정 초기화"""
         try:
-            # 1. 환경변수 로드
             if Path('.env').exists():
                 load_dotenv()
                 self.env_loaded = True
                 
-            # 2. YAML 설정 로드 또는 생성
             if Path(self.config_path).exists():
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     self.config = yaml.safe_load(f) or {}
             else:
-                self._create_legendary_default_config()
+                self._create_default_config()
                 self._save_config()
             
-            # 3. 환경변수 치환
             self._substitute_env_vars()
-            
-            logging.info("🔥 전설적 설정관리자 초기화 완료!")
+            logging.info("🔥 설정관리자 초기화 완료!")
             
         except Exception as e:
             logging.error(f"❌ 설정 초기화 실패: {e}")
-            self._create_legendary_default_config()
+            self._create_default_config()
     
-    def _create_legendary_default_config(self):
-        """전설적 기본 설정 생성"""
+    def _create_default_config(self):
+        """기본 설정 생성"""
         self.config = {
-            # 🎯 핵심 전략 설정
-            'legendary_strategy': {
+            # 🎯 통합 전략 설정
+            'strategy': {
                 'enabled': True,
-                'strategy_name': '전설적퀸트마스터',
-                'target_stocks': 20,
-                'selection_cache_hours': 24,
-                'confidence_threshold': 0.70,
-                
-                # 4가지 전략 가중치 (자유롭게 조정 가능)
-                'strategy_weights': {
-                    'buffett_value': 25.0,    # 워렌버핏 가치투자
-                    'lynch_growth': 25.0,     # 피터린치 성장투자  
-                    'momentum': 25.0,         # 모멘텀 전략
-                    'technical': 25.0         # 기술적분석
+                'mode': 'swing',  # 'classic', 'swing', 'hybrid'
+                'target_stocks': {'classic': 20, 'swing': 8},
+                'monthly_target': {'min': 5.0, 'max': 7.0},
+                'weights': {
+                    'buffett': 25.0, 'lynch': 25.0, 
+                    'momentum': 25.0, 'technical': 25.0
                 },
-                
-                # VIX 기반 시장상황 판단
-                'vix_thresholds': {
-                    'low_volatility': 15.0,   # 저변동성 (적극적)
-                    'high_volatility': 30.0,  # 고변동성 (보수적)
-                    'adjustments': {
-                        'low_boost': 1.15,     # 저변동성 시 15% 부스트
-                        'normal': 1.0,         # 정상 변동성
-                        'high_reduce': 0.85    # 고변동성 시 15% 감소
-                    }
-                }
+                'vix_thresholds': {'low': 15.0, 'high': 30.0}
             },
             
-            # 💰 분할매매 시스템
-            'split_trading': {
-                'enabled': True,
-                'buy_stages': {
-                    'stage1_ratio': 40.0,     # 1단계 40%
-                    'stage2_ratio': 35.0,     # 2단계 35%
-                    'stage3_ratio': 25.0      # 3단계 25%
+            # 💰 매매 설정
+            'trading': {
+                'classic': {
+                    'stages': [40.0, 35.0, 25.0],  # 분할매매 비율
+                    'triggers': [-5.0, -10.0],     # 추가매수 조건
+                    'take_profit': [20.0, 35.0]    # 익절 조건
                 },
-                'triggers': {
-                    'stage2_drop': -5.0,      # 5% 하락시 2단계
-                    'stage3_drop': -10.0      # 10% 하락시 3단계
-                },
-                'sell_stages': {
-                    'profit1_ratio': 60.0,    # 1차 익절 60%
-                    'profit2_ratio': 40.0     # 2차 익절 40%
+                'swing': {
+                    'take_profit': [6.0, 12.0],    # 2단계 익절
+                    'profit_ratios': [60.0, 40.0], # 매도 비율
+                    'stop_loss': 8.0               # 손절
                 }
             },
             
             # 🛡️ 리스크 관리
-            'risk_management': {
-                'portfolio_allocation': 80.0,  # 포트폴리오 투자비중
-                'cash_reserve': 20.0,          # 현금 보유비중
-                'stop_loss': 15.0,             # 손절선
-                'take_profit1': 20.0,          # 1차 익절선
-                'take_profit2': 35.0,          # 2차 익절선
-                'max_position': 8.0,           # 종목당 최대비중
-                'max_sector': 25.0,            # 섹터당 최대비중
-                'max_hold_days': 60            # 최대보유일
+            'risk': {
+                'portfolio_allocation': 80.0,
+                'max_position': 8.0,
+                'max_sector': 25.0,
+                'stop_loss': {'classic': 15.0, 'swing': 8.0},
+                'trailing_stop': True,
+                'daily_loss_limit': 1.0,
+                'monthly_loss_limit': 3.0
             },
             
-            # 📊 종목선별 기준
-            'selection_criteria': {
-                'min_market_cap': 5_000_000_000,   # 최소 시총 50억달러
-                'min_avg_volume': 1_000_000,       # 최소 일평균거래량 100만주
-                'excluded_sectors': [],             # 제외 섹터
-                'excluded_symbols': ['SPXL', 'TQQQ'], # 제외 종목 (레버리지ETF등)
-                
-                # 섹터 다양성
-                'sector_diversity': {
-                    'max_per_sector': 4,        # 섹터당 최대 4개
-                    'sp500_quota': 60.0,        # S&P500 60%
-                    'nasdaq_quota': 40.0        # NASDAQ 40%
-                }
+            # 📊 종목 선별
+            'selection': {
+                'min_market_cap': 5_000_000_000,
+                'min_volume': 1_000_000,
+                'excluded_symbols': ['SPXL', 'TQQQ'],
+                'refresh_hours': 24,
+                'sp500_quota': 60.0,
+                'nasdaq_quota': 40.0
             },
             
-            # 🔍 데이터 수집 설정
-            'data_sources': {
-                'request_timeout': 30,
-                'max_retries': 3,
-                'rate_limit_delay': 0.3,
-                'max_workers': 15,
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            
-            # 🏦 IBKR (Interactive Brokers) 연동
+            # 🏦 IBKR 설정
             'ibkr': {
-                'enabled': False,             # IBKR 연동 활성화
-                'host': '127.0.0.1',         # TWS/Gateway 호스트
-                'port': 7497,                # TWS 포트 (7497=paper, 7496=live)
-                'client_id': 1,              # 클라이언트 ID
-                'auto_connect': False,        # 자동 연결
-                'paper_trading': True,        # 모의투자 모드
-                'account_id': '${IBKR_ACCOUNT:-}',  # 계좌번호
-                
-                # 주문 설정
-                'order_settings': {
-                    'default_order_type': 'MKT',    # 시장가 주문
-                    'good_till_cancel': True,       # GTC 주문
-                    'outside_rth': False,           # 장외시간 거래
-                    'transmit': False,              # 실제 전송 여부 (False=검토만)
-                    'min_order_value': 100.0        # 최소 주문금액
-                },
-                
-                # 포트폴리오 관리
-                'portfolio_settings': {
-                    'enable_auto_trading': False,   # 자동매매 활성화
-                    'max_daily_trades': 10,         # 일일 최대 거래수
-                    'position_size_limit': 10000,   # 포지션 크기 제한 (달러)
-                    'cash_threshold': 5000          # 최소 현금 유지
-                }
+                'enabled': True,
+                'host': '127.0.0.1',
+                'port': 7497,
+                'client_id': 1,
+                'paper_trading': True,
+                'account_id': '${IBKR_ACCOUNT:-}',
+                'max_daily_trades': 20,
+                'order_type': 'MKT'
             },
             
-            # 📱 알림 시스템 (선택사항)
+            # 🤖 자동화
+            'automation': {
+                'monitoring_interval': 15,
+                'weekend_shutdown': True,
+                'holiday_shutdown': True,
+                'morning_scan': '09:00',
+                'evening_report': '16:00'
+            },
+            
+            # 📱 알림
             'notifications': {
                 'telegram': {
-                    'enabled': False,
+                    'enabled': True,
                     'bot_token': '${TELEGRAM_BOT_TOKEN:-}',
                     'chat_id': '${TELEGRAM_CHAT_ID:-}'
-                },
-                'discord': {
-                    'enabled': False,
-                    'webhook_url': '${DISCORD_WEBHOOK:-}'
                 }
             },
             
-            # 🎛️ 고급 설정
-            'advanced': {
-                'enable_logging': True,
-                'log_level': 'INFO',
-                'save_analysis_results': True,
-                'enable_backtesting': False,
-                'performance_tracking': True
+            # 📊 성과 추적
+            'performance': {
+                'database_file': 'legendary_performance.db',
+                'benchmarks': ['SPY', 'QQQ'],
+                'detailed_metrics': True
             }
         }
     
     def _substitute_env_vars(self):
-        """환경변수 치환 ${VAR:-default}"""
+        """환경변수 치환"""
         def substitute_recursive(obj):
             if isinstance(obj, dict):
                 return {k: substitute_recursive(v) for k, v in obj.items()}
@@ -242,7 +194,7 @@ class LegendaryConfigManager:
         self.config = substitute_recursive(self.config)
     
     def _save_config(self):
-        """설정 파일 저장"""
+        """설정 저장"""
         try:
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True, indent=2)
@@ -261,7 +213,7 @@ class LegendaryConfigManager:
         return value
     
     def update(self, key_path: str, value):
-        """설정값 업데이트 및 자동 저장"""
+        """설정값 업데이트"""
         keys = key_path.split('.')
         config = self.config
         for key in keys[:-1]:
@@ -271,202 +223,151 @@ class LegendaryConfigManager:
         config[keys[-1]] = value
         self._save_config()
         logging.info(f"설정 업데이트: {key_path} = {value}")
-    
-    def is_enabled(self, feature_path: str) -> bool:
-        """기능 활성화 여부"""
-        return bool(self.get(f"{feature_path}.enabled", False))
 
-# 전역 설정 관리자
-config = LegendaryConfigManager()
+# 전역 설정 인스턴스
+config = LegendaryConfig()
 
 # ========================================================================================
-# 📊 전설적 데이터 클래스
+# 📊 데이터 클래스
 # ========================================================================================
 
 @dataclass
-class LegendaryStockSignal:
-    """🏆 전설적 주식 시그널 데이터"""
+class StockSignal:
+    """주식 시그널"""
     symbol: str
-    action: str  # 'buy', 'sell', 'hold'
-    confidence: float  # 0.0 ~ 1.0
+    action: str  # buy/sell/hold
+    confidence: float
     price: float
-    
-    # 전략별 점수
-    buffett_score: float
-    lynch_score: float  
-    momentum_score: float
-    technical_score: float
-    total_score: float
-    
-    # 재무지표
-    market_cap: float
-    pe_ratio: float
-    pbr: float
-    peg: float
-    roe: float
-    sector: str
-    
-    # 모멘텀지표
-    momentum_3m: float
-    momentum_6m: float
-    momentum_12m: float
-    
-    # 기술적지표
-    rsi: float
-    trend: str
-    volume_spike: float
-    
-    # 분할매매 계획
-    total_shares: int
-    stage1_shares: int
-    stage2_shares: int
-    stage3_shares: int
-    entry_price_1: float
-    entry_price_2: float
-    entry_price_3: float
-    stop_loss_price: float
-    take_profit1_price: float
-    take_profit2_price: float
-    
-    # 메타정보
+    mode: str
+    scores: Dict[str, float]  # 4가지 전략 점수
+    financials: Dict[str, float]
     target_price: float
-    selection_score: float
-    index_membership: List[str]
-    vix_adjustment: float
+    stop_loss: float
     reasoning: str
     timestamp: datetime
+
+@dataclass 
+class Position:
+    """포지션"""
+    symbol: str
+    quantity: int
+    avg_cost: float
+    entry_date: datetime
+    mode: str
+    stage: int = 1
+    tp_executed: List[bool] = None
+    highest_price: float = 0.0
     
-    def to_dict(self) -> Dict:
-        """딕셔너리 변환"""
-        return asdict(self)
+    def __post_init__(self):
+        if self.tp_executed is None:
+            self.tp_executed = [False, False, False]
+        if self.highest_price == 0.0:
+            self.highest_price = self.avg_cost
+
+    def profit_percent(self, current_price: float) -> float:
+        """수익률 계산"""
+        return ((current_price - self.avg_cost) / self.avg_cost) * 100
 
 # ========================================================================================
-# 🚀 전설적 실시간 주식선별 엔진
+# 🚀 주식 선별 엔진
 # ========================================================================================
 
-class LegendaryStockSelector:
-    """🔥 전설적 실시간 주식선별 엔진 - 완전자동화"""
+class StockSelector:
+    """실시간 주식 선별 엔진"""
     
     def __init__(self):
-        self.current_vix = 20.0
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': config.get('data_sources.user_agent')
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
-        self.session.timeout = config.get('data_sources.request_timeout', 30)
-        
-        logging.info("🚀 전설적 주식선별 엔진 가동!")
+        self.session.timeout = 30
+        self.cache = {'sp500': [], 'nasdaq': [], 'last_update': None}
     
     async def get_current_vix(self) -> float:
-        """현재 VIX 지수 조회"""
+        """VIX 조회"""
         try:
-            vix_ticker = yf.Ticker("^VIX")
-            hist = vix_ticker.history(period="1d")
-            if not hist.empty:
-                self.current_vix = hist['Close'].iloc[-1]
-            logging.info(f"📊 현재 VIX: {self.current_vix:.2f}")
-            return self.current_vix
-        except Exception as e:
-            logging.warning(f"VIX 조회 실패: {e}")
-            self.current_vix = 20.0
-            return self.current_vix
+            vix = yf.Ticker("^VIX")
+            hist = vix.history(period="1d")
+            return hist['Close'].iloc[-1] if not hist.empty else 20.0
+        except:
+            return 20.0
     
     async def collect_sp500_symbols(self) -> List[str]:
-        """S&P 500 종목 실시간 수집"""
+        """S&P 500 심볼 수집"""
         try:
-            logging.info("🔍 S&P 500 종목 수집중...")
+            if self._is_cache_valid():
+                return self.cache['sp500']
             
-            # Wikipedia에서 S&P 500 리스트 수집
-            url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-            tables = pd.read_html(url)
-            sp500_df = tables[0]
-            symbols = sp500_df['Symbol'].tolist()
+            tables = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
+            symbols = tables[0]['Symbol'].tolist()
+            cleaned = [str(s).replace('.', '-') for s in symbols]
             
-            # 심볼 정리 (BRK.B -> BRK-B)
-            cleaned_symbols = [str(s).replace('.', '-') for s in symbols]
+            self.cache['sp500'] = cleaned
+            self.cache['last_update'] = datetime.now()
             
-            logging.info(f"✅ S&P 500: {len(cleaned_symbols)}개 종목 수집")
-            await asyncio.sleep(config.get('data_sources.rate_limit_delay', 0.3))
-            
-            return cleaned_symbols
-            
+            logging.info(f"✅ S&P 500: {len(cleaned)}개 수집")
+            return cleaned
         except Exception as e:
             logging.error(f"S&P 500 수집 실패: {e}")
-            # 백업 리스트
             return self._get_backup_sp500()
     
-    async def collect_nasdaq100_symbols(self) -> List[str]:
-        """NASDAQ 100 종목 실시간 수집"""
+    async def collect_nasdaq_symbols(self) -> List[str]:
+        """NASDAQ 100 심볼 수집"""
         try:
-            logging.info("🔍 NASDAQ 100 종목 수집중...")
+            if self._is_cache_valid():
+                return self.cache['nasdaq']
             
-            url = "https://en.wikipedia.org/wiki/Nasdaq-100"
-            tables = pd.read_html(url)
-            
+            tables = pd.read_html('https://en.wikipedia.org/wiki/Nasdaq-100')
             symbols = []
             for table in tables:
-                if 'Symbol' in table.columns or 'Ticker' in table.columns:
-                    symbol_col = 'Symbol' if 'Symbol' in table.columns else 'Ticker'
-                    nasdaq_symbols = table[symbol_col].dropna().tolist()
-                    symbols.extend([str(s) for s in nasdaq_symbols])
+                if 'Symbol' in table.columns:
+                    symbols = table['Symbol'].dropna().tolist()
                     break
             
-            logging.info(f"✅ NASDAQ 100: {len(symbols)}개 종목 수집")
-            await asyncio.sleep(config.get('data_sources.rate_limit_delay', 0.3))
-            
+            self.cache['nasdaq'] = symbols
             return symbols
-            
         except Exception as e:
-            logging.error(f"NASDAQ 100 수집 실패: {e}")
-            return self._get_backup_nasdaq100()
+            logging.error(f"NASDAQ 수집 실패: {e}")
+            return self._get_backup_nasdaq()
+    
+    def _is_cache_valid(self) -> bool:
+        """캐시 유효성 확인"""
+        if not self.cache['last_update']:
+            return False
+        hours = config.get('selection.refresh_hours', 24)
+        return (datetime.now() - self.cache['last_update']).seconds < hours * 3600
     
     def _get_backup_sp500(self) -> List[str]:
-        """S&P 500 백업 리스트"""
+        """S&P 500 백업"""
         return [
-            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK-B', 'UNH', 'JNJ',
-            'V', 'PG', 'JPM', 'HD', 'MA', 'PFE', 'ABBV', 'BAC', 'KO', 'AVGO',
-            'XOM', 'CVX', 'LLY', 'WMT', 'PEP', 'TMO', 'COST', 'ORCL', 'ABT', 'ACN',
-            'NFLX', 'CRM', 'MRK', 'VZ', 'ADBE', 'DHR', 'TXN', 'NKE', 'PM', 'DIS'
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK-B',
+            'UNH', 'JNJ', 'V', 'PG', 'JPM', 'HD', 'MA', 'PFE', 'ABBV', 'BAC'
         ]
     
-    def _get_backup_nasdaq100(self) -> List[str]:
-        """NASDAQ 100 백업 리스트"""
+    def _get_backup_nasdaq(self) -> List[str]:
+        """NASDAQ 백업"""
         return [
-            'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'TSLA', 'META', 'NVDA',
-            'NFLX', 'ADBE', 'CRM', 'ORCL', 'INTC', 'AMD', 'QCOM', 'AVGO',
-            'TXN', 'MU', 'AMAT', 'ADI', 'MRVL', 'KLAC', 'LRCX', 'SNPS'
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX',
+            'ADBE', 'CRM', 'ORCL', 'INTC', 'AMD', 'QCOM', 'AVGO', 'TXN'
         ]
     
-    async def create_investment_universe(self) -> List[str]:
+    async def create_universe(self) -> List[str]:
         """투자 유니버스 생성"""
         try:
-            logging.info("🌌 투자 유니버스 생성중...")
-            
-            # 병렬로 데이터 수집
-            tasks = [
+            sp500, nasdaq = await asyncio.gather(
                 self.collect_sp500_symbols(),
-                self.collect_nasdaq100_symbols(),
-                self.get_current_vix()
-            ]
+                self.collect_nasdaq_symbols()
+            )
             
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            sp500_symbols = results[0] if not isinstance(results[0], Exception) else []
-            nasdaq100_symbols = results[1] if not isinstance(results[1], Exception) else []
-            
-            # 유니버스 통합
-            universe = list(set(sp500_symbols + nasdaq100_symbols))
-            
-            # 제외 종목 필터링
-            excluded = config.get('selection_criteria.excluded_symbols', [])
+            universe = list(set(sp500 + nasdaq))
+            excluded = config.get('selection.excluded_symbols', [])
             universe = [s for s in universe if s not in excluded]
             
-            logging.info(f"🌌 투자 유니버스: {len(universe)}개 종목 생성완료")
+            logging.info(f"🌌 투자 유니버스: {len(universe)}개 종목")
             return universe
-            
         except Exception as e:
             logging.error(f"유니버스 생성 실패: {e}")
-            return self._get_backup_sp500() + self._get_backup_nasdaq100()
+            return self._get_backup_sp500() + self._get_backup_nasdaq()
     
     async def get_stock_data(self, symbol: str) -> Dict:
         """종목 데이터 수집"""
@@ -480,7 +381,7 @@ class LegendaryStockSelector:
             
             current_price = hist['Close'].iloc[-1]
             
-            # 기본 재무지표
+            # 기본 데이터
             data = {
                 'symbol': symbol,
                 'price': current_price,
@@ -493,7 +394,8 @@ class LegendaryStockSelector:
                 'revenue_growth': (info.get('revenueQuarterlyGrowth', 0) or 0) * 100,
                 'debt_to_equity': info.get('debtToEquity', 0) or 0,
                 'sector': info.get('sector', 'Unknown'),
-                'beta': info.get('beta', 1.0) or 1.0
+                'beta': info.get('beta', 1.0) or 1.0,
+                'profit_margins': (info.get('profitMargins', 0) or 0) * 100
             }
             
             # PEG 계산
@@ -510,27 +412,40 @@ class LegendaryStockSelector:
             else:
                 data['momentum_3m'] = data['momentum_6m'] = data['momentum_12m'] = 0
             
-            # 기술적 지표 (간단한 계산)
+            # 기술적 지표
             if len(hist) >= 50:
-                # RSI 계산
+                # RSI
                 delta = hist['Close'].diff()
-                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
                 rs = gain / loss
                 data['rsi'] = 100 - (100 / (1 + rs)).iloc[-1]
                 
-                # 추세 (50일 이동평균)
+                # 추세
+                ma20 = hist['Close'].rolling(20).mean().iloc[-1]
                 ma50 = hist['Close'].rolling(50).mean().iloc[-1]
-                data['trend'] = 'uptrend' if current_price > ma50 else 'downtrend'
                 
-                # 거래량 급증
-                avg_volume_20d = hist['Volume'].rolling(20).mean().iloc[-1]
-                current_volume = hist['Volume'].iloc[-1]
-                data['volume_spike'] = current_volume / avg_volume_20d if avg_volume_20d > 0 else 1
+                if current_price > ma50 > ma20:
+                    data['trend'] = 'strong_uptrend'
+                elif current_price > ma50:
+                    data['trend'] = 'uptrend'
+                else:
+                    data['trend'] = 'downtrend'
+                
+                # 거래량
+                avg_vol = hist['Volume'].rolling(20).mean().iloc[-1]
+                current_vol = hist['Volume'].iloc[-1]
+                data['volume_spike'] = current_vol / avg_vol if avg_vol > 0 else 1
+                
+                # 변동성
+                returns = hist['Close'].pct_change().dropna()
+                data['volatility'] = returns.rolling(20).std().iloc[-1] * np.sqrt(252) * 100
             else:
-                data.update({'rsi': 50, 'trend': 'sideways', 'volume_spike': 1})
+                data.update({
+                    'rsi': 50, 'trend': 'sideways', 'volume_spike': 1, 'volatility': 25
+                })
             
-            await asyncio.sleep(config.get('data_sources.rate_limit_delay', 0.3))
+            await asyncio.sleep(0.3)
             return data
             
         except Exception as e:
@@ -538,91 +453,78 @@ class LegendaryStockSelector:
             return {}
 
 # ========================================================================================
-# 🧠 전설적 투자전략 분석엔진 
+# 🧠 4가지 투자전략 분석 엔진
 # ========================================================================================
 
-class LegendaryStrategyAnalyzer:
-    """🔥 전설적 4가지 투자전략 분석엔진"""
+class StrategyAnalyzer:
+    """4가지 투자전략 분석 엔진"""
     
-    def __init__(self):
-        self.weights = config.get('legendary_strategy.strategy_weights', {})
-        
     def calculate_buffett_score(self, data: Dict) -> float:
-        """워렌 버핏 가치투자 점수"""
+        """버핏 가치투자 점수"""
         score = 0.0
         
-        # PBR 점수 (낮을수록 좋음)
+        # PBR (30%)
         pbr = data.get('pbr', 999)
-        if 0 < pbr <= 1.5:
-            score += 0.35
-        elif pbr <= 2.5:
-            score += 0.25
-        elif pbr <= 4.0:
-            score += 0.15
+        if 0 < pbr <= 1.0: score += 0.30
+        elif pbr <= 1.5: score += 0.25
+        elif pbr <= 2.0: score += 0.20
+        elif pbr <= 3.0: score += 0.10
         
-        # ROE 점수 (높을수록 좋음)
+        # ROE (25%)
         roe = data.get('roe', 0)
-        if roe >= 20:
-            score += 0.30
-        elif roe >= 15:
-            score += 0.20
-        elif roe >= 10:
-            score += 0.10
+        if roe >= 20: score += 0.25
+        elif roe >= 15: score += 0.20
+        elif roe >= 10: score += 0.15
+        elif roe >= 5: score += 0.10
         
-        # 부채비율 점수 (낮을수록 좋음)
+        # 부채비율 (20%)
         debt_ratio = data.get('debt_to_equity', 999) / 100
-        if debt_ratio <= 0.3:
-            score += 0.20
-        elif debt_ratio <= 0.5:
-            score += 0.15
-        elif debt_ratio <= 0.7:
-            score += 0.10
+        if debt_ratio <= 0.3: score += 0.20
+        elif debt_ratio <= 0.5: score += 0.15
+        elif debt_ratio <= 0.7: score += 0.10
         
-        # PE 적정성 점수
+        # PE (15%)
         pe = data.get('pe_ratio', 999)
-        if 5 <= pe <= 15:
-            score += 0.15
-        elif pe <= 25:
-            score += 0.10
-        elif pe <= 35:
-            score += 0.05
+        if 5 <= pe <= 15: score += 0.15
+        elif pe <= 20: score += 0.10
+        elif pe <= 25: score += 0.05
+        
+        # 이익률 (10%)
+        margins = data.get('profit_margins', 0)
+        if margins >= 15: score += 0.10
+        elif margins >= 10: score += 0.07
+        elif margins >= 5: score += 0.05
         
         return min(score, 1.0)
     
     def calculate_lynch_score(self, data: Dict) -> float:
-        """피터 린치 성장투자 점수"""
+        """린치 성장투자 점수"""
         score = 0.0
         
-        # PEG 점수 (낮을수록 좋음)
+        # PEG (40%)
         peg = data.get('peg', 999)
-        if 0 < peg <= 0.5:
-            score += 0.40
-        elif peg <= 1.0:
-            score += 0.35
-        elif peg <= 1.5:
-            score += 0.25
-        elif peg <= 2.0:
-            score += 0.15
+        if 0 < peg <= 0.5: score += 0.40
+        elif peg <= 1.0: score += 0.35
+        elif peg <= 1.5: score += 0.25
+        elif peg <= 2.0: score += 0.15
         
-        # EPS 성장률 점수
+        # EPS 성장 (30%)
         eps_growth = data.get('eps_growth', 0)
-        if eps_growth >= 25:
-            score += 0.35
-        elif eps_growth >= 15:
-            score += 0.25
-        elif eps_growth >= 10:
-            score += 0.15
-        elif eps_growth >= 5:
-            score += 0.05
+        if eps_growth >= 25: score += 0.30
+        elif eps_growth >= 20: score += 0.25
+        elif eps_growth >= 15: score += 0.20
+        elif eps_growth >= 10: score += 0.15
         
-        # 매출 성장률 점수
-        revenue_growth = data.get('revenue_growth', 0)
-        if revenue_growth >= 20:
-            score += 0.25
-        elif revenue_growth >= 10:
-            score += 0.15
-        elif revenue_growth >= 5:
-            score += 0.10
+        # 매출 성장 (20%)
+        rev_growth = data.get('revenue_growth', 0)
+        if rev_growth >= 20: score += 0.20
+        elif rev_growth >= 15: score += 0.15
+        elif rev_growth >= 10: score += 0.10
+        
+        # ROE (10%)
+        roe = data.get('roe', 0)
+        if roe >= 15: score += 0.10
+        elif roe >= 10: score += 0.07
         
         return min(score, 1.0)
     
@@ -630,43 +532,32 @@ class LegendaryStrategyAnalyzer:
         """모멘텀 전략 점수"""
         score = 0.0
         
-        # 3개월 모멘텀
+        # 3개월 모멘텀 (30%)
         mom_3m = data.get('momentum_3m', 0)
-        if mom_3m >= 20:
-            score += 0.30
-        elif mom_3m >= 10:
-            score += 0.20
-        elif mom_3m >= 5:
-            score += 0.10
-        elif mom_3m >= 0:
-            score += 0.05
+        if mom_3m >= 20: score += 0.30
+        elif mom_3m >= 15: score += 0.25
+        elif mom_3m >= 10: score += 0.20
+        elif mom_3m >= 5: score += 0.15
         
-        # 6개월 모멘텀
+        # 6개월 모멘텀 (25%)
         mom_6m = data.get('momentum_6m', 0)
-        if mom_6m >= 30:
-            score += 0.25
-        elif mom_6m >= 15:
-            score += 0.15
-        elif mom_6m >= 5:
-            score += 0.10
+        if mom_6m >= 30: score += 0.25
+        elif mom_6m >= 20: score += 0.20
+        elif mom_6m >= 15: score += 0.15
+        elif mom_6m >= 10: score += 0.10
         
-        # 12개월 모멘텀
+        # 12개월 모멘텀 (25%)
         mom_12m = data.get('momentum_12m', 0)
-        if mom_12m >= 50:
-            score += 0.25
-        elif mom_12m >= 25:
-            score += 0.15
-        elif mom_12m >= 10:
-            score += 0.10
+        if mom_12m >= 50: score += 0.25
+        elif mom_12m >= 30: score += 0.20
+        elif mom_12m >= 20: score += 0.15
+        elif mom_12m >= 10: score += 0.10
         
-        # 거래량 급증
-        volume_spike = data.get('volume_spike', 1)
-        if volume_spike >= 2.0:
-            score += 0.20
-        elif volume_spike >= 1.5:
-            score += 0.10
-        elif volume_spike >= 1.2:
-            score += 0.05
+        # 거래량 (20%)
+        vol_spike = data.get('volume_spike', 1)
+        if vol_spike >= 3.0: score += 0.20
+        elif vol_spike >= 2.0: score += 0.15
+        elif vol_spike >= 1.5: score += 0.10
         
         return min(score, 1.0)
     
@@ -674,235 +565,724 @@ class LegendaryStrategyAnalyzer:
         """기술적 분석 점수"""
         score = 0.0
         
-        # RSI 점수
+        # RSI (30%)
         rsi = data.get('rsi', 50)
-        if 30 <= rsi <= 70:
-            score += 0.40  # 정상 범위
-        elif 20 <= rsi < 30:
-            score += 0.30  # 과매도 (매수기회)
-        elif 70 < rsi <= 80:
-            score += 0.20  # 약간 과매수
+        if 30 <= rsi <= 70: score += 0.30
+        elif 25 <= rsi < 30: score += 0.25
+        elif 70 < rsi <= 75: score += 0.20
         
-        # 추세 점수
+        # 추세 (35%)
         trend = data.get('trend', 'sideways')
-        if trend == 'uptrend':
-            score += 0.60
-        elif trend == 'sideways':
-            score += 0.20
+        if trend == 'strong_uptrend': score += 0.35
+        elif trend == 'uptrend': score += 0.25
+        elif trend == 'sideways': score += 0.10
+        
+        # 변동성 (20%)
+        volatility = data.get('volatility', 25)
+        if 15 <= volatility <= 30: score += 0.20
+        elif 10 <= volatility <= 40: score += 0.15
+        elif volatility <= 50: score += 0.10
+        
+        # 거래량 (15%)
+        vol_spike = data.get('volume_spike', 1)
+        if vol_spike >= 1.5: score += 0.15
+        elif vol_spike >= 1.2: score += 0.10
         
         return min(score, 1.0)
     
-    def calculate_vix_adjustment(self, base_score: float, current_vix: float) -> float:
-        """VIX 기반 점수 조정"""
-        vix_config = config.get('legendary_strategy.vix_thresholds', {})
-        low_threshold = vix_config.get('low_volatility', 15.0)
-        high_threshold = vix_config.get('high_volatility', 30.0)
-        adjustments = vix_config.get('adjustments', {})
+    def calculate_vix_adjustment(self, base_score: float, vix: float) -> float:
+        """VIX 조정"""
+        low_vix = config.get('strategy.vix_thresholds.low', 15.0)
+        high_vix = config.get('strategy.vix_thresholds.high', 30.0)
         
-        if current_vix <= low_threshold:
-            return base_score * adjustments.get('low_boost', 1.15)
-        elif current_vix >= high_threshold:
-            return base_score * adjustments.get('high_reduce', 0.85)
+        if vix <= low_vix:
+            return base_score * 1.15  # 저변동성 시 부스트
+        elif vix >= high_vix:
+            return base_score * 0.85  # 고변동성 시 감소
         else:
-            return base_score * adjustments.get('normal', 1.0)
+            return base_score
     
-    def calculate_total_score(self, data: Dict, current_vix: float) -> Tuple[float, Dict]:
-        """종합 점수 계산"""
-        # 각 전략 점수 계산
-        buffett_score = self.calculate_buffett_score(data)
-        lynch_score = self.calculate_lynch_score(data)
-        momentum_score = self.calculate_momentum_score(data)
-        technical_score = self.calculate_technical_score(data)
+    def calculate_total_score(self, data: Dict, vix: float) -> Tuple[float, Dict]:
+        """통합 점수 계산"""
+        # 각 전략 점수
+        buffett = self.calculate_buffett_score(data)
+        lynch = self.calculate_lynch_score(data)
+        momentum = self.calculate_momentum_score(data)
+        technical = self.calculate_technical_score(data)
         
         # 가중치 적용
-        weights = config.get('legendary_strategy.strategy_weights', {})
-        buffett_weight = weights.get('buffett_value', 25.0) / 100
-        lynch_weight = weights.get('lynch_growth', 25.0) / 100
-        momentum_weight = weights.get('momentum', 25.0) / 100
-        technical_weight = weights.get('technical', 25.0) / 100
-        
-        # 가중 평균 계산
-        base_score = (
-            buffett_score * buffett_weight +
-            lynch_score * lynch_weight +
-            momentum_score * momentum_weight +
-            technical_score * technical_weight
-        )
+        weights = config.get('strategy.weights', {})
+        total = (
+            buffett * weights.get('buffett', 25) +
+            lynch * weights.get('lynch', 25) +
+            momentum * weights.get('momentum', 25) +
+            technical * weights.get('technical', 25)
+        ) / 100
         
         # VIX 조정
-        adjusted_score = self.calculate_vix_adjustment(base_score, current_vix)
-        vix_adjustment = adjusted_score - base_score
+        adjusted = self.calculate_vix_adjustment(total, vix)
         
         scores = {
-            'buffett_score': buffett_score,
-            'lynch_score': lynch_score,
-            'momentum_score': momentum_score,
-            'technical_score': technical_score,
-            'base_score': base_score,
-            'vix_adjustment': vix_adjustment,
-            'total_score': adjusted_score
+            'buffett': buffett,
+            'lynch': lynch,
+            'momentum': momentum,
+            'technical': technical,
+            'total': adjusted,
+            'vix_adjustment': adjusted - total
         }
         
-        return adjusted_score, scores
+        return adjusted, scores
 
 # ========================================================================================
-# 💰 전설적 분할매매 시스템
+# 💰 매매 시스템
 # ========================================================================================
 
-class LegendarySplitTradingSystem:
-    """🔥 전설적 분할매매 시스템 - 자동 손절익절"""
+class TradingSystem:
+    """통합 매매 시스템"""
     
-    def __init__(self):
-        self.split_config = config.get('split_trading', {})
-        self.risk_config = config.get('risk_management', {})
-        
-    def calculate_position_plan(self, symbol: str, price: float, confidence: float, 
-                              portfolio_value: float = 1000000) -> Dict:
-        """포지션 계획 수립"""
+    def calculate_position_size(self, price: float, confidence: float, 
+                              mode: str, portfolio_value: float = 1000000) -> Dict:
+        """포지션 크기 계산"""
         try:
-            # 포지션 크기 계산 (신뢰도 기반)
-            base_allocation = self.risk_config.get('portfolio_allocation', 80.0) / 100
-            target_stocks = config.get('legendary_strategy.target_stocks', 20)
-            base_weight = base_allocation / target_stocks
+            if mode == 'swing':
+                target_stocks = config.get('strategy.target_stocks.swing', 8)
+                base_weight = 100 / target_stocks  # 12.5%
+            else:  # classic
+                target_stocks = config.get('strategy.target_stocks.classic', 20)
+                base_weight = 80 / target_stocks  # 4%
             
-            # 신뢰도 승수 (0.5 ~ 1.5배)
-            confidence_multiplier = 0.5 + confidence
-            target_weight = base_weight * confidence_multiplier
+            # 신뢰도 조정
+            confidence_multiplier = 0.8 + (confidence * 0.4)
+            target_weight = (base_weight / 100) * confidence_multiplier
             
             # 최대 포지션 제한
-            max_position = self.risk_config.get('max_position', 8.0) / 100
-            target_weight = min(target_weight, max_position)
+            max_pos = config.get('risk.max_position', 8.0) / 100
+            target_weight = min(target_weight, max_pos)
             
-            # 총 투자금액 및 주식수
-            total_investment = portfolio_value * target_weight
-            total_shares = int(total_investment / price)
-            
-            # 3단계 분할 매수 계획
-            stage1_ratio = self.split_config.get('buy_stages', {}).get('stage1_ratio', 40.0) / 100
-            stage2_ratio = self.split_config.get('buy_stages', {}).get('stage2_ratio', 35.0) / 100
-            stage3_ratio = self.split_config.get('buy_stages', {}).get('stage3_ratio', 25.0) / 100
-            
-            stage1_shares = int(total_shares * stage1_ratio)
-            stage2_shares = int(total_shares * stage2_ratio)
-            stage3_shares = total_shares - stage1_shares - stage2_shares
-            
-            # 진입가 계획
-            triggers = self.split_config.get('triggers', {})
-            stage2_drop = triggers.get('stage2_drop', -5.0) / 100
-            stage3_drop = triggers.get('stage3_drop', -10.0) / 100
-            
-            entry_price_1 = price
-            entry_price_2 = price * (1 + stage2_drop)
-            entry_price_3 = price * (1 + stage3_drop)
-            
-            # 손절익절 계획
-            avg_entry_discount = 7.0 / 100  # 평균 진입가 할인율 추정
-            avg_entry = price * (1 - avg_entry_discount)
-            
-            stop_loss_pct = self.risk_config.get('stop_loss', 15.0) / 100
-            take_profit1_pct = self.risk_config.get('take_profit1', 20.0) / 100
-            take_profit2_pct = self.risk_config.get('take_profit2', 35.0) / 100
-            
-            stop_loss_price = avg_entry * (1 - stop_loss_pct)
-            take_profit1_price = avg_entry * (1 + take_profit1_pct)
-            take_profit2_price = avg_entry * (1 + take_profit2_pct)
+            # 투자금액 및 주식수
+            investment = portfolio_value * target_weight
+            shares = int(investment / price)
             
             return {
-                'total_shares': total_shares,
-                'stage1_shares': stage1_shares,
-                'stage2_shares': stage2_shares,
-                'stage3_shares': stage3_shares,
-                'entry_price_1': entry_price_1,
-                'entry_price_2': entry_price_2,
-                'entry_price_3': entry_price_3,
-                'stop_loss_price': stop_loss_price,
-                'take_profit1_price': take_profit1_price,
-                'take_profit2_price': take_profit2_price,
-                'target_weight': target_weight * 100,
-                'total_investment': total_investment
+                'tp1_price': price * (1 + tp_levels[0] / 100),
+                'tp2_price': price * (1 + tp_levels[1] / 100),
+                'tp1_ratio': 0.6,  # 60%
+                'tp2_ratio': 0.4   # 40%
             }
-            
-        except Exception as e:
-            logging.error(f"포지션 계획 수립 실패 {symbol}: {e}")
-            return {}
+    
+    def calculate_stop_loss(self, price: float, mode: str) -> float:
+        """손절가 계산"""
+        if mode == 'swing':
+            stop_pct = config.get('trading.swing.stop_loss', 8.0)
+        else:
+            stop_pct = config.get('risk.stop_loss.classic', 15.0)
+        
+        return price * (1 - stop_pct / 100)
 
 # ========================================================================================
-# 🏆 전설적 메인 전략 클래스
+# 🏦 IBKR 연동 시스템
+# ========================================================================================
+
+class IBKRTrader:
+    """IBKR 실거래 시스템"""
+    
+    def __init__(self):
+        self.ib = None
+        self.connected = False
+        self.positions = {}
+        self.daily_pnl = 0.0
+        self.daily_trades = 0
+        
+    async def connect(self) -> bool:
+        """IBKR 연결"""
+        try:
+            if not IBKR_AVAILABLE:
+                logging.error("❌ IBKR 모듈 없음")
+                return False
+            
+            host = config.get('ibkr.host', '127.0.0.1')
+            port = config.get('ibkr.port', 7497)
+            client_id = config.get('ibkr.client_id', 1)
+            
+            self.ib = IB()
+            await self.ib.connectAsync(host, port, clientId=client_id)
+            
+            if self.ib.isConnected():
+                self.connected = True
+                mode = '모의투자' if config.get('ibkr.paper_trading') else '실거래'
+                logging.info(f"✅ IBKR 연결 - {mode}")
+                await self._update_account()
+                return True
+            else:
+                logging.error("❌ IBKR 연결 실패")
+                return False
+                
+        except Exception as e:
+            logging.error(f"❌ IBKR 연결 오류: {e}")
+            return False
+    
+    async def disconnect(self):
+        """연결 해제"""
+        try:
+            if self.ib and self.connected:
+                self.ib.disconnect()
+                self.connected = False
+                logging.info("🔌 IBKR 연결 해제")
+        except Exception as e:
+            logging.error(f"연결 해제 오류: {e}")
+    
+    async def _update_account(self):
+        """계좌 정보 업데이트"""
+        try:
+            account_values = self.ib.accountValues()
+            portfolio = self.ib.portfolio()
+            
+            # 일일 P&L
+            for av in account_values:
+                if av.tag == 'DayPNL':
+                    self.daily_pnl = float(av.value)
+                    break
+            
+            # 포지션 정보
+            self.positions = {}
+            for pos in portfolio:
+                if pos.position != 0:
+                    self.positions[pos.contract.symbol] = {
+                        'quantity': pos.position,
+                        'avg_cost': pos.avgCost,
+                        'market_price': pos.marketPrice,
+                        'unrealized_pnl': pos.unrealizedPNL
+                    }
+            
+            logging.info(f"📊 계좌 업데이트 - PnL: ${self.daily_pnl:.2f}")
+            
+        except Exception as e:
+            logging.error(f"계좌 업데이트 실패: {e}")
+    
+    async def place_buy_order(self, symbol: str, quantity: int) -> Optional[str]:
+        """매수 주문"""
+        try:
+            if not self.connected or not self._safety_check():
+                return None
+            
+            contract = Stock(symbol, 'SMART', 'USD')
+            order_type = config.get('ibkr.order_type', 'MKT')
+            
+            if order_type == 'MKT':
+                order = MarketOrder('BUY', quantity)
+            else:
+                # 지정가 주문 로직 추가 가능
+                order = MarketOrder('BUY', quantity)
+            
+            trade = self.ib.placeOrder(contract, order)
+            order_id = str(trade.order.orderId)
+            
+            logging.info(f"📈 매수 주문: {symbol} {quantity}주 (ID: {order_id})")
+            self.daily_trades += 1
+            
+            return order_id
+            
+        except Exception as e:
+            logging.error(f"❌ 매수 실패 {symbol}: {e}")
+            return None
+    
+    async def place_sell_order(self, symbol: str, quantity: int, reason: str = '') -> Optional[str]:
+        """매도 주문"""
+        try:
+            if not self.connected:
+                return None
+            
+            # 보유 수량 확인
+            if symbol not in self.positions:
+                logging.warning(f"⚠️ {symbol} 포지션 없음")
+                return None
+            
+            current_qty = abs(self.positions[symbol]['quantity'])
+            if quantity > current_qty:
+                quantity = current_qty
+            
+            contract = Stock(symbol, 'SMART', 'USD')
+            order = MarketOrder('SELL', quantity)
+            
+            trade = self.ib.placeOrder(contract, order)
+            order_id = str(trade.order.orderId)
+            
+            logging.info(f"📉 매도 주문: {symbol} {quantity}주 - {reason}")
+            self.daily_trades += 1
+            
+            return order_id
+            
+        except Exception as e:
+            logging.error(f"❌ 매도 실패 {symbol}: {e}")
+            return None
+    
+    def _safety_check(self) -> bool:
+        """안전장치 체크"""
+        max_trades = config.get('ibkr.max_daily_trades', 20)
+        max_loss = config.get('risk.daily_loss_limit', 1.0) * 10000  # 1% = $10,000 손실
+        
+        if self.daily_trades >= max_trades:
+            logging.warning(f"⚠️ 일일 거래 한도 초과: {self.daily_trades}")
+            return False
+        
+        if self.daily_pnl < -max_loss:
+            logging.warning(f"⚠️ 일일 손실 한도 초과: ${self.daily_pnl:.2f}")
+            return False
+        
+        return True
+    
+    async def get_current_price(self, symbol: str) -> float:
+        """현재가 조회"""
+        try:
+            if not self.connected:
+                return 0.0
+            
+            contract = Stock(symbol, 'SMART', 'USD')
+            ticker = self.ib.reqMktData(contract, '', False, False)
+            await asyncio.sleep(0.5)
+            
+            price = ticker.marketPrice() or ticker.last or 0.0
+            self.ib.cancelMktData(contract)
+            
+            return price
+            
+        except Exception as e:
+            logging.error(f"현재가 조회 실패 {symbol}: {e}")
+            return 0.0
+    
+    async def get_portfolio_value(self) -> float:
+        """포트폴리오 가치"""
+        try:
+            await self._update_account()
+            return sum(pos['market_price'] * abs(pos['quantity']) 
+                      for pos in self.positions.values())
+        except:
+            return 0.0
+
+# ========================================================================================
+# 🤖 자동 손익절 관리자
+# ========================================================================================
+
+class StopTakeManager:
+    """자동 손익절 관리자"""
+    
+    def __init__(self, ibkr_trader: IBKRTrader):
+        self.ibkr = ibkr_trader
+        self.positions: Dict[str, Position] = {}
+        self.monitoring = False
+        self.db_path = config.get('performance.database_file', 'legendary_performance.db')
+        self._init_database()
+    
+    def _init_database(self):
+        """데이터베이스 초기화"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 거래 기록 테이블
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    price REAL NOT NULL,
+                    timestamp DATETIME NOT NULL,
+                    profit_loss REAL DEFAULT 0.0,
+                    profit_percent REAL DEFAULT 0.0,
+                    mode TEXT NOT NULL,
+                    reason TEXT DEFAULT ''
+                )
+            ''')
+            
+            # 포지션 테이블
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS positions (
+                    symbol TEXT PRIMARY KEY,
+                    quantity INTEGER NOT NULL,
+                    avg_cost REAL NOT NULL,
+                    entry_date DATETIME NOT NULL,
+                    mode TEXT NOT NULL,
+                    stage INTEGER DEFAULT 1,
+                    tp_executed TEXT DEFAULT '[]',
+                    highest_price REAL DEFAULT 0.0
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+            logging.info("📊 데이터베이스 초기화 완료")
+            
+        except Exception as e:
+            logging.error(f"DB 초기화 실패: {e}")
+    
+    def add_position(self, symbol: str, quantity: int, avg_cost: float, mode: str):
+        """포지션 추가"""
+        position = Position(
+            symbol=symbol,
+            quantity=quantity,
+            avg_cost=avg_cost,
+            entry_date=datetime.now(),
+            mode=mode,
+            highest_price=avg_cost
+        )
+        
+        self.positions[symbol] = position
+        self._save_position_to_db(position)
+        
+        logging.info(f"➕ 포지션 추가: {symbol} {quantity}주 @${avg_cost:.2f} ({mode})")
+    
+    def _save_position_to_db(self, position: Position):
+        """포지션 DB 저장"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            tp_json = json.dumps(position.tp_executed)
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO positions 
+                (symbol, quantity, avg_cost, entry_date, mode, stage, tp_executed, highest_price)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                position.symbol, position.quantity, position.avg_cost,
+                position.entry_date, position.mode, position.stage,
+                tp_json, position.highest_price
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logging.error(f"포지션 저장 실패: {e}")
+    
+    async def start_monitoring(self):
+        """모니터링 시작"""
+        self.monitoring = True
+        logging.info("🔍 자동 손익절 모니터링 시작!")
+        
+        while self.monitoring:
+            try:
+                await self._monitor_all_positions()
+                interval = config.get('automation.monitoring_interval', 15)
+                await asyncio.sleep(interval)
+                
+            except Exception as e:
+                logging.error(f"모니터링 오류: {e}")
+                await asyncio.sleep(30)
+    
+    def stop_monitoring(self):
+        """모니터링 중지"""
+        self.monitoring = False
+        logging.info("⏹️ 모니터링 중지")
+    
+    async def _monitor_all_positions(self):
+        """전체 포지션 모니터링"""
+        for symbol, position in list(self.positions.items()):
+            try:
+                await self._monitor_single_position(symbol, position)
+            except Exception as e:
+                logging.error(f"포지션 모니터링 실패 {symbol}: {e}")
+    
+    async def _monitor_single_position(self, symbol: str, position: Position):
+        """개별 포지션 모니터링"""
+        try:
+            current_price = await self.ibkr.get_current_price(symbol)
+            if current_price <= 0:
+                return
+            
+            # 최고가 업데이트
+            if current_price > position.highest_price:
+                position.highest_price = current_price
+            
+            profit_pct = position.profit_percent(current_price)
+            hold_days = (datetime.now() - position.entry_date).days
+            
+            # 모드별 손익절 체크
+            if position.mode == 'swing':
+                await self._check_swing_exit(symbol, position, current_price, profit_pct, hold_days)
+            else:  # classic
+                await self._check_classic_exit(symbol, position, current_price, profit_pct, hold_days)
+            
+            # 공통 손절 체크
+            await self._check_stop_loss(symbol, position, current_price, profit_pct)
+            
+        except Exception as e:
+            logging.error(f"개별 모니터링 실패 {symbol}: {e}")
+    
+    async def _check_swing_exit(self, symbol: str, position: Position, 
+                               current_price: float, profit_pct: float, hold_days: int):
+        """스윙 익절 체크"""
+        tp_levels = config.get('trading.swing.take_profit', [6.0, 12.0])
+        ratios = config.get('trading.swing.profit_ratios', [60.0, 40.0])
+        
+        # 2차 익절 (12%)
+        if profit_pct >= tp_levels[1] and not position.tp_executed[1]:
+            sell_qty = int(position.quantity * ratios[1] / 100)
+            if sell_qty > 0:
+                order_id = await self.ibkr.place_sell_order(symbol, sell_qty, 'SWING_TP2')
+                if order_id:
+                    position.tp_executed[1] = True
+                    position.quantity -= sell_qty
+                    
+                    await self._record_trade(symbol, 'SELL_SWING_TP2', sell_qty, 
+                                           current_price, profit_pct, position.mode)
+                    await self._send_notification(
+                        f"🎉 {symbol} 스윙 2차 익절! +{profit_pct:.1f}% "
+                        f"(${sell_qty * current_price:.0f})"
+                    )
+                    
+                    if position.quantity <= 0:
+                        del self.positions[symbol]
+                        await self._remove_position_from_db(symbol)
+        
+        # 1차 익절 (6%)
+        elif profit_pct >= tp_levels[0] and not position.tp_executed[0]:
+            sell_qty = int(position.quantity * ratios[0] / 100)
+            if sell_qty > 0:
+                order_id = await self.ibkr.place_sell_order(symbol, sell_qty, 'SWING_TP1')
+                if order_id:
+                    position.tp_executed[0] = True
+                    position.quantity -= sell_qty
+                    
+                    await self._record_trade(symbol, 'SELL_SWING_TP1', sell_qty,
+                                           current_price, profit_pct, position.mode)
+                    await self._send_notification(
+                        f"✅ {symbol} 스윙 1차 익절! +{profit_pct:.1f}% "
+                        f"(${sell_qty * current_price:.0f})"
+                    )
+    
+    async def _check_classic_exit(self, symbol: str, position: Position,
+                                 current_price: float, profit_pct: float, hold_days: int):
+        """클래식 익절 체크"""
+        tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
+        
+        # 2차 익절 (35%)
+        if profit_pct >= tp_levels[1] and not position.tp_executed[1]:
+            sell_qty = int(position.quantity * 0.4)  # 40%
+            if sell_qty > 0:
+                order_id = await self.ibkr.place_sell_order(symbol, sell_qty, 'CLASSIC_TP2')
+                if order_id:
+                    position.tp_executed[1] = True
+                    position.quantity -= sell_qty
+                    
+                    await self._record_trade(symbol, 'SELL_CLASSIC_TP2', sell_qty,
+                                           current_price, profit_pct, position.mode)
+                    await self._send_notification(
+                        f"💰 {symbol} 클래식 2차 익절! +{profit_pct:.1f}% "
+                        f"(${sell_qty * current_price:.0f})"
+                    )
+        
+        # 1차 익절 (20%)
+        elif profit_pct >= tp_levels[0] and not position.tp_executed[0]:
+            sell_qty = int(position.quantity * 0.6)  # 60%
+            if sell_qty > 0:
+                order_id = await self.ibkr.place_sell_order(symbol, sell_qty, 'CLASSIC_TP1')
+                if order_id:
+                    position.tp_executed[0] = True
+                    position.quantity -= sell_qty
+                    
+                    await self._record_trade(symbol, 'SELL_CLASSIC_TP1', sell_qty,
+                                           current_price, profit_pct, position.mode)
+                    await self._send_notification(
+                        f"✅ {symbol} 클래식 1차 익절! +{profit_pct:.1f}% "
+                        f"(${sell_qty * current_price:.0f})"
+                    )
+    
+    async def _check_stop_loss(self, symbol: str, position: Position,
+                              current_price: float, profit_pct: float):
+        """손절 체크"""
+        # 모드별 손절 기준
+        if position.mode == 'swing':
+            stop_pct = config.get('trading.swing.stop_loss', 8.0)
+        else:
+            stop_pct = config.get('risk.stop_loss.classic', 15.0)
+        
+        # 고정 손절
+        if profit_pct <= -stop_pct:
+            order_id = await self.ibkr.place_sell_order(symbol, position.quantity, 'STOP_LOSS')
+            if order_id:
+                await self._record_trade(symbol, 'SELL_STOP', position.quantity,
+                                       current_price, profit_pct, position.mode)
+                await self._send_notification(
+                    f"🛑 {symbol} {position.mode} 손절! {profit_pct:.1f}% "
+                    f"(${position.quantity * current_price:.0f})"
+                )
+                
+                del self.positions[symbol]
+                await self._remove_position_from_db(symbol)
+        
+        # 트레일링 스톱
+        elif (config.get('risk.trailing_stop', True) and 
+              position.highest_price > position.avg_cost * 1.1):
+            trailing_distance = 0.05  # 5%
+            trailing_stop = position.highest_price * (1 - trailing_distance)
+            
+            if current_price <= trailing_stop:
+                order_id = await self.ibkr.place_sell_order(symbol, position.quantity, 'TRAILING_STOP')
+                if order_id:
+                    await self._record_trade(symbol, 'SELL_TRAILING', position.quantity,
+                                           current_price, profit_pct, position.mode)
+                    await self._send_notification(
+                        f"📉 {symbol} 트레일링 스톱! {profit_pct:.1f}% "
+                        f"(최고: ${position.highest_price:.2f})"
+                    )
+                    
+                    del self.positions[symbol]
+                    await self._remove_position_from_db(symbol)
+    
+    async def _record_trade(self, symbol: str, action: str, quantity: int,
+                           price: float, profit_pct: float, mode: str):
+        """거래 기록"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            profit_loss = 0.0
+            if 'SELL' in action and symbol in self.positions:
+                position = self.positions[symbol]
+                profit_loss = (price - position.avg_cost) * quantity
+            
+            cursor.execute('''
+                INSERT INTO trades 
+                (symbol, action, quantity, price, timestamp, profit_loss, profit_percent, mode, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (symbol, action, quantity, price, datetime.now(), 
+                  profit_loss, profit_pct, mode, action))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logging.error(f"거래 기록 실패: {e}")
+    
+    async def _remove_position_from_db(self, symbol: str):
+        """DB에서 포지션 제거"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM positions WHERE symbol = ?', (symbol,))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logging.error(f"포지션 제거 실패: {e}")
+    
+    async def _send_notification(self, message: str):
+        """알림 전송"""
+        try:
+            # 텔레그램 알림
+            if config.get('notifications.telegram.enabled', False):
+                await self._send_telegram(message)
+            
+            # 로그 출력
+            logging.info(f"📢 {message}")
+            
+        except Exception as e:
+            logging.error(f"알림 전송 실패: {e}")
+    
+    async def _send_telegram(self, message: str):
+        """텔레그램 메시지 전송"""
+        try:
+            token = config.get('notifications.telegram.bot_token', '')
+            chat_id = config.get('notifications.telegram.chat_id', '')
+            
+            if not token or not chat_id:
+                return
+            
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            data = {
+                'chat_id': chat_id,
+                'text': f"🏆 전설적퀸트\n{message}",
+                'parse_mode': 'Markdown'
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=data) as response:
+                    if response.status == 200:
+                        logging.debug("텔레그램 알림 전송 완료")
+                        
+        except Exception as e:
+            logging.error(f"텔레그램 전송 오류: {e}")
+
+# ========================================================================================
+# 🏆 메인 전략 시스템
 # ========================================================================================
 
 class LegendaryQuantStrategy:
-    """🔥 전설적 퀸트 전략 마스터시스템 - 혼자 보수유지 가능"""
+    """🔥 전설적 퀸트 통합 전략 시스템"""
     
     def __init__(self):
-        self.enabled = config.get('legendary_strategy.enabled', True)
-        self.target_stocks = config.get('legendary_strategy.target_stocks', 20)
-        self.confidence_threshold = config.get('legendary_strategy.confidence_threshold', 0.70)
+        self.enabled = config.get('strategy.enabled', True)
+        self.current_mode = config.get('strategy.mode', 'swing')
         
-        # 핵심 엔진들
-        self.stock_selector = LegendaryStockSelector()
-        self.strategy_analyzer = LegendaryStrategyAnalyzer()
-        self.split_trading = LegendarySplitTradingSystem()
+        # 핵심 컴포넌트들
+        self.selector = StockSelector()
+        self.analyzer = StrategyAnalyzer()
+        self.trading = TradingSystem()
+        self.ibkr = IBKRTrader()
+        self.stop_take = StopTakeManager(self.ibkr)
         
-        # 캐싱 시스템
+        # 캐싱
         self.selected_stocks = []
-        self.last_selection_time = None
-        self.cache_hours = config.get('legendary_strategy.selection_cache_hours', 24)
+        self.last_selection = None
+        self.cache_hours = config.get('selection.refresh_hours', 24)
+        
+        # 성과 추적
+        self.monthly_return = 0.0
+        self.target_min = config.get('strategy.monthly_target.min', 5.0)
+        self.target_max = config.get('strategy.monthly_target.max', 7.0)
         
         if self.enabled:
-            logging.info("🏆 전설적 퀸트전략 마스터시스템 가동!")
-            logging.info(f"🎯 목표종목: {self.target_stocks}개")
-            logging.info(f"🔥 신뢰도 임계값: {self.confidence_threshold}")
+            logging.info("🏆 전설적 퀸트 전략 시스템 가동!")
+            logging.info(f"🎯 현재 모드: {self.current_mode.upper()}")
     
     def _is_cache_valid(self) -> bool:
         """캐시 유효성 확인"""
-        if not self.last_selection_time or not self.selected_stocks:
+        if not self.last_selection or not self.selected_stocks:
             return False
-        time_diff = datetime.now() - self.last_selection_time
-        return time_diff.total_seconds() < (self.cache_hours * 3600)
+        hours_passed = (datetime.now() - self.last_selection).seconds / 3600
+        return hours_passed < self.cache_hours
     
-    async def auto_select_legendary_stocks(self) -> List[str]:
-        """🔥 전설적 종목 자동선별"""
+    async def auto_select_stocks(self) -> List[str]:
+        """자동 종목 선별"""
         if not self.enabled:
-            logging.warning("전략이 비활성화되어 있습니다")
             return []
         
         try:
             # 캐시 확인
             if self._is_cache_valid():
                 logging.info("📋 캐시된 선별 결과 사용")
-                return [stock['symbol'] for stock in self.selected_stocks]
+                return [s['symbol'] for s in self.selected_stocks]
             
-            logging.info("🚀 전설적 종목 자동선별 시작!")
+            logging.info("🚀 종목 자동선별 시작!")
             start_time = time.time()
             
-            # 1단계: 투자 유니버스 생성
-            universe = await self.stock_selector.create_investment_universe()
+            # 1. 투자 유니버스 생성
+            universe = await self.selector.create_universe()
             if not universe:
-                logging.error("투자 유니버스 생성 실패")
                 return self._get_fallback_stocks()
             
-            # 2단계: VIX 조회
-            current_vix = await self.stock_selector.get_current_vix()
+            # 2. VIX 조회
+            current_vix = await self.selector.get_current_vix()
             
-            # 3단계: 종목별 점수 계산 (병렬처리)
-            scored_stocks = await self._parallel_stock_analysis(universe, current_vix)
+            # 3. 병렬 분석
+            scored_stocks = await self._parallel_analysis(universe, current_vix)
             
             if not scored_stocks:
-                logging.error("종목 분석 실패")
                 return self._get_fallback_stocks()
             
-            # 4단계: 상위 종목 선별 (섹터 다양성 고려)
-            final_selection = self._select_diversified_stocks(scored_stocks)
+            # 4. 상위 종목 선별
+            target_count = self._get_target_count()
+            final_selection = self._select_diversified_stocks(scored_stocks, target_count)
             
-            # 5단계: 결과 저장
+            # 5. 결과 저장
             self.selected_stocks = final_selection
-            self.last_selection_time = datetime.now()
+            self.last_selection = datetime.now()
             
-            selected_symbols = [stock['symbol'] for stock in final_selection]
-            elapsed_time = time.time() - start_time
+            selected_symbols = [s['symbol'] for s in final_selection]
+            elapsed = time.time() - start_time
             
-            logging.info(f"🏆 전설적 자동선별 완료! {len(selected_symbols)}개 종목 ({elapsed_time:.1f}초)")
-            logging.info(f"📊 평균 점수: {np.mean([s['total_score'] for s in final_selection]):.3f}")
+            logging.info(f"🏆 선별 완료! {len(selected_symbols)}개 종목 ({elapsed:.1f}초)")
             
             return selected_symbols
             
@@ -910,15 +1290,15 @@ class LegendaryQuantStrategy:
             logging.error(f"자동선별 실패: {e}")
             return self._get_fallback_stocks()
     
-    async def _parallel_stock_analysis(self, universe: List[str], current_vix: float) -> List[Dict]:
+    async def _parallel_analysis(self, universe: List[str], vix: float) -> List[Dict]:
         """병렬 종목 분석"""
         scored_stocks = []
-        max_workers = config.get('data_sources.max_workers', 15)
+        max_workers = min(15, len(universe))
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = []
             for symbol in universe:
-                future = executor.submit(self._analyze_single_stock, symbol, current_vix)
+                future = executor.submit(self._analyze_stock, symbol, vix)
                 futures.append(future)
             
             for i, future in enumerate(futures, 1):
@@ -931,33 +1311,37 @@ class LegendaryQuantStrategy:
                         logging.info(f"📊 분석 진행: {i}/{len(universe)}")
                         
                 except Exception as e:
-                    logging.warning(f"종목 분석 실패: {e}")
                     continue
         
         return scored_stocks
     
-    def _analyze_single_stock(self, symbol: str, current_vix: float) -> Optional[Dict]:
+    def _analyze_stock(self, symbol: str, vix: float) -> Optional[Dict]:
         """단일 종목 분석"""
         try:
             # 데이터 수집
-            data = asyncio.run(self.stock_selector.get_stock_data(symbol))
+            data = asyncio.run(self.selector.get_stock_data(symbol))
             if not data:
                 return None
             
             # 기본 필터링
-            min_market_cap = config.get('selection_criteria.min_market_cap', 5_000_000_000)
-            min_volume = config.get('selection_criteria.min_avg_volume', 1_000_000)
+            min_cap = config.get('selection.min_market_cap', 5_000_000_000)
+            min_vol = config.get('selection.min_volume', 1_000_000)
             
-            if data.get('market_cap', 0) < min_market_cap or data.get('avg_volume', 0) < min_volume:
+            if data.get('market_cap', 0) < min_cap or data.get('avg_volume', 0) < min_vol:
                 return None
             
-            # 전략 점수 계산
-            total_score, scores = self.strategy_analyzer.calculate_total_score(data, current_vix)
+            # 통합 점수 계산
+            total_score, scores = self.analyzer.calculate_total_score(data, vix)
+            
+            # 모드별 필터링
+            if not self._mode_filter(data, total_score):
+                return None
             
             result = data.copy()
             result.update(scores)
             result['symbol'] = symbol
-            result['current_vix'] = current_vix
+            result['vix'] = vix
+            result['mode'] = self.current_mode
             
             return result
             
@@ -965,19 +1349,39 @@ class LegendaryQuantStrategy:
             logging.error(f"종목 분석 실패 {symbol}: {e}")
             return None
     
-    def _select_diversified_stocks(self, scored_stocks: List[Dict]) -> List[Dict]:
-        """섹터 다양성을 고려한 종목 선별"""
-        # 점수순 정렬
-        scored_stocks.sort(key=lambda x: x['total_score'], reverse=True)
+    def _mode_filter(self, data: Dict, score: float) -> bool:
+        """모드별 필터링"""
+        try:
+            if self.current_mode == 'classic':
+                return (score >= 0.60 and 
+                        data.get('volatility', 50) <= 40 and
+                        data.get('beta', 2.0) <= 1.8)
+            elif self.current_mode == 'swing':
+                return (score >= 0.65 and 
+                        15 <= data.get('volatility', 25) <= 35 and
+                        0.8 <= data.get('beta', 1.0) <= 1.5)
+            else:  # hybrid
+                return score >= 0.62
+        except:
+            return True
+    
+    def _get_target_count(self) -> int:
+        """목표 종목수"""
+        if self.current_mode == 'swing':
+            return config.get('strategy.target_stocks.swing', 8)
+        else:
+            return config.get('strategy.target_stocks.classic', 20)
+    
+    def _select_diversified_stocks(self, scored_stocks: List[Dict], target_count: int) -> List[Dict]:
+        """다양성 고려 선별"""
+        scored_stocks.sort(key=lambda x: x['total'], reverse=True)
         
         final_selection = []
         sector_counts = {}
-        
-        diversity_config = config.get('selection_criteria.sector_diversity', {})
-        max_per_sector = diversity_config.get('max_per_sector', 4)
+        max_per_sector = 2 if self.current_mode == 'swing' else 4
         
         for stock in scored_stocks:
-            if len(final_selection) >= self.target_stocks:
+            if len(final_selection) >= target_count:
                 break
             
             sector = stock.get('sector', 'Unknown')
@@ -986,29 +1390,44 @@ class LegendaryQuantStrategy:
                 final_selection.append(stock)
                 sector_counts[sector] = sector_counts.get(sector, 0) + 1
         
+        # 부족하면 상위 점수로 채움
+        remaining = target_count - len(final_selection)
+        if remaining > 0:
+            for stock in scored_stocks:
+                if remaining <= 0:
+                    break
+                if stock not in final_selection:
+                    final_selection.append(stock)
+                    remaining -= 1
+        
         return final_selection
     
     def _get_fallback_stocks(self) -> List[str]:
-        """백업 종목 리스트"""
-        return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'JNJ', 'UNH', 'PFE',
-                'JPM', 'BAC', 'PG', 'KO', 'HD', 'WMT', 'V', 'MA', 'AVGO', 'ORCL']
+        """백업 종목"""
+        if self.current_mode == 'swing':
+            return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'NFLX']
+        else:
+            return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK-B',
+                    'UNH', 'JNJ', 'V', 'PG', 'JPM', 'HD', 'MA', 'PFE', 'ABBV', 'BAC']
     
-    async def analyze_stock_signal(self, symbol: str) -> LegendaryStockSignal:
-        """개별 종목 시그널 생성"""
+    async def analyze_stock_signal(self, symbol: str) -> StockSignal:
+        """개별 종목 시그널 분석"""
         try:
             # 데이터 수집
-            data = await self.stock_selector.get_stock_data(symbol)
+            data = await self.selector.get_stock_data(symbol)
             if not data:
                 raise ValueError(f"데이터 수집 실패: {symbol}")
             
             # VIX 조회
-            current_vix = await self.stock_selector.get_current_vix()
+            vix = await self.selector.get_current_vix()
             
-            # 전략 분석
-            total_score, scores = self.strategy_analyzer.calculate_total_score(data, current_vix)
+            # 점수 계산
+            total_score, scores = self.analyzer.calculate_total_score(data, vix)
             
             # 액션 결정
-            if total_score >= self.confidence_threshold:
+            confidence_threshold = 0.70 if self.current_mode == 'classic' else 0.65
+            
+            if total_score >= confidence_threshold:
                 action = 'buy'
                 confidence = min(total_score, 0.95)
             elif total_score <= 0.30:
@@ -1018,426 +1437,513 @@ class LegendaryQuantStrategy:
                 action = 'hold'
                 confidence = 0.50
             
-            # 분할매매 계획
-            split_plan = self.split_trading.calculate_position_plan(symbol, data['price'], confidence)
-            
             # 목표가 계산
-            max_expected_return = 0.35  # 최대 35% 기대수익
-            target_price = data['price'] * (1 + confidence * max_expected_return)
+            max_return = 0.25 if self.current_mode == 'swing' else 0.35
+            target_price = data['price'] * (1 + confidence * max_return)
             
-            # 전략별 설명
-            reasoning_parts = [
-                f"버핏:{scores['buffett_score']:.2f}",
-                f"린치:{scores['lynch_score']:.2f}",
-                f"모멘텀:{scores['momentum_score']:.2f}",
-                f"기술:{scores['technical_score']:.2f}",
-                f"VIX조정:{scores['vix_adjustment']:+.2f}"
-            ]
-            reasoning = " | ".join(reasoning_parts)
+            # 손절가 계산
+            stop_loss = self.trading.calculate_stop_loss(data['price'], self.current_mode)
             
-            return LegendaryStockSignal(
+            # 근거 생성
+            reasoning = (f"버핏:{scores['buffett']:.2f} 린치:{scores['lynch']:.2f} "
+                        f"모멘텀:{scores['momentum']:.2f} 기술:{scores['technical']:.2f} "
+                        f"VIX:{scores['vix_adjustment']:+.2f} 모드:{self.current_mode}")
+            
+            return StockSignal(
                 symbol=symbol,
                 action=action,
                 confidence=confidence,
                 price=data['price'],
-                
-                # 전략 점수
-                buffett_score=scores['buffett_score'],
-                lynch_score=scores['lynch_score'],
-                momentum_score=scores['momentum_score'],
-                technical_score=scores['technical_score'],
-                total_score=total_score,
-                
-                # 재무지표
-                market_cap=data.get('market_cap', 0),
-                pe_ratio=data.get('pe_ratio', 0),
-                pbr=data.get('pbr', 0),
-                peg=data.get('peg', 0),
-                roe=data.get('roe', 0),
-                sector=data.get('sector', 'Unknown'),
-                
-                # 모멘텀
-                momentum_3m=data.get('momentum_3m', 0),
-                momentum_6m=data.get('momentum_6m', 0),
-                momentum_12m=data.get('momentum_12m', 0),
-                
-                # 기술적지표
-                rsi=data.get('rsi', 50),
-                trend=data.get('trend', 'sideways'),
-                volume_spike=data.get('volume_spike', 1),
-                
-                # 분할매매
-                total_shares=split_plan.get('total_shares', 0),
-                stage1_shares=split_plan.get('stage1_shares', 0),
-                stage2_shares=split_plan.get('stage2_shares', 0),
-                stage3_shares=split_plan.get('stage3_shares', 0),
-                entry_price_1=split_plan.get('entry_price_1', data['price']),
-                entry_price_2=split_plan.get('entry_price_2', data['price']),
-                entry_price_3=split_plan.get('entry_price_3', data['price']),
-                stop_loss_price=split_plan.get('stop_loss_price', data['price'] * 0.85),
-                take_profit1_price=split_plan.get('take_profit1_price', data['price'] * 1.20),
-                take_profit2_price=split_plan.get('take_profit2_price', data['price'] * 1.35),
-                
-                # 메타정보
+                mode=self.current_mode,
+                scores=scores,
+                financials={
+                    'market_cap': data.get('market_cap', 0),
+                    'pe_ratio': data.get('pe_ratio', 0),
+                    'pbr': data.get('pbr', 0),
+                    'peg': data.get('peg', 0),
+                    'roe': data.get('roe', 0)
+                },
                 target_price=target_price,
-                selection_score=total_score,
-                index_membership=['AUTO_SELECTED'],
-                vix_adjustment=scores['vix_adjustment'],
+                stop_loss=stop_loss,
                 reasoning=reasoning,
                 timestamp=datetime.now()
             )
             
         except Exception as e:
-            logging.error(f"시그널 생성 실패 {symbol}: {e}")
+            logging.error(f"시그널 분석 실패 {symbol}: {e}")
             return self._create_empty_signal(symbol, str(e))
     
-    def _create_empty_signal(self, symbol: str, error_msg: str) -> LegendaryStockSignal:
+    def _create_empty_signal(self, symbol: str, error: str) -> StockSignal:
         """빈 시그널 생성"""
-        return LegendaryStockSignal(
+        return StockSignal(
             symbol=symbol, action='hold', confidence=0.0, price=0.0,
-            buffett_score=0.0, lynch_score=0.0, momentum_score=0.0, technical_score=0.0, total_score=0.0,
-            market_cap=0, pe_ratio=0.0, pbr=0.0, peg=0.0, roe=0.0, sector='Unknown',
-            momentum_3m=0.0, momentum_6m=0.0, momentum_12m=0.0, rsi=50.0, trend='sideways', volume_spike=1.0,
-            total_shares=0, stage1_shares=0, stage2_shares=0, stage3_shares=0,
-            entry_price_1=0.0, entry_price_2=0.0, entry_price_3=0.0,
-            stop_loss_price=0.0, take_profit1_price=0.0, take_profit2_price=0.0,
-            target_price=0.0, selection_score=0.0, index_membership=['ERROR'],
-            vix_adjustment=0.0, reasoning=f"오류: {error_msg}", timestamp=datetime.now()
+            mode=self.current_mode, scores={}, financials={},
+            target_price=0.0, stop_loss=0.0, reasoning=f"오류: {error}",
+            timestamp=datetime.now()
         )
     
-    async def scan_all_legendary_stocks(self) -> List[LegendaryStockSignal]:
-        """전체 전설적 종목 스캔"""
+    async def scan_all_stocks(self) -> List[StockSignal]:
+        """전체 종목 스캔"""
         if not self.enabled:
             return []
         
-        logging.info("🔍 전설적 전체 종목 스캔 시작!")
+        logging.info("🔍 전체 종목 스캔 시작!")
         
         try:
-            # 자동선별
-            selected_symbols = await self.auto_select_legendary_stocks()
-            if not selected_symbols:
+            # 종목 선별
+            selected = await self.auto_select_stocks()
+            if not selected:
                 return []
             
             # 각 종목 분석
-            all_signals = []
-            for i, symbol in enumerate(selected_symbols, 1):
+            signals = []
+            for i, symbol in enumerate(selected, 1):
                 try:
                     signal = await self.analyze_stock_signal(symbol)
-                    all_signals.append(signal)
+                    signals.append(signal)
                     
-                    # 진행상황 로그
-                    action_emoji = "🟢" if signal.action == "buy" else "🔴" if signal.action == "sell" else "⚪"
-                    logging.info(f"{action_emoji} {symbol}: {signal.action} "
-                               f"신뢰도:{signal.confidence:.2f} 점수:{signal.total_score:.3f}")
+                    # 진행상황
+                    emoji = "🟢" if signal.action == "buy" else "🔴" if signal.action == "sell" else "⚪"
+                    logging.info(f"{emoji} {symbol}: {signal.action} 신뢰도:{signal.confidence:.2f}")
                     
-                    await asyncio.sleep(config.get('data_sources.rate_limit_delay', 0.3))
+                    await asyncio.sleep(0.3)
                     
                 except Exception as e:
                     logging.error(f"❌ {symbol} 분석 실패: {e}")
             
             # 결과 요약
-            buy_count = len([s for s in all_signals if s.action == 'buy'])
-            sell_count = len([s for s in all_signals if s.action == 'sell'])
-            hold_count = len([s for s in all_signals if s.action == 'hold'])
+            buy_count = len([s for s in signals if s.action == 'buy'])
+            sell_count = len([s for s in signals if s.action == 'sell'])
+            hold_count = len([s for s in signals if s.action == 'hold'])
             
-            logging.info(f"🏆 전설적 스캔 완료! 매수:{buy_count}, 매도:{sell_count}, 보유:{hold_count}")
+            logging.info(f"🏆 스캔 완료! 매수:{buy_count}, 매도:{sell_count}, 보유:{hold_count}")
             
-            return all_signals
+            return signals
             
         except Exception as e:
             logging.error(f"전체 스캔 실패: {e}")
             return []
     
-    async def generate_legendary_report(self, signals: List[LegendaryStockSignal]) -> Dict:
-        """전설적 포트폴리오 리포트 생성"""
-        if not signals:
-            return {"error": "분석된 종목이 없습니다"}
+    async def initialize_trading(self) -> bool:
+        """거래 시스템 초기화"""
+        try:
+            logging.info("🚀 거래 시스템 초기화...")
+            
+            # IBKR 연결
+            if not await self.ibkr.connect():
+                logging.error("❌ IBKR 연결 실패")
+                return False
+            
+            # 기존 포지션 로드
+            await self._load_existing_positions()
+            
+            logging.info("✅ 거래 시스템 초기화 완료!")
+            return True
+            
+        except Exception as e:
+            logging.error(f"초기화 실패: {e}")
+            return False
+    
+    async def _load_existing_positions(self):
+        """기존 포지션 로드"""
+        try:
+            conn = sqlite3.connect(self.stop_take.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT * FROM positions')
+            rows = cursor.fetchall()
+            
+            for row in rows:
+                tp_executed = json.loads(row[6]) if row[6] else [False, False, False]
+                
+                position = Position(
+                    symbol=row[0],
+                    quantity=row[1],
+                    avg_cost=row[2],
+                    entry_date=datetime.fromisoformat(row[3]),
+                    mode=row[4],
+                    stage=row[5],
+                    tp_executed=tp_executed,
+                    highest_price=row[7]
+                )
+                
+                self.stop_take.positions[position.symbol] = position
+            
+            conn.close()
+            logging.info(f"📂 기존 포지션 로드: {len(self.stop_take.positions)}개")
+            
+        except Exception as e:
+            logging.error(f"포지션 로드 실패: {e}")
+    
+    async def start_auto_trading(self):
+        """자동거래 시작"""
+        try:
+            logging.info(f"🎯 자동거래 시작! (모드: {self.current_mode.upper()})")
+            
+            # 손익절 모니터링 시작
+            monitor_task = asyncio.create_task(self.stop_take.start_monitoring())
+            
+            # 스케줄 실행
+            schedule_task = asyncio.create_task(self._run_schedule())
+            
+            # 병렬 실행
+            await asyncio.gather(monitor_task, schedule_task)
+            
+        except Exception as e:
+            logging.error(f"자동거래 실행 실패: {e}")
+        finally:
+            await self.shutdown()
+    
+    async def _run_schedule(self):
+        """스케줄 실행"""
+        # 스케줄 설정
+        if self.current_mode == 'swing':
+            schedule.every().tuesday.at("10:30").do(self._execute_swing_entry)
+            schedule.every().thursday.at("10:30").do(self._execute_swing_entry)
+        else:
+            schedule.every().day.at("10:00").do(self._execute_classic_entry)
         
-        # 기본 통계
-        total_count = len(signals)
-        buy_signals = [s for s in signals if s.action == 'buy']
-        sell_signals = [s for s in signals if s.action == 'sell']
-        hold_signals = [s for s in signals if s.action == 'hold']
+        schedule.every().day.at("09:00").do(self._daily_check)
+        schedule.every().day.at("16:00").do(self._performance_report)
         
-        # 평균 점수
-        avg_scores = {
-            'buffett': np.mean([s.buffett_score for s in signals]),
-            'lynch': np.mean([s.lynch_score for s in signals]),
-            'momentum': np.mean([s.momentum_score for s in signals]),
-            'technical': np.mean([s.technical_score for s in signals]),
-            'total': np.mean([s.total_score for s in signals])
-        }
+        while True:
+            try:
+                schedule.run_pending()
+                await asyncio.sleep(60)
+            except Exception as e:
+                logging.error(f"스케줄 오류: {e}")
+                await asyncio.sleep(60)
+    
+    def _execute_swing_entry(self):
+        """스윙 진입 실행"""
+        asyncio.create_task(self._swing_entry())
+    
+    def _execute_classic_entry(self):
+        """클래식 진입 실행"""
+        asyncio.create_task(self._classic_entry())
+    
+    def _daily_check(self):
+        """일일 체크"""
+        asyncio.create_task(self._perform_daily_check())
+    
+    def _performance_report(self):
+        """성과 리포트"""
+        asyncio.create_task(self._generate_report())
+    
+    async def _swing_entry(self):
+        """스윙 진입"""
+        try:
+            if not self._is_trading_day():
+                return
+            
+            day = datetime.now().strftime("%A")
+            logging.info(f"📅 {day} 스윙 진입...")
+            
+            # 종목 선별
+            target_count = 4 if day == 'Tuesday' else 2
+            selected = await self.auto_select_stocks()
+            
+            # 기존 포지션 제외
+            existing = list(self.stop_take.positions.keys())
+            new_stocks = [s for s in selected if s not in existing][:target_count]
+            
+            # 포지션 크기 계산
+            portfolio_value = await self.ibkr.get_portfolio_value() or 1000000
+            per_stock = portfolio_value * 0.125  # 12.5%
+            
+            for symbol in new_stocks:
+                await self._enter_position(symbol, per_stock, 'swing', day)
+            
+        except Exception as e:
+            logging.error(f"스윙 진입 실패: {e}")
+    
+    async def _classic_entry(self):
+        """클래식 진입"""
+        try:
+            if not self._is_trading_day():
+                return
+            
+            logging.info("📅 클래식 진입 체크...")
+            
+            # 포지션 한도 체크
+            current_count = len(self.stop_take.positions)
+            max_positions = config.get('strategy.target_stocks.classic', 20)
+            
+            if current_count >= max_positions:
+                return
+            
+            # 종목 선별
+            selected = await self.auto_select_stocks()
+            existing = list(self.stop_take.positions.keys())
+            new_stocks = [s for s in selected if s not in existing][:3]
+            
+            # 포지션 크기 계산
+            portfolio_value = await self.ibkr.get_portfolio_value() or 1000000
+            per_stock = portfolio_value * 0.04  # 4%
+            
+            for symbol in new_stocks:
+                await self._enter_position(symbol, per_stock, 'classic', 'Daily')
+            
+        except Exception as e:
+            logging.error(f"클래식 진입 실패: {e}")
+    
+    async def _enter_position(self, symbol: str, investment: float, mode: str, context: str):
+        """포지션 진입"""
+        try:
+            # 현재가 조회
+            current_price = await self.ibkr.get_current_price(symbol)
+            if current_price <= 0:
+                logging.warning(f"⚠️ {symbol} 현재가 조회 실패")
+                return
+            
+            # 수량 계산
+            quantity = int(investment / current_price)
+            if quantity < 1:
+                logging.warning(f"⚠️ {symbol} 매수 수량 부족")
+                return
+            
+            # 매수 주문
+            order_id = await self.ibkr.place_buy_order(symbol, quantity)
+            if order_id:
+                # 포지션 추가
+                self.stop_take.add_position(symbol, quantity, current_price, mode)
+                
+                # 알림
+                investment_value = quantity * current_price
+                await self.stop_take._send_notification(
+                    f"🚀 {symbol} {mode.upper()} 진입!\n"
+                    f"📅 {context}\n"
+                    f"💰 ${investment_value:.0f} ({quantity}주 @${current_price:.2f})"
+                )
+                
+                logging.info(f"✅ {symbol} {mode} 포지션 진입: {quantity}주 @${current_price:.2f}")
+            
+        except Exception as e:
+            logging.error(f"포지션 진입 실패 {symbol}: {e}")
+    
+    def _is_trading_day(self) -> bool:
+        """거래일 확인"""
+        today = datetime.now()
         
-        # 상위 매수 추천 (신뢰도순)
-        top_buys = sorted(buy_signals, key=lambda x: x.confidence, reverse=True)[:5]
+        # 주말 제외
+        if today.weekday() >= 5:
+            return False
         
-        # 섹터 분포
-        sector_dist = {}
-        for signal in signals:
-            sector_dist[signal.sector] = sector_dist.get(signal.sector, 0) + 1
+        # 공휴일 체크 (간단한 버전)
+        holidays = [
+            datetime(today.year, 1, 1),   # 신정
+            datetime(today.year, 7, 4),   # 독립기념일
+            datetime(today.year, 12, 25), # 크리스마스
+        ]
         
-        # 투자금액 계산
-        total_investment = sum([
-            s.stage1_shares * s.entry_price_1 + 
-            s.stage2_shares * s.entry_price_2 + 
-            s.stage3_shares * s.entry_price_3 
-            for s in signals if s.total_shares > 0
-        ])
+        if any(today.date() == holiday.date() for holiday in holidays):
+            return False
         
-        # VIX 상태
-        current_vix = signals[0].vix_adjustment if signals else 20.0
-        vix_status = ('HIGH' if current_vix > 30 else 'LOW' if current_vix < 15 else 'MEDIUM')
-        
-        report = {
-            'summary': {
-                'total_stocks': total_count,
-                'buy_signals': len(buy_signals),
-                'sell_signals': len(sell_signals),
-                'hold_signals': len(hold_signals),
-                'total_investment': total_investment,
-                'current_vix_status': vix_status,
-                'generation_time': datetime.now().isoformat(),
-                'strategy_version': '6.0_LEGENDARY'
-            },
-            'average_scores': avg_scores,
-            'top_recommendations': [
-                {
-                    'symbol': stock.symbol,
-                    'sector': stock.sector,
-                    'action': stock.action,
-                    'confidence': stock.confidence,
-                    'total_score': stock.total_score,
-                    'price': stock.price,
-                    'target_price': stock.target_price,
-                    'total_investment': (stock.stage1_shares * stock.entry_price_1 + 
-                                       stock.stage2_shares * stock.entry_price_2 + 
-                                       stock.stage3_shares * stock.entry_price_3),
-                    'reasoning': stock.reasoning[:100] + "..." if len(stock.reasoning) > 100 else stock.reasoning
-                }
-                for stock in top_buys
-            ],
-            'sector_distribution': sector_dist,
-            'risk_metrics': {
-                'diversification_score': len(sector_dist) / total_count if total_count > 0 else 0,
-                'avg_confidence': np.mean([s.confidence for s in buy_signals]) if buy_signals else 0,
-                'portfolio_allocation': config.get('risk_management.portfolio_allocation', 80.0),
-                'max_single_position': config.get('risk_management.max_position', 8.0)
-            },
-            'configuration_info': {
-                'enabled': self.enabled,
-                'target_stocks': self.target_stocks,
-                'confidence_threshold': self.confidence_threshold,
-                'cache_hours': self.cache_hours,
-                'last_selection': self.last_selection_time.isoformat() if self.last_selection_time else None,
-                'strategy_weights': config.get('legendary_strategy.strategy_weights', {}),
-                'risk_settings': config.get('risk_management', {})
-            }
-        }
-        
-        return report
+        return True
+    
+    async def _perform_daily_check(self):
+        """일일 체크"""
+        try:
+            if not self._is_trading_day():
+                return
+            
+            logging.info("📊 일일 체크...")
+            
+            # 계좌 정보 업데이트
+            await self.ibkr._update_account()
+            
+            # 월 수익률 계산
+            await self._calculate_monthly_return()
+            
+            # 리스크 체크
+            await self._check_risk_limits()
+            
+        except Exception as e:
+            logging.error(f"일일 체크 실패: {e}")
+    
+    async def _calculate_monthly_return(self):
+        """월 수익률 계산"""
+        try:
+            conn = sqlite3.connect(self.stop_take.db_path)
+            cursor = conn.cursor()
+            
+            current_month = datetime.now().strftime('%Y-%m')
+            cursor.execute('''
+                SELECT SUM(profit_loss) FROM trades 
+                WHERE strftime('%Y-%m', timestamp) = ?
+                AND action LIKE 'SELL%'
+            ''', (current_month,))
+            
+            result = cursor.fetchone()
+            monthly_profit = result[0] if result[0] else 0.0
+            
+            # 포트폴리오 가치
+            portfolio_value = await self.ibkr.get_portfolio_value()
+            if portfolio_value > 0:
+                self.monthly_return = (monthly_profit / portfolio_value) * 100
+            
+            conn.close()
+            
+            logging.info(f"📈 월 수익률: {self.monthly_return:.2f}%")
+            
+        except Exception as e:
+            logging.error(f"월 수익률 계산 실패: {e}")
+    
+    async def _check_risk_limits(self):
+        """리스크 한도 체크"""
+        try:
+            # 일일 손실 한도
+            daily_limit = config.get('risk.daily_loss_limit', 1.0)
+            portfolio_value = await self.ibkr.get_portfolio_value()
+            
+            if self.ibkr.daily_pnl < -(portfolio_value * daily_limit / 100):
+                await self._emergency_stop("일일 손실 한도 초과")
+                return
+            
+            # 월 손실 한도
+            if self.current_mode == 'swing':
+                monthly_limit = config.get('risk.monthly_loss_limit', 3.0)
+                if self.monthly_return < -monthly_limit:
+                    await self._emergency_stop(f"월 손실 한도 초과: {self.monthly_return:.2f}%")
+            
+        except Exception as e:
+            logging.error(f"리스크 체크 실패: {e}")
+    
+    async def _emergency_stop(self, reason: str):
+        """비상 정지"""
+        try:
+            logging.warning(f"🚨 비상 정지: {reason}")
+            
+            # 모든 포지션 정리
+            for symbol, position in list(self.stop_take.positions.items()):
+                await self.ibkr.place_sell_order(symbol, position.quantity, 'EMERGENCY')
+            
+            # 포지션 초기화
+            self.stop_take.positions.clear()
+            
+            # 알림
+            await self.stop_take._send_notification(
+                f"🚨 시스템 비상 정지!\n📝 사유: {reason}\n💰 모든 포지션 정리"
+            )
+            
+        except Exception as e:
+            logging.error(f"비상 정지 실패: {e}")
+    
+    async def _generate_report(self):
+        """성과 리포트 생성"""
+        try:
+            # 간단한 일일 리포트
+            active_positions = len(self.stop_take.positions)
+            daily_pnl = self.ibkr.daily_pnl
+            
+            report = f"""
+🏆 일일 요약 리포트
+==================
+📊 현재 모드: {self.current_mode.upper()}
+💰 일일 P&L: ${daily_pnl:.2f}
+📈 월 수익률: {self.monthly_return:.2f}%
+📋 활성 포지션: {active_positions}개
+"""
+            
+            await self.stop_take._send_notification(report)
+            
+        except Exception as e:
+            logging.error(f"리포트 생성 실패: {e}")
+    
+    async def shutdown(self):
+        """시스템 종료"""
+        try:
+            logging.info("🔌 시스템 종료 중...")
+            
+            self.stop_take.stop_monitoring()
+            await self.ibkr.disconnect()
+            
+            logging.info("✅ 시스템 종료 완료")
+            
+        except Exception as e:
+            logging.error(f"종료 실패: {e}")
 
 # ========================================================================================
-# 🎯 전설적 편의 함수들 - 외부 호출용
+# 🎯 편의 함수들
 # ========================================================================================
 
-async def run_legendary_auto_selection():
-    """전설적 자동선별 + 전체분석 실행"""
+async def run_auto_selection():
+    """자동 선별 실행"""
     try:
         strategy = LegendaryQuantStrategy()
-        signals = await strategy.scan_all_legendary_stocks()
-        
-        if signals:
-            report = await strategy.generate_legendary_report(signals)
-            return signals, report
-        else:
-            return [], {"error": "분석된 종목이 없습니다"}
-            
+        signals = await strategy.scan_all_stocks()
+        return signals
     except Exception as e:
-        logging.error(f"전설적 자동선별 실행 실패: {e}")
-        return [], {"error": str(e)}
+        logging.error(f"자동 선별 실패: {e}")
+        return []
 
-async def analyze_legendary_stock(symbol: str) -> Dict:
-    """단일 종목 전설적 분석"""
+async def analyze_single_stock(symbol: str):
+    """단일 종목 분석"""
     try:
         strategy = LegendaryQuantStrategy()
         signal = await strategy.analyze_stock_signal(symbol)
-        
-        return {
-            'symbol': signal.symbol,
-            'decision': signal.action,
-            'confidence_score': signal.confidence * 100,
-            'total_score': signal.total_score * 100,
-            'price': signal.price,
-            'target_price': signal.target_price,
-            'sector': signal.sector,
-            
-            # 전략별 점수
-            'strategy_scores': {
-                'buffett_value': signal.buffett_score * 100,
-                'lynch_growth': signal.lynch_score * 100,
-                'momentum': signal.momentum_score * 100,
-                'technical': signal.technical_score * 100
-            },
-            
-            # 재무지표
-            'financial_metrics': {
-                'market_cap': signal.market_cap,
-                'pe_ratio': signal.pe_ratio,
-                'pbr': signal.pbr,
-                'peg': signal.peg,
-                'roe': signal.roe
-            },
-            
-            # 분할매매 계획
-            'split_trading_plan': {
-                'total_shares': signal.total_shares,
-                'stage1': {'shares': signal.stage1_shares, 'price': signal.entry_price_1},
-                'stage2': {'shares': signal.stage2_shares, 'price': signal.entry_price_2},
-                'stage3': {'shares': signal.stage3_shares, 'price': signal.entry_price_3},
-                'stop_loss': signal.stop_loss_price,
-                'take_profit1': signal.take_profit1_price,
-                'take_profit2': signal.take_profit2_price
-            },
-            
-            'reasoning': signal.reasoning,
-            'vix_adjustment': signal.vix_adjustment,
-            'analysis_time': signal.timestamp.isoformat(),
-            'legendary_version': '6.0'
-        }
-        
+        return signal
     except Exception as e:
-        logging.error(f"종목 분석 실패 {symbol}: {e}")
-        return {
-            'symbol': symbol,
-            'decision': 'hold',
-            'confidence_score': 0.0,
-            'error': str(e),
-            'legendary_version': '6.0'
-        }
+        logging.error(f"종목 분석 실패: {e}")
+        return None
 
-async def get_legendary_status() -> Dict:
-    """전설적 시스템 상태 조회"""
+async def get_system_status():
+    """시스템 상태 조회"""
     try:
         strategy = LegendaryQuantStrategy()
         
+        # IBKR 연결 테스트
+        ibkr_connected = await strategy.ibkr.connect()
+        if ibkr_connected:
+            await strategy.ibkr.disconnect()
+        
         return {
-            'system_status': {
-                'enabled': strategy.enabled,
-                'target_stocks': strategy.target_stocks,
-                'confidence_threshold': strategy.confidence_threshold,
-                'cache_hours': strategy.cache_hours,
-                'last_selection': strategy.last_selection_time.isoformat() if strategy.last_selection_time else None,
-                'cache_valid': strategy._is_cache_valid(),
-                'selected_count': len(strategy.selected_stocks)
-            },
-            'configuration': {
-                'config_file_exists': Path('quant_settings.yaml').exists(),
-                'env_loaded': config.env_loaded,
-                'strategy_weights': config.get('legendary_strategy.strategy_weights', {}),
-                'risk_settings': config.get('risk_management', {}),
-                'vix_thresholds': config.get('legendary_strategy.vix_thresholds', {}),
-                'notifications_enabled': {
-                    'telegram': config.is_enabled('notifications.telegram'),
-                    'discord': config.is_enabled('notifications.discord')
-                }
-            },
-            'performance_metrics': {
-                'version': '6.0_LEGENDARY',
-                'features': [
-                    '완벽한 설정기반 아키텍처',
-                    '실시간 S&P500+NASDAQ 자동선별',
-                    '4가지 투자전략 지능형 융합',
-                    'VIX 기반 시장상황 자동판단',
-                    '분할매매 + 손절익절 자동화',
-                    '통합 리스크관리 시스템',
-                    '혼자 보수유지 가능한 구조'
-                ]
-            }
+            'enabled': strategy.enabled,
+            'current_mode': strategy.current_mode,
+            'ibkr_connected': ibkr_connected,
+            'selected_count': len(strategy.selected_stocks),
+            'target_min': strategy.target_min,
+            'target_max': strategy.target_max,
+            'monthly_return': strategy.monthly_return
         }
         
     except Exception as e:
         logging.error(f"상태 조회 실패: {e}")
-        return {
-            'system_status': {'enabled': False, 'error': str(e)},
-            'legendary_version': '6.0'
-        }
+        return {'error': str(e)}
 
-async def update_legendary_weights(buffett: float, lynch: float, momentum: float, technical: float) -> Dict:
-    """전설적 전략 가중치 업데이트"""
+async def switch_mode(mode: str):
+    """모드 전환"""
     try:
-        # 가중치 정규화
-        total = buffett + lynch + momentum + technical
-        if total == 0:
-            return {'status': 'error', 'message': '가중치 합이 0입니다'}
-        
-        normalized_weights = {
-            'buffett_value': (buffett / total) * 100,
-            'lynch_growth': (lynch / total) * 100,
-            'momentum': (momentum / total) * 100,
-            'technical': (technical / total) * 100
-        }
-        
-        # 설정 업데이트
-        config.update('legendary_strategy.strategy_weights', normalized_weights)
-        
-        logging.info(f"🎯 전설적 가중치 업데이트 완료!")
-        
-        return {
-            'status': 'success',
-            'message': '전설적 전략 가중치가 업데이트되었습니다',
-            'updated_weights': normalized_weights,
-            'auto_saved': True
-        }
-        
+        if mode in ['classic', 'swing', 'hybrid']:
+            config.update('strategy.mode', mode)
+            return {'status': 'success', 'message': f'모드가 {mode}로 전환되었습니다'}
+        else:
+            return {'status': 'error', 'message': '유효한 모드: classic, swing, hybrid'}
     except Exception as e:
-        logging.error(f"가중치 업데이트 실패: {e}")
-        return {'status': 'error', 'message': f'업데이트 실패: {str(e)}'}
+        return {'status': 'error', 'message': str(e)}
 
-async def force_legendary_reselection() -> List[str]:
-    """전설적 강제 재선별"""
+async def run_auto_trading():
+    """자동거래 실행"""
+    strategy = LegendaryQuantStrategy()
+    
     try:
-        strategy = LegendaryQuantStrategy()
-        # 캐시 무효화
-        strategy.last_selection_time = None
-        strategy.selected_stocks = []
-        
-        logging.info("🔄 전설적 강제 재선별 시작...")
-        return await strategy.auto_select_legendary_stocks()
-        
+        if await strategy.initialize_trading():
+            await strategy.start_auto_trading()
+        else:
+            logging.error("❌ 거래 시스템 초기화 실패")
+    except KeyboardInterrupt:
+        logging.info("⏹️ 사용자 중단")
     except Exception as e:
-        logging.error(f"강제 재선별 실패: {e}")
-        return []
-
-async def reload_legendary_config() -> Dict:
-    """전설적 설정 다시 로드"""
-    try:
-        global config
-        config = LegendaryConfigManager()
-        
-        logging.info("🔄 전설적 설정 다시 로드 완료")
-        
-        return {
-            'status': 'success',
-            'message': '전설적 설정이 다시 로드되었습니다',
-            'config_exists': Path('quant_settings.yaml').exists(),
-            'env_loaded': config.env_loaded,
-            'legendary_version': '6.0'
-        }
-        
-    except Exception as e:
-        logging.error(f"설정 다시 로드 실패: {e}")
-        return {
-            'status': 'error',
-            'message': f'설정 로드 실패: {str(e)}',
-            'legendary_version': '6.0'
-        }
+        logging.error(f"❌ 자동거래 실패: {e}")
+    finally:
+        await strategy.shutdown()
 
 # ========================================================================================
-# 🧪 전설적 테스트 메인 함수
+# 🎯 메인 실행부
 # ========================================================================================
 
-async def legendary_main():
-    """🏆 전설적 테스트 메인 함수"""
+async def main():
+    """메인 실행 함수"""
     try:
         # 로깅 설정
         logging.basicConfig(
@@ -1445,137 +1951,357 @@ async def legendary_main():
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.StreamHandler(sys.stdout),
-                logging.FileHandler('legendary_quant.log', encoding='utf-8') if Path('logs').exists() else logging.NullHandler()
+                logging.FileHandler('legendary_quant.log', encoding='utf-8')
             ]
         )
         
-        print("🏆" + "="*80)
-        print("🔥 전설적 퀸트프로젝트 - 미국주식 마스터시스템 V6.0")
-        print("🚀 혼자 보수유지 가능한 완벽한 자동화 시스템")
-        print("="*82)
+        print("🏆" + "="*60)
+        print("🔥 전설적 퀸트프로젝트 - 통합 완성판 V6.2")
+        print("🚀 4가지 전략 융합 + 실시간 크롤링 + IBKR 연동")
+        print("="*62)
+        
+        print("\n🌟 주요 특징:")
+        print("  ✨ 4가지 투자전략 지능형 융합 (버핏+린치+모멘텀+기술)")
+        print("  ✨ 실시간 S&P500+NASDAQ 자동선별")
+        print("  ✨ VIX 기반 시장상황 자동판단")
+        print("  ✨ 스윙 2단계 익절 + 클래식 분할매매")
+        print("  ✨ IBKR 실거래 연동 + 자동 손익절")
+        print("  ✨ 완전 자동화 + 보수유지 최적화")
         
         # 시스템 상태 확인
-        print("\n🔧 전설적 시스템 상태 확인...")
-        status = await get_legendary_status()
-        system_status = status.get('system_status', {})
-        configuration = status.get('configuration', {})
+        print("\n🔧 시스템 상태 확인...")
+        status = await get_system_status()
         
-        print(f"  ✅ 시스템 활성화: {system_status.get('enabled', False)}")
-        print(f"  ✅ 설정파일: {'발견됨' if configuration.get('config_file_exists') else '❌ 없음 (자동생성됨)'}")
-        print(f"  ✅ 환경변수: {'로드됨' if configuration.get('env_loaded') else '❌ .env 파일 없음'}")
-        print(f"  🎯 목표종목: {system_status.get('target_stocks', 20)}개")
-        print(f"  🔥 신뢰도임계: {system_status.get('confidence_threshold', 0.70)}")
-        
-        # 전략 가중치 표시
-        weights = configuration.get('strategy_weights', {})
-        print(f"  📊 전략가중치: 버핏{weights.get('buffett_value', 25):.0f}% "
-              f"린치{weights.get('lynch_growth', 25):.0f}% "
-              f"모멘텀{weights.get('momentum', 25):.0f}% "
-              f"기술{weights.get('technical', 25):.0f}%")
-        
-        # 리스크 설정 표시
-        risk_settings = configuration.get('risk_settings', {})
-        print(f"  🛡️ 리스크설정: 포트폴리오{risk_settings.get('portfolio_allocation', 80):.0f}% "
-              f"손절{risk_settings.get('stop_loss', 15):.0f}% "
-              f"익절{risk_settings.get('take_profit2', 35):.0f}%")
-        
-        print(f"\n🌟 전설적 특징:")
-        features = status.get('performance_metrics', {}).get('features', [])
-        for feature in features:
-            print(f"  ✨ {feature}")
-        
-        # 전설적 자동선별 + 전체분석 실행
-        print(f"\n🚀 전설적 자동선별 + 전체분석 시작...")
-        print("🔍 실시간 S&P500+NASDAQ 크롤링 → 4가지전략 융합분석 → VIX조정 → 분할매매계획")
-        start_time = time.time()
-        
-        signals, report = await run_legendary_auto_selection()
-        
-        elapsed_time = time.time() - start_time
-        print(f"\n⏱️ 총 소요시간: {elapsed_time:.1f}초")
-        
-        if signals and report and 'error' not in report:
-            summary = report['summary']
-            avg_scores = report['average_scores']
-            top_recs = report['top_recommendations']
-            
-            print(f"\n📈 전설적 분석 결과:")
-            print(f"  총 분석종목: {summary['total_stocks']}개 (실시간 자동선별)")
-            print(f"  🟢 매수신호: {summary['buy_signals']}개")
-            print(f"  🔴 매도신호: {summary['sell_signals']}개")
-            print(f"  ⚪ 보유신호: {summary['hold_signals']}개")
-            print(f"  📊 시장상태: {summary['current_vix_status']} VIX")
-            print(f"  💰 총투자금액: ${summary['total_investment']:,.0f}")
-            
-            print(f"\n📊 전설적 평균 전략점수:")
-            print(f"  🏆 버핏 가치투자: {avg_scores['buffett']:.3f}")
-            print(f"  🚀 린치 성장투자: {avg_scores['lynch']:.3f}")
-            print(f"  ⚡ 모멘텀 전략: {avg_scores['momentum']:.3f}")
-            print(f"  📈 기술적 분석: {avg_scores['technical']:.3f}")
-            print(f"  🎯 종합점수: {avg_scores['total']:.3f}")
-            
-            # 상위 매수 추천
-            if top_recs:
-                print(f"\n🏆 전설적 상위 매수 추천:")
-                for i, stock in enumerate(top_recs[:3], 1):
-                    print(f"\n  {i}. {stock['symbol']} ({stock['sector']}) - 신뢰도: {stock['confidence']:.1%}")
-                    print(f"     🎯 점수: {stock['total_score']:.3f} | 현재가: ${stock['price']:.2f} → 목표가: ${stock['target_price']:.2f}")
-                    print(f"     💰 투자금액: ${stock['total_investment']:,.0f}")
-                    print(f"     💡 {stock['reasoning'][:80]}...")
-            
-            # 섹터 분포
-            sector_dist = report['sector_distribution']
-            print(f"\n🏢 섹터 분포:")
-            for sector, count in list(sector_dist.items())[:5]:
-                percentage = count / summary['total_stocks'] * 100
-                print(f"  {sector}: {count}개 ({percentage:.1f}%)")
-            
-            # 리스크 메트릭
-            risk_metrics = report['risk_metrics']
-            print(f"\n🛡️ 전설적 리스크 메트릭:")
-            print(f"  다양성 점수: {risk_metrics['diversification_score']:.2f}")
-            print(f"  평균 신뢰도: {risk_metrics['avg_confidence']:.2f}")
-            print(f"  포트폴리오 할당: {risk_metrics['portfolio_allocation']:.0f}%")
-            print(f"  최대 단일포지션: {risk_metrics['max_single_position']:.0f}%")
-            
+        if 'error' not in status:
+            print(f"  ✅ 시스템 활성화: {status['enabled']}")
+            print(f"  ✅ 현재 모드: {status['current_mode'].upper()}")
+            print(f"  ✅ IBKR 연결: {'가능' if status['ibkr_connected'] else '불가능'}")
+            print(f"  ✅ 월 목표: {status['target_min']:.1f}%-{status['target_max']:.1f}%")
+            print(f"  ✅ 월 수익률: {status['monthly_return']:.2f}%")
         else:
-            error_msg = report.get('error', '알 수 없는 오류') if report else '결과 없음'
-            print(f"❌ 전설적 분석 실패: {error_msg}")
+            print(f"  ❌ 상태 확인 실패: {status['error']}")
         
-        print(f"\n🏆 전설적 퀸트프로젝트 V6.0 테스트 완료!")
-        print("\n🌟 혼자 보수유지 가능한 핵심 특징:")
-        print("  ✅ 🔧 완벽한 설정기반 아키텍처 (quant_settings.yaml)")
-        print("  ✅ 🚀 실시간 자동선별 (S&P500+NASDAQ 크롤링)")
-        print("  ✅ 🧠 4가지 전략 지능형 융합 (가중치 조정가능)")
-        print("  ✅ 📊 VIX 기반 시장상황 자동판단")
-        print("  ✅ 💰 분할매매 + 손절익절 자동화")
-        print("  ✅ 🛡️ 통합 리스크관리 + 포트폴리오 최적화")
-        print("  ✅ 🔄 런타임 설정변경 (재시작 불필요)")
-        print("  ✅ 📱 알림시스템 (텔레그램/디스코드)")
-        print("  ✅ 🎯 캐싱시스템 (효율적 API 사용)")
-        print("  ✅ ⚡ 병렬처리 (빠른 분석속도)")
+        print("\n🚀 실행 옵션:")
+        print("  1. 종목 자동선별 + 분석")
+        print("  2. 완전 자동거래 시작")
+        print("  3. 개별 종목 분석")
+        print("  4. 모드 전환")
+        print("  5. 시스템 상태")
+        print("  6. 종료")
         
-        print(f"\n💡 사용법:")
-        print("  - run_legendary_auto_selection(): 전체 자동선별+분석")
-        print("  - analyze_legendary_stock('AAPL'): 개별 종목분석")
-        print("  - update_legendary_weights(25,25,25,25): 가중치 조정")
-        print("  - force_legendary_reselection(): 강제 재선별")
-        print("  - reload_legendary_config(): 설정 다시로드")
-        print("  - get_legendary_status(): 시스템 상태확인")
-        
-        print(f"\n🔧 설정파일 관리:")
-        print("  - quant_settings.yaml: 모든 전략 파라미터")
-        print("  - .env: API키, 알림토큰 (선택사항)")
-        print("  - 설정 자동생성: 최초 실행시 기본설정 생성")
-        print("  - 실시간 설정변경: 파일 수정 후 reload_legendary_config()")
+        while True:
+            try:
+                choice = input("\n선택하세요 (1-6): ").strip()
+                
+                if choice == '1':
+                    print("\n🔍 종목 자동선별 + 분석 시작!")
+                    signals = await run_auto_selection()
+                    
+                    if signals:
+                        print(f"\n📈 분석 결과:")
+                        buy_signals = [s for s in signals if s.action == 'buy']
+                        sell_signals = [s for s in signals if s.action == 'sell']
+                        
+                        print(f"  🟢 매수 추천: {len(buy_signals)}개")
+                        print(f"  🔴 매도 추천: {len(sell_signals)}개")
+                        print(f"  ⚪ 보유 추천: {len(signals) - len(buy_signals) - len(sell_signals)}개")
+                        
+                        # 상위 매수 추천
+                        top_buys = sorted(buy_signals, key=lambda x: x.confidence, reverse=True)[:5]
+                        if top_buys:
+                            print(f"\n🏆 상위 매수 추천:")
+                            for i, signal in enumerate(top_buys, 1):
+                                print(f"  {i}. {signal.symbol}: 신뢰도 {signal.confidence:.1%}, "
+                                      f"목표가 ${signal.target_price:.2f}")
+                    else:
+                        print("❌ 분석 결과 없음")
+                
+                elif choice == '2':
+                    print("\n🎯 완전 자동거래 시작!")
+                    print("⚠️  IBKR TWS/Gateway가 실행 중인지 확인하세요!")
+                    confirm = input("계속하시겠습니까? (y/N): ").strip().lower()
+                    if confirm == 'y':
+                        await run_auto_trading()
+                    break
+                
+                elif choice == '3':
+                    symbol = input("분석할 종목 심볼: ").strip().upper()
+                    if symbol:
+                        print(f"\n🔍 {symbol} 분석중...")
+                        signal = await analyze_single_stock(symbol)
+                        
+                        if signal and signal.confidence > 0:
+                            print(f"\n📊 {symbol} 분석 결과:")
+                            print(f"  🎯 결정: {signal.action.upper()}")
+                            print(f"  💯 신뢰도: {signal.confidence:.1%}")
+                            print(f"  💰 현재가: ${signal.price:.2f}")
+                            print(f"  🎯 목표가: ${signal.target_price:.2f}")
+                            print(f"  🛑 손절가: ${signal.stop_loss:.2f}")
+                            print(f"  📈 모드: {signal.mode.upper()}")
+                            print(f"  💡 근거: {signal.reasoning}")
+                        else:
+                            print(f"❌ {symbol} 분석 실패")
+                
+                elif choice == '4':
+                    print("\n🔄 모드 전환:")
+                    print("  1. CLASSIC (클래식 분할매매)")
+                    print("  2. SWING (스윙 2단계 익절)")
+                    print("  3. HYBRID (하이브리드)")
+                    
+                    mode_choice = input("모드 선택 (1-3): ").strip()
+                    mode_map = {'1': 'classic', '2': 'swing', '3': 'hybrid'}
+                    
+                    if mode_choice in mode_map:
+                        result = await switch_mode(mode_map[mode_choice])
+                        print(f"✅ {result['message']}")
+                    else:
+                        print("❌ 잘못된 선택")
+                
+                elif choice == '5':
+                    print("\n📊 시스템 상세 상태:")
+                    status = await get_system_status()
+                    for key, value in status.items():
+                        print(f"  {key}: {value}")
+                
+                elif choice == '6':
+                    print("👋 시스템을 종료합니다!")
+                    break
+                    
+                else:
+                    print("❌ 잘못된 선택입니다. 1-6 중 선택하세요.")
+                    
+            except KeyboardInterrupt:
+                print("\n👋 프로그램을 종료합니다.")
+                break
+            except Exception as e:
+                print(f"❌ 오류 발생: {e}")
         
     except Exception as e:
-        print(f"❌ 전설적 테스트 실행 실패: {e}")
-        logging.error(f"전설적 테스트 실패: {e}")
+        logging.error(f"메인 실행 실패: {e}")
+        print(f"❌ 실행 실패: {e}")
 
 # ========================================================================================
-# 🎯 실행부
+# 🔧 유틸리티 함수들
+# ========================================================================================
+
+def create_default_env_file():
+    """기본 .env 파일 생성"""
+    env_content = """# 전설적 퀸트프로젝트 환경변수 설정
+# IBKR 설정
+IBKR_ACCOUNT=YOUR_ACCOUNT_ID
+
+# 텔레그램 알림 설정
+TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN
+TELEGRAM_CHAT_ID=YOUR_CHAT_ID
+
+# 기타 설정
+# EMAIL_USERNAME=your_email@gmail.com
+# EMAIL_PASSWORD=your_app_password
+# EMAIL_RECIPIENT=recipient@gmail.com
+"""
+    
+    if not Path('.env').exists():
+        with open('.env', 'w', encoding='utf-8') as f:
+            f.write(env_content)
+        print("📝 .env 파일이 생성되었습니다. 설정을 입력해주세요.")
+
+def check_dependencies():
+    """의존성 패키지 확인"""
+    required_packages = [
+        'yfinance', 'pandas', 'numpy', 'requests', 'beautifulsoup4',
+        'aiohttp', 'pyyaml', 'python-dotenv'
+    ]
+    
+    missing = []
+    for package in required_packages:
+        try:
+            __import__(package.replace('-', '_'))
+        except ImportError:
+            missing.append(package)
+    
+    if missing:
+        print(f"❌ 누락된 패키지: {', '.join(missing)}")
+        print(f"설치 명령: pip install {' '.join(missing)}")
+        return False
+    
+    return True
+
+def setup_system():
+    """시스템 초기 설정"""
+    print("🔧 시스템 초기 설정...")
+    
+    # 의존성 확인
+    if not check_dependencies():
+        return False
+    
+    # .env 파일 생성
+    create_default_env_file()
+    
+    # 로그 디렉토리 생성
+    log_dir = Path('logs')
+    if not log_dir.exists():
+        log_dir.mkdir()
+    
+    # 데이터 디렉토리 생성
+    data_dir = Path('data')
+    if not data_dir.exists():
+        data_dir.mkdir()
+    
+    print("✅ 시스템 초기 설정 완료!")
+    return True
+
+# ========================================================================================
+# 🏃‍♂️ 빠른 시작 함수들
+# ========================================================================================
+
+async def quick_analysis(symbols: List[str] = None):
+    """빠른 분석"""
+    if not symbols:
+        symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA']
+    
+    print(f"🚀 빠른 분석: {', '.join(symbols)}")
+    
+    strategy = LegendaryQuantStrategy()
+    
+    for symbol in symbols:
+        try:
+            signal = await strategy.analyze_stock_signal(symbol)
+            action_emoji = "🟢" if signal.action == "buy" else "🔴" if signal.action == "sell" else "⚪"
+            print(f"{action_emoji} {symbol}: {signal.action} ({signal.confidence:.1%})")
+        except Exception as e:
+            print(f"❌ {symbol}: 분석 실패")
+
+async def quick_scan():
+    """빠른 스캔"""
+    print("🔍 빠른 전체 스캔...")
+    
+    try:
+        signals = await run_auto_selection()
+        
+        if signals:
+            buy_signals = [s for s in signals if s.action == 'buy']
+            
+            print(f"\n📊 스캔 결과: 총 {len(signals)}개 종목")
+            print(f"🟢 매수 추천: {len(buy_signals)}개")
+            
+            # 상위 5개
+            top_5 = sorted(buy_signals, key=lambda x: x.confidence, reverse=True)[:5]
+            if top_5:
+                print("\n🏆 TOP 5 매수 추천:")
+                for i, signal in enumerate(top_5, 1):
+                    print(f"  {i}. {signal.symbol}: {signal.confidence:.1%}")
+        else:
+            print("❌ 스캔 결과 없음")
+            
+    except Exception as e:
+        print(f"❌ 스캔 실패: {e}")
+
+def print_help():
+    """도움말 출력"""
+    help_text = """
+🏆 전설적 퀸트프로젝트 V6.2 - 사용법
+=====================================
+
+📋 주요 명령어:
+  python legendary_quint_project_v6.py        # 메인 메뉴 실행
+  python -c "from legendary_quint_project_v6 import *; asyncio.run(quick_scan())"  # 빠른 스캔
+  python -c "from legendary_quint_project_v6 import *; asyncio.run(quick_analysis())"  # 빠른 분석
+
+🔧 초기 설정:
+  1. pip install yfinance pandas numpy requests beautifulsoup4 aiohttp pyyaml python-dotenv
+  2. IBKR 사용시: pip install ib_insync
+  3. .env 파일에서 텔레그램/IBKR 설정
+  4. legendary_unified_settings.yaml에서 상세 설정
+
+💡 모드 설명:
+  - SWING: 월 5-7% 목표, 8개 종목, 2단계 익절 (6%/12%)
+  - CLASSIC: 장기 성장, 20개 종목, 분할매매 (20%/35% 익절)
+  - HYBRID: 신뢰도에 따라 자동 전환
+
+🎯 4가지 전략:
+  - 버핏 가치투자: PBR, ROE, 부채비율 중심
+  - 린치 성장투자: PEG, EPS성장률 중심  
+  - 모멘텀 전략: 3/6/12개월 수익률, 거래량 중심
+  - 기술적 분석: RSI, 추세, 변동성 중심
+
+📊 VIX 조정:
+  - VIX < 15: 점수 15% 부스트 (적극적)
+  - VIX > 30: 점수 15% 감소 (보수적)
+
+🛡️ 리스크 관리:
+  - 스윙: 8% 손절, 트레일링 스톱
+  - 클래식: 15% 손절, 섹터 분산
+  - 일일/월간 손실 한도 자동 체크
+
+📱 알림 설정:
+  - 텔레그램: 실시간 진입/청산 알림
+  - 성과 리포트: 일일/주간/월간
+
+🚀 자동화 기능:
+  - 실시간 S&P500/NASDAQ 크롤링
+  - 자동 종목 선별 (24시간 캐싱)
+  - IBKR 자동 주문 + 손익절
+  - 시장 상황별 적응형 전략
+"""
+    print(help_text)
+
+# ========================================================================================
+# 🏁 실행 진입점
 # ========================================================================================
 
 if __name__ == "__main__":
-    asyncio.run(legendary_main())
+    try:
+        # 명령행 인자 처리
+        if len(sys.argv) > 1:
+            if sys.argv[1] == 'help' or sys.argv[1] == '--help':
+                print_help()
+                sys.exit(0)
+            elif sys.argv[1] == 'setup':
+                setup_system()
+                sys.exit(0)
+            elif sys.argv[1] == 'quick-scan':
+                asyncio.run(quick_scan())
+                sys.exit(0)
+            elif sys.argv[1] == 'quick-analysis':
+                symbols = sys.argv[2:] if len(sys.argv) > 2 else None
+                asyncio.run(quick_analysis(symbols))
+                sys.exit(0)
+        
+        # 메인 실행
+        asyncio.run(main())
+        
+    except KeyboardInterrupt:
+        print("\n👋 프로그램이 중단되었습니다.")
+    except Exception as e:
+        print(f"❌ 실행 오류: {e}")
+        logging.error(f"실행 오류: {e}")
+
+'total_shares': shares,
+                'investment': investment,
+                'weight': target_weight * 100
+            }
+            
+        except Exception as e:
+            logging.error(f"포지션 계산 실패: {e}")
+            return {'total_shares': 0, 'investment': 0, 'weight': 0}
+    
+    def calculate_take_profit_levels(self, price: float, mode: str) -> Dict:
+        """익절 레벨 계산"""
+        if mode == 'swing':
+            tp_levels = config.get('trading.swing.take_profit', [6.0, 12.0])
+            ratios = config.get('trading.swing.profit_ratios', [60.0, 40.0])
+            
+            return {
+                'tp1_price': price * (1 + tp_levels[0] / 100),
+                'tp2_price': price * (1 + tp_levels[1] / 100),
+                'tp1_ratio': ratios[0] / 100,
+                'tp2_ratio': ratios[1] / 100
+            }
+        else:  # classic
+            tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
+            return {
+                'tp1_price': price * (1 + tp_levels[0] / 100),
+                'tp2_price': price * (1 + tp_levels[1] / 100),
+                'tp1_ratio': 0.6,  # 60%
+                'tp2_ratio': 0.4   # 40%
+            }
