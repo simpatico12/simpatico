@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🏆 전설적 퀸트프로젝트 - 통합 완성판 V6.2 (간결화)
+🏆 전설적 퀸트프로젝트 - 통합 완성판 V6.2 (오류 수정)
 ===============================================
 
 🌟 완전 통합 특징:
@@ -14,7 +14,7 @@
 7. 🧠 혼자 보수유지 가능한 완벽한 아키텍처
 
 Author: 전설적퀸트팀
-Version: 6.2.0 (보수유지 최적화)
+Version: 6.2.1 (오류 수정)
 """
 
 import asyncio
@@ -25,17 +25,7 @@ import json
 import time
 import warnings
 from datetime import datetime, timedelta
-# 타입 힌트를 간단하게 수정
-try:
-    from typing import Dict, List, Optional, Tuple, Any
-except ImportError:
-    # 구버전 Python 대응
-    Dict = dict
-    List = list
-    Optional = object
-    Tuple = tuple
-    Any = object
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -47,8 +37,19 @@ from concurrent.futures import ThreadPoolExecutor
 import aiohttp
 from dotenv import load_dotenv
 import sqlite3
-import schedule
 from threading import Thread
+
+# 타입 힌트를 안전하게 처리
+try:
+    from typing import Dict, List, Optional, Tuple, Any, Union
+except ImportError:
+    # 구버전 Python 대응
+    Dict = dict
+    List = list
+    Optional = lambda x: x
+    Tuple = tuple
+    Any = object
+    Union = object
 
 # IBKR 연동
 try:
@@ -248,7 +249,7 @@ class StockSignal:
     confidence: float
     price: float
     mode: str
-    scores: Dict[str, float]  # 4가지 전략 점수
+    scores: Dict[str, float]
     financials: Dict[str, float]
     target_price: float
     stop_loss: float
@@ -264,12 +265,10 @@ class Position:
     entry_date: datetime
     mode: str
     stage: int = 1
-    tp_executed: List[bool] = None
+    tp_executed: List[bool] = field(default_factory=lambda: [False, False, False])
     highest_price: float = 0.0
     
     def __post_init__(self):
-        if self.tp_executed is None:
-            self.tp_executed = [False, False, False]
         if self.highest_price == 0.0:
             self.highest_price = self.avg_cost
 
@@ -297,7 +296,7 @@ class StockSelector:
         try:
             vix = yf.Ticker("^VIX")
             hist = vix.history(period="1d")
-            return hist['Close'].iloc[-1] if not hist.empty else 20.0
+            return float(hist['Close'].iloc[-1]) if not hist.empty else 20.0
         except:
             return 20.0
     
@@ -388,7 +387,7 @@ class StockSelector:
             if hist.empty:
                 return {}
             
-            current_price = hist['Close'].iloc[-1]
+            current_price = float(hist['Close'].iloc[-1])
             
             # 기본 데이터
             data = {
@@ -415,9 +414,9 @@ class StockSelector:
             
             # 모멘텀 지표
             if len(hist) >= 252:
-                data['momentum_3m'] = ((current_price / hist['Close'].iloc[-63]) - 1) * 100
-                data['momentum_6m'] = ((current_price / hist['Close'].iloc[-126]) - 1) * 100
-                data['momentum_12m'] = ((current_price / hist['Close'].iloc[-252]) - 1) * 100
+                data['momentum_3m'] = ((current_price / float(hist['Close'].iloc[-63])) - 1) * 100
+                data['momentum_6m'] = ((current_price / float(hist['Close'].iloc[-126])) - 1) * 100
+                data['momentum_12m'] = ((current_price / float(hist['Close'].iloc[-252])) - 1) * 100
             else:
                 data['momentum_3m'] = data['momentum_6m'] = data['momentum_12m'] = 0
             
@@ -428,11 +427,11 @@ class StockSelector:
                 gain = (delta.where(delta > 0, 0)).rolling(14).mean()
                 loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
                 rs = gain / loss
-                data['rsi'] = 100 - (100 / (1 + rs)).iloc[-1]
+                data['rsi'] = float(100 - (100 / (1 + rs)).iloc[-1])
                 
                 # 추세
-                ma20 = hist['Close'].rolling(20).mean().iloc[-1]
-                ma50 = hist['Close'].rolling(50).mean().iloc[-1]
+                ma20 = float(hist['Close'].rolling(20).mean().iloc[-1])
+                ma50 = float(hist['Close'].rolling(50).mean().iloc[-1])
                 
                 if current_price > ma50 > ma20:
                     data['trend'] = 'strong_uptrend'
@@ -442,13 +441,13 @@ class StockSelector:
                     data['trend'] = 'downtrend'
                 
                 # 거래량
-                avg_vol = hist['Volume'].rolling(20).mean().iloc[-1]
-                current_vol = hist['Volume'].iloc[-1]
+                avg_vol = float(hist['Volume'].rolling(20).mean().iloc[-1])
+                current_vol = float(hist['Volume'].iloc[-1])
                 data['volume_spike'] = current_vol / avg_vol if avg_vol > 0 else 1
                 
                 # 변동성
                 returns = hist['Close'].pct_change().dropna()
-                data['volatility'] = returns.rolling(20).std().iloc[-1] * np.sqrt(252) * 100
+                data['volatility'] = float(returns.rolling(20).std().iloc[-1] * np.sqrt(252) * 100)
             else:
                 data.update({
                     'rsi': 50, 'trend': 'sideways', 'volume_spike': 1, 'volatility': 25
@@ -691,14 +690,6 @@ class TradingSystem:
             return {
                 'tp1_price': price * (1 + tp_levels[0] / 100),
                 'tp2_price': price * (1 + tp_levels[1] / 100),
-                'tp1_ratio': ratios[0] / 100,
-                'tp2_ratio': ratios[1] / 100
-            }
-        else:  # classic
-            tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
-            return {
-                'tp1_price': price * (1 + tp_levels[0] / 100),
-                'tp2_price': price * (1 + tp_levels[1] / 100),
                 'tp1_ratio': 0.6,  # 60%
                 'tp2_ratio': 0.4   # 40%
             }
@@ -804,7 +795,6 @@ class IBKRTrader:
             if order_type == 'MKT':
                 order = MarketOrder('BUY', quantity)
             else:
-                # 지정가 주문 로직 추가 가능
                 order = MarketOrder('BUY', quantity)
             
             trade = self.ib.placeOrder(contract, order)
@@ -852,7 +842,7 @@ class IBKRTrader:
     def _safety_check(self) -> bool:
         """안전장치 체크"""
         max_trades = config.get('ibkr.max_daily_trades', 20)
-        max_loss = config.get('risk.daily_loss_limit', 1.0) * 10000  # 1% = $10,000 손실
+        max_loss = config.get('risk.daily_loss_limit', 1.0) * 10000
         
         if self.daily_trades >= max_trades:
             logging.warning(f"⚠️ 일일 거래 한도 초과: {self.daily_trades}")
@@ -877,7 +867,7 @@ class IBKRTrader:
             price = ticker.marketPrice() or ticker.last or 0.0
             self.ib.cancelMktData(contract)
             
-            return price
+            return float(price)
             
         except Exception as e:
             logging.error(f"현재가 조회 실패 {symbol}: {e}")
@@ -912,7 +902,6 @@ class StopTakeManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # 거래 기록 테이블
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS trades (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -928,7 +917,6 @@ class StopTakeManager:
                 )
             ''')
             
-            # 포지션 테이블
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS positions (
                     symbol TEXT PRIMARY KEY,
@@ -979,7 +967,7 @@ class StopTakeManager:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 position.symbol, position.quantity, position.avg_cost,
-                position.entry_date, position.mode, position.stage,
+                position.entry_date.isoformat(), position.mode, position.stage,
                 tp_json, position.highest_price
             ))
             
@@ -1180,7 +1168,7 @@ class StopTakeManager:
                 INSERT INTO trades 
                 (symbol, action, quantity, price, timestamp, profit_loss, profit_percent, mode, reason)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (symbol, action, quantity, price, datetime.now(), 
+            ''', (symbol, action, quantity, price, datetime.now().isoformat(), 
                   profit_loss, profit_pct, mode, action))
             
             conn.commit()
@@ -1326,33 +1314,29 @@ class LegendaryQuantStrategy:
     async def _parallel_analysis(self, universe: List[str], vix: float) -> List[Dict]:
         """병렬 종목 분석"""
         scored_stocks = []
-        max_workers = min(15, len(universe))
         
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = []
-            for symbol in universe:
-                future = executor.submit(self._analyze_stock, symbol, vix)
-                futures.append(future)
+        # 배치 처리로 메모리 효율성 개선
+        batch_size = 20
+        for i in range(0, len(universe), batch_size):
+            batch = universe[i:i + batch_size]
+            tasks = [self._analyze_stock_async(symbol, vix) for symbol in batch]
             
-            for i, future in enumerate(futures, 1):
-                try:
-                    result = future.result(timeout=45)
-                    if result:
-                        scored_stocks.append(result)
-                    
-                    if i % 50 == 0:
-                        logging.info(f"📊 분석 진행: {i}/{len(universe)}")
-                        
-                except Exception as e:
-                    continue
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in results:
+                if isinstance(result, dict) and result:
+                    scored_stocks.append(result)
+            
+            if i % 100 == 0:
+                logging.info(f"📊 분석 진행: {i}/{len(universe)}")
         
         return scored_stocks
     
-    def _analyze_stock(self, symbol: str, vix: float) -> Optional[Dict]:
-        """단일 종목 분석"""
+    async def _analyze_stock_async(self, symbol: str, vix: float) -> Optional[Dict]:
+        """비동기 종목 분석"""
         try:
             # 데이터 수집
-            data = asyncio.run(self.selector.get_stock_data(symbol))
+            data = await self.selector.get_stock_data(symbol)
             if not data:
                 return None
             
@@ -1629,39 +1613,35 @@ class LegendaryQuantStrategy:
     
     async def _run_schedule(self):
         """스케줄 실행"""
-        # 스케줄 설정
-        if self.current_mode == 'swing':
-            schedule.every().tuesday.at("10:30").do(self._execute_swing_entry)
-            schedule.every().thursday.at("10:30").do(self._execute_swing_entry)
-        else:
-            schedule.every().day.at("10:00").do(self._execute_classic_entry)
-        
-        schedule.every().day.at("09:00").do(self._daily_check)
-        schedule.every().day.at("16:00").do(self._performance_report)
-        
         while True:
             try:
-                schedule.run_pending()
-                await asyncio.sleep(60)
+                now = datetime.now()
+                
+                # 스윙 모드 스케줄
+                if self.current_mode == 'swing':
+                    if now.weekday() == 1 and now.hour == 10 and now.minute == 30:  # 화요일
+                        await self._swing_entry()
+                    elif now.weekday() == 3 and now.hour == 10 and now.minute == 30:  # 목요일
+                        await self._swing_entry()
+                
+                # 클래식 모드 스케줄
+                elif self.current_mode == 'classic':
+                    if now.hour == 10 and now.minute == 0:  # 매일 10시
+                        await self._classic_entry()
+                
+                # 일일 체크
+                if now.hour == 9 and now.minute == 0:
+                    await self._perform_daily_check()
+                
+                # 성과 리포트
+                if now.hour == 16 and now.minute == 0:
+                    await self._generate_report()
+                
+                await asyncio.sleep(60)  # 1분마다 체크
+                
             except Exception as e:
                 logging.error(f"스케줄 오류: {e}")
                 await asyncio.sleep(60)
-    
-    def _execute_swing_entry(self):
-        """스윙 진입 실행"""
-        asyncio.create_task(self._swing_entry())
-    
-    def _execute_classic_entry(self):
-        """클래식 진입 실행"""
-        asyncio.create_task(self._classic_entry())
-    
-    def _daily_check(self):
-        """일일 체크"""
-        asyncio.create_task(self._perform_daily_check())
-    
-    def _performance_report(self):
-        """성과 리포트"""
-        asyncio.create_task(self._generate_report())
     
     async def _swing_entry(self):
         """스윙 진입"""
@@ -1925,7 +1905,7 @@ async def get_system_status():
     try:
         strategy = LegendaryQuantStrategy()
         
-        # IBKR 연결 테스트 (오류 발생시 처리)
+        # IBKR 연결 테스트
         ibkr_connected = False
         try:
             if IBKR_AVAILABLE:
@@ -2323,33 +2303,17 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ 실행 오류: {e}")
         logging.error(f"실행 오류: {e}")
-
-'total_shares': shares,
-                'investment': investment,
-                'weight': target_weight * 100
-            }
-            
-        except Exception as e:
-            logging.error(f"포지션 계산 실패: {e}")
-            return {'total_shares': 0, 'investment': 0, 'weight': 0}
-    
-    def calculate_take_profit_levels(self, price: float, mode: str) -> Dict:
-        """익절 레벨 계산"""
-        if mode == 'swing':
-            tp_levels = config.get('trading.swing.take_profit', [6.0, 12.0])
-            ratios = config.get('trading.swing.profit_ratios', [60.0, 40.0])
-            
-            return {
-                'tp1_price': price * (1 + tp_levels[0] / 100),
-                'tp2_price': price * (1 + tp_levels[1] / 100),
-                'tp1_ratio': ratios[0] / 100,
-                'tp2_ratio': ratios[1] / 100
-            }
-        else:  # classic
-            tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
-            return {
-                'tp1_price': price * (1 + tp_levels[0] / 100),
-                'tp2_price': price * (1 + tp_levels[1] / 100),
-                'tp1_ratio': 0.6,  # 60%
-                'tp2_ratio': 0.4   # 40%
-            }
+        
+        'tp1_price': price * (1 + tp_levels[0] / 100),
+        'tp2_price': price * (1 + tp_levels[1] / 100),
+        'tp1_ratio': ratios[0] / 100,
+        'tp2_ratio': ratios[1] / 100
+    }
+    else:  # classic
+        tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
+        return {
+            'tp1_price': price * (1 + tp_levels[0] / 100),
+            'tp2_price': price * (1 + tp_levels[1] / 100),
+            'tp1_ratio': 0.6,  # 60%
+            'tp2_ratio': 0.4   # 40%
+        }
