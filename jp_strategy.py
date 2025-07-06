@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+"""
 🏆 YEN-HUNTER v2.0 HYBRID: 화목 하이브리드 전략
 ===============================================================================
 🎯 핵심: 엔화 + 화목 집중 + 3차 익절
@@ -955,7 +957,6 @@ class SignalGenerator:
         take_profit2 = price * (1 + base_p2 * multiplier)
         take_profit3 = price * (1 + base_p3 * multiplier)
         
-        return stop_loss, take_profit1, take_profit2, take_profit3, base_days
     
     def calculate_hybrid_score(self, symbol: str, rsi: float, macd_signal: str, macd_details: Dict,
                               bb_signal: str, bb_details: Dict, stoch_signal: str, stoch_details: Dict,
@@ -1198,7 +1199,7 @@ class SignalGenerator:
             return Signal(symbol, "HOLD", 0.0, 0.0, f"실패:{e}", self.current_usd_jpy, 50.0,
                         "NEUTRAL", "MIDDLE_ZONE", "NEUTRAL", 0, "NEUTRAL",
                         0, 0, 0, 0, 0, 0)
-    # ============================================================================
+ # ============================================================================
 # 🛡️ 포지션 매니저 (3차 익절)
 # ============================================================================
 class PositionManager:
@@ -1960,4 +1961,4 @@ async def main():
 
 if __name__ == "__main__":
     Config.DATA_DIR.mkdir(exist_ok=True)
-    asyncio.run(main())                    
+    asyncio.run(main())           
