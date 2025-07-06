@@ -1916,10 +1916,16 @@ async def get_system_status():
     try:
         strategy = LegendaryQuantStrategy()
         
-        # IBKR 연결 테스트
-        ibkr_connected = await strategy.ibkr.connect()
-        if ibkr_connected:
-            await strategy.ibkr.disconnect()
+        # IBKR 연결 테스트 (오류 발생시 처리)
+        ibkr_connected = False
+        try:
+            if IBKR_AVAILABLE:
+                ibkr_connected = await strategy.ibkr.connect()
+                if ibkr_connected:
+                    await strategy.ibkr.disconnect()
+        except Exception as e:
+            logging.warning(f"IBKR 연결 테스트 실패: {e}")
+            ibkr_connected = False
         
         return {
             'enabled': strategy.enabled,
@@ -1928,7 +1934,8 @@ async def get_system_status():
             'selected_count': len(strategy.selected_stocks),
             'target_min': strategy.target_min,
             'target_max': strategy.target_max,
-            'monthly_return': strategy.monthly_return
+            'monthly_return': strategy.monthly_return,
+            'ibkr_available': IBKR_AVAILABLE
         }
         
     except Exception as e:
@@ -1999,9 +2006,17 @@ async def main():
         if 'error' not in status:
             print(f"  ✅ 시스템 활성화: {status['enabled']}")
             print(f"  ✅ 현재 모드: {status['current_mode'].upper()}")
-            print(f"  ✅ IBKR 연결: {'가능' if status['ibkr_connected'] else '불가능'}")
+            
+            # IBKR 상태 표시 개선
+            if status.get('ibkr_available', False):
+                ibkr_status = '연결 가능' if status['ibkr_connected'] else '연결 불가'
+                print(f"  ✅ IBKR 상태: {ibkr_status}")
+            else:
+                print(f"  ⚠️  IBKR 모듈: 미설치 (pip install ib_insync)")
+            
             print(f"  ✅ 월 목표: {status['target_min']:.1f}%-{status['target_max']:.1f}%")
             print(f"  ✅ 월 수익률: {status['monthly_return']:.2f}%")
+            print(f"  ✅ 선별된 종목: {status['selected_count']}개")
         else:
             print(f"  ❌ 상태 확인 실패: {status['error']}")
         
