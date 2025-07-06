@@ -2308,7 +2308,7 @@ if __name__ == "__main__":
         'tp2_price': price * (1 + tp_levels[1] / 100),
         'tp1_ratio': ratios[0] / 100,
         'tp2_ratio': ratios[1] / 100
-    }
+        
     else:  # classic
         tp_levels = config.get('trading.classic.take_profit', [20.0, 35.0])
         return {
