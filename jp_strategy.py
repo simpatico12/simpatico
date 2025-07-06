@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""
 🏆 YEN-HUNTER v2.0 HYBRID: 화목 하이브리드 전략
 ===============================================================================
 🎯 핵심: 엔화 + 화목 집중 + 3차 익절
@@ -26,7 +24,7 @@ import pandas as pd
 import yfinance as yf
 import requests
 from bs4 import BeautifulSoup
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -779,7 +777,7 @@ class JapanMonthlyManager:
         # 목표 달성 체크
         if self.monthly_data['total_pnl'] >= Config.JAPAN_MONTHLY_TARGET:
             self.monthly_data['target_reached'] = True
-            
+        
         self.save_monthly_data()
     
     def get_trading_intensity(self) -> str:
@@ -876,11 +874,492 @@ class Signal:
     take_profit3: float
     max_hold_days: int
     position_size: int
-    timestamp: datetime = None                        
+    timestamp: datetime = field(default_factory=datetime.now)
 
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = datetime.now()
+@dataclass 
+class Position:
+    symbol: str
+    buy_price: float
+    shares: int
+    buy_date: datetime
+    stop_loss: float
+    take_profit1: float
+    take_profit2: float
+    take_profit3: float
+    max_hold_date: datetime
+    shares_sold_1st: int = 0
+    shares_sold_2nd: int = 0
+    shares_sold_3rd: int = 0
+
+    def get_remaining_shares(self) -> int:
+        return self.shares - self.shares_sold_1st - self.shares_sold_2nd - self.shares_sold_3rd
+
+class SignalGenerator:
+    def __init__(self):
+        self.current_usd_jpy = 107.5
+        self.indicators = Indicators()
+        self.target_manager = JapanMonthlyManager()
+    
+    async def update_yen(self):
+        try:
+            ticker = yf.Ticker("USDJPY=X")
+            data = ticker.history(period="1d")
+            if not data.empty:
+                self.current_usd_jpy = float(data['Close'].iloc[-1])
+        except:
+            pass
+    
+    def get_yen_signal(self) -> str:
+        if self.current_usd_jpy <= Config.YEN_STRONG:
+            return "STRONG"
+        elif self.current_usd_jpy >= Config.YEN_WEAK:
+            return "WEAK"
+        else:
+            return "NEUTRAL"
+    
+    def classify_stock_type(self, symbol: str) -> str:
+        """종목 유형 분류"""
+        export_symbols = [
+            '7203.T', '6758.T', '7974.T', '6861.T', '9984.T',
+            '7267.T', '7269.T', '6326.T', '6473.T', '7013.T'
+        ]
+        return "EXPORT" if symbol in export_symbols else "DOMESTIC"
+    
+    def calculate_hybrid_risk_levels(self, price: float, confidence: float, day_type: str, atr: float = 0) -> Tuple[float, float, float, float, int]:
+        """화목 하이브리드 리스크 계산"""
+        if day_type == "TUESDAY":  # 화요일 메인
+            base_stop, base_p1, base_p2, base_p3 = 0.03, 0.04, 0.07, 0.12
+            base_days = Config.TUESDAY_MAX_HOLD
+        else:  # 목요일 보완
+            base_stop, base_p1, base_p2, base_p3 = 0.02, 0.015, 0.03, 0.05
+            base_days = Config.THURSDAY_MAX_HOLD
+        
+        # 신뢰도별 조정
+        if confidence >= 0.8:
+            multiplier = 1.3
+        elif confidence >= 0.6:
+            multiplier = 1.0
+        else:
+            multiplier = 0.8
+        
+        # ATR 기반 변동성 조정
+        if atr > 0:
+            atr_ratio = atr / price
+            if atr_ratio > 0.03:  # 고변동성
+                multiplier *= 1.3
+            elif atr_ratio < 0.015:  # 저변동성
+                multiplier *= 0.8
+        
+        stop_loss = price * (1 - base_stop * (2 - multiplier))
+        take_profit1 = price * (1 + base_p1 * multiplier)
+        take_profit2 = price * (1 + base_p2 * multiplier)
+        take_profit3 = price * (1 + base_p3 * multiplier)
+        
+        return stop_loss, take_profit1, take_profit2, take_profit3, base_days
+    
+    def calculate_hybrid_score(self, symbol: str, rsi: float, macd_signal: str, macd_details: Dict,
+                              bb_signal: str, bb_details: Dict, stoch_signal: str, stoch_details: Dict,
+                              atr: float, volume_analysis: Dict, trend: str, day_type: str) -> float:
+        """6개 지표 통합 화목 점수"""
+        score = 0.0
+        
+        # 1. 엔화 기반 (35%)
+        yen_signal = self.get_yen_signal()
+        stock_type = self.classify_stock_type(symbol)
+        
+        if (yen_signal == "STRONG" and stock_type == "DOMESTIC") or \
+           (yen_signal == "WEAK" and stock_type == "EXPORT"):
+            score += 0.35
+        else:
+            score += 0.20
+        
+        # 2. 요일별 차등 지표
+        if day_type == "TUESDAY":  # 화요일 - MACD/추세 중시
+            # MACD (20%)
+            if macd_signal == "GOLDEN_CROSS":
+                score += 0.20
+            elif macd_signal == "BULLISH":
+                score += 0.15
+            elif macd_signal == "DEAD_CROSS":
+                score += 0.03
+            else:
+                score += 0.10
+            
+            # 추세 (15%)
+            if trend == "STRONG_UP":
+                score += 0.15
+            elif trend == "SIDEWAYS":
+                score += 0.08
+            else:
+                score += 0.03
+            
+            # RSI (10%)
+            if rsi <= 30:
+                score += 0.10
+            elif rsi <= 45:
+                score += 0.08
+            elif rsi >= 70:
+                score += 0.02
+            else:
+                score += 0.05
+        
+        else:  # 목요일 - 단기 지표 중시
+            # 스토캐스틱 (20%)
+            if stoch_signal == "OVERSOLD":
+                score += 0.20
+            elif stoch_signal == "BULLISH_CROSS":
+                score += 0.15
+            elif stoch_signal == "OVERBOUGHT":
+                score += 0.02
+            else:
+                score += 0.08
+            
+            # 볼린저밴드 (15%)
+            if bb_signal == "LOWER_BREAK":
+                score += 0.15
+            elif bb_signal == "LOWER_ZONE":
+                score += 0.12
+            elif bb_signal == "UPPER_BREAK":
+                score += 0.02
+            else:
+                score += 0.06
+            
+            # RSI 극값 중시 (10%)
+            if rsi <= 25:
+                score += 0.10
+            elif rsi <= 35:
+                score += 0.08
+            elif rsi >= 75:
+                score += 0.02
+            else:
+                score += 0.05
+        
+        # 3. 공통 지표
+        # ATR 변동성 (5%)
+        if atr > 0:
+            atr_ratio = atr / self.current_usd_jpy if self.current_usd_jpy > 0 else 0
+            if 0.01 <= atr_ratio <= 0.03:  # 적당한 변동성
+                score += 0.05
+            elif atr_ratio > 0.03:  # 고변동성 - 기회
+                score += 0.03
+            else:  # 저변동성
+                score += 0.02
+        
+        # 거래량 (10%)
+        volume_signal = volume_analysis.get('price_volume_signal', 'NEUTRAL')
+        if volume_signal == "BULLISH_CONFIRM":
+            score += 0.10
+        elif volume_analysis.get('volume_spike', False):
+            score += 0.08
+        elif volume_signal == "WEAK_RALLY":
+            score += 0.03
+        else:
+            score += 0.05
+        
+        # 볼린저 스퀴즈 보너스 (5%)
+        if bb_details.get('squeeze', False):
+            score += 0.05  # 변동성 돌파 기대
+        
+        return min(score, 1.0)
+    
+    def generate_hybrid_reason(self, symbol: str, rsi: float, macd_signal: str, bb_signal: str,
+                              stoch_signal: str, volume_analysis: Dict, day_type: str) -> str:
+        """화목 하이브리드 이유 생성"""
+        reasons = []
+        
+        # 엔화
+        yen_signal = self.get_yen_signal()
+        stock_type = self.classify_stock_type(symbol)
+        
+        if yen_signal == "STRONG" and stock_type == "DOMESTIC":
+            reasons.append("엔강세내수주")
+        elif yen_signal == "WEAK" and stock_type == "EXPORT":
+            reasons.append("엔약세수출주")
+        else:
+            reasons.append(f"엔{yen_signal}")
+        
+        # 요일별 핵심 이유
+        day_name = "화메인" if day_type == "TUESDAY" else "목보완"
+        reasons.append(day_name)
+        
+        if day_type == "TUESDAY":  # 화요일
+            if macd_signal == "GOLDEN_CROSS":
+                reasons.append("MACD골든")
+            elif rsi <= 30:
+                reasons.append(f"RSI과매도({rsi:.0f})")
+        else:  # 목요일
+            if stoch_signal == "OVERSOLD":
+                reasons.append("스토과매도")
+            elif bb_signal == "LOWER_BREAK":
+                reasons.append("볼린저돌파")
+            elif rsi <= 25:
+                reasons.append(f"극과매도({rsi:.0f})")
+        
+        # 추가 근거
+        if volume_analysis.get('volume_spike', False):
+            reasons.append("거래량급증")
+        
+        return " | ".join(reasons[:5])
+    
+    async def generate_signal(self, symbol: str) -> Signal:
+        """화목 하이브리드 신호 생성"""
+        try:
+            await self.update_yen()
+            
+            # 화목 체크
+            today = datetime.now()
+            if today.weekday() == 1:
+                day_type = "TUESDAY"
+            elif today.weekday() == 3:
+                day_type = "THURSDAY"
+            else:
+                return Signal(symbol, "HOLD", 0.0, 0.0, "비거래일", self.current_usd_jpy, 50.0, 
+                            "NEUTRAL", "MIDDLE_ZONE", "NEUTRAL", 0, "NEUTRAL", 
+                            0, 0, 0, 0, 0, 0)
+            
+            stock = yf.Ticker(symbol)
+            data = stock.history(period="3mo")
+            if data.empty:
+                raise ValueError("데이터 없음")
+            
+            current_price = float(data['Close'].iloc[-1])
+            
+            # 6개 기술지표 계산
+            rsi = self.indicators.rsi(data['Close'])
+            macd_signal, macd_details = self.indicators.macd(data['Close'])
+            bb_signal, bb_details = self.indicators.bollinger_bands(data['Close'])
+            stoch_signal, stoch_details = self.indicators.stochastic(data['High'], data['Low'], data['Close'])
+            atr_value = self.indicators.atr(data['High'], data['Low'], data['Close'])
+            volume_analysis = self.indicators.volume_analysis(data['Close'], data['Volume'])
+            trend = self.indicators.trend_signal(data['Close'])
+            
+            # 하이브리드 점수 계산
+            total_score = self.calculate_hybrid_score(
+                symbol, rsi, macd_signal, macd_details, bb_signal, bb_details,
+                stoch_signal, stoch_details, atr_value, volume_analysis, trend, day_type
+            )
+            
+            # 월간 목표 고려
+            intensity = self.target_manager.get_trading_intensity()
+            
+            # 요일별 임계값
+            threshold = Config.BUY_THRESHOLD_TUESDAY if day_type == "TUESDAY" else Config.BUY_THRESHOLD_THURSDAY
+            
+            if intensity == "STOP_TRADING":
+                action = "HOLD"
+                confidence = 0.0
+            else:
+                # 거래 강도별 임계값 조정
+                if intensity == "VERY_AGGRESSIVE":
+                    threshold *= 0.75
+                elif intensity == "AGGRESSIVE":
+                    threshold *= 0.85
+                elif intensity == "CONSERVATIVE":
+                    threshold *= 1.15
+                
+                if total_score >= threshold:
+                    action = "BUY"
+                    confidence = min(total_score, 0.95)
+                else:
+                    action = "HOLD"
+                    confidence = total_score
+            
+            # 리스크 계산
+            if action == "BUY":
+                stop_loss, tp1, tp2, tp3, max_days = self.calculate_hybrid_risk_levels(
+                    current_price, confidence, day_type, atr_value
+                )
+                
+                base_amount = 1000000
+                position_size = self.target_manager.adjust_position_size(
+                    int(base_amount / current_price / 100) * 100,
+                    confidence,
+                    day_type
+                )
+            else:
+                stop_loss = tp1 = tp2 = tp3 = 0.0
+                max_days = position_size = 0
+            
+            # 이유 생성
+            reason = self.generate_hybrid_reason(
+                symbol, rsi, macd_signal, bb_signal, stoch_signal, volume_analysis, day_type
+            )
+            
+            return Signal(
+                symbol=symbol, action=action, confidence=confidence, price=current_price,
+                reason=reason, yen_rate=self.current_usd_jpy, rsi=rsi,
+                macd_signal=macd_signal, bb_signal=bb_signal, stoch_signal=stoch_signal,
+                atr=atr_value, volume_signal=volume_analysis.get('price_volume_signal', 'NEUTRAL'),
+                stop_loss=stop_loss, take_profit1=tp1, take_profit2=tp2, take_profit3=tp3,
+                max_hold_days=max_days, position_size=position_size
+            )
+            
+        except Exception as e:
+            return Signal(symbol, "HOLD", 0.0, 0.0, f"실패:{e}", self.current_usd_jpy, 50.0,
+                        "NEUTRAL", "MIDDLE_ZONE", "NEUTRAL", 0, "NEUTRAL",
+                        0, 0, 0, 0, 0, 0)
+    # ============================================================================
+# 🛡️ 포지션 매니저 (3차 익절)
+# ============================================================================
+class PositionManager:
+    def __init__(self):
+        self.positions: Dict[str, Position] = {}
+        self.closed_positions = []
+        self.target_manager = JapanMonthlyManager()
+        self.load_positions()
+    
+    def load_positions(self):
+        try:
+            positions_file = Config.DATA_DIR / "positions.json"
+            if positions_file.exists():
+                with open(positions_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    for symbol, pos_data in data.items():
+                        self.positions[symbol] = Position(
+                            symbol=pos_data['symbol'],
+                            buy_price=pos_data['buy_price'],
+                            shares=pos_data['shares'],
+                            buy_date=datetime.fromisoformat(pos_data['buy_date']),
+                            stop_loss=pos_data['stop_loss'],
+                            take_profit1=pos_data['take_profit1'],
+                            take_profit2=pos_data['take_profit2'],
+                            take_profit3=pos_data.get('take_profit3', 0),
+                            max_hold_date=datetime.fromisoformat(pos_data['max_hold_date']),
+                            shares_sold_1st=pos_data.get('shares_sold_1st', 0),
+                            shares_sold_2nd=pos_data.get('shares_sold_2nd', 0),
+                            shares_sold_3rd=pos_data.get('shares_sold_3rd', 0)
+                        )
+        except Exception as e:
+            print(f"⚠️ 포지션 로드 실패: {e}")
+    
+    def save_positions(self):
+        try:
+            Config.DATA_DIR.mkdir(exist_ok=True)
+            positions_file = Config.DATA_DIR / "positions.json"
+            data = {}
+            for symbol, position in self.positions.items():
+                data[symbol] = {
+                    'symbol': position.symbol,
+                    'buy_price': position.buy_price,
+                    'shares': position.shares,
+                    'buy_date': position.buy_date.isoformat(),
+                    'stop_loss': position.stop_loss,
+                    'take_profit1': position.take_profit1,
+                    'take_profit2': position.take_profit2,
+                    'take_profit3': position.take_profit3,
+                    'max_hold_date': position.max_hold_date.isoformat(),
+                    'shares_sold_1st': position.shares_sold_1st,
+                    'shares_sold_2nd': position.shares_sold_2nd,
+                    'shares_sold_3rd': position.shares_sold_3rd
+                }
+            
+            with open(positions_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ 포지션 저장 실패: {e}")
+    
+    def open_position(self, signal: Signal):
+        if signal.action == "BUY" and signal.position_size > 0:
+            position = Position(
+                symbol=signal.symbol,
+                buy_price=signal.price,
+                shares=signal.position_size,
+                buy_date=signal.timestamp,
+                stop_loss=signal.stop_loss,
+                take_profit1=signal.take_profit1,
+                take_profit2=signal.take_profit2,
+                take_profit3=signal.take_profit3,
+                max_hold_date=signal.timestamp + timedelta(days=signal.max_hold_days)
+            )
+            self.positions[signal.symbol] = position
+            self.save_positions()
+            
+            day_name = "화요일" if signal.timestamp.weekday() == 1 else "목요일"
+            print(f"✅ {signal.symbol} {day_name} 포지션 오픈: {signal.position_size:,}주 @ {signal.price:,.0f}엔")
+            print(f"   🛡️ 손절: {signal.stop_loss:,.0f}엔")
+            print(f"   🎯 익절: {signal.take_profit1:,.0f}→{signal.take_profit2:,.0f}→{signal.take_profit3:,.0f}엔")
+    
+    async def check_positions(self) -> List[Dict]:
+        actions = []
+        current_time = datetime.now()
+        
+        for symbol, position in list(self.positions.items()):
+            try:
+                # 현재가 조회
+                stock = yf.Ticker(symbol)
+                current_data = stock.history(period="1d")
+                if current_data.empty:
+                    continue
+                current_price = float(current_data['Close'].iloc[-1])
+                
+                # 손절
+                if current_price <= position.stop_loss:
+                    remaining = position.get_remaining_shares()
+                    if remaining > 0:
+                        pnl = (current_price - position.buy_price) / position.buy_price
+                        actions.append({
+                            'action': 'STOP_LOSS',
+                            'symbol': symbol,
+                            'shares': remaining,
+                            'pnl': pnl * 100,
+                            'reason': f'손절 ({pnl*100:.1f}%)'
+                        })
+                        
+                        day_type = "TUESDAY" if position.buy_date.weekday() == 1 else "THURSDAY"
+                        self.target_manager.add_trade(symbol, pnl, position.buy_price, current_price, day_type)
+                        self._close_position(symbol, current_price, 'STOP_LOSS')
+                        continue
+                
+                # 3차 익절
+                if current_price >= position.take_profit3 and position.shares_sold_3rd == 0:
+                    remaining = position.get_remaining_shares()
+                    if remaining > 0:
+                        pnl = (current_price - position.buy_price) / position.buy_price
+                        actions.append({
+                            'action': 'TAKE_PROFIT_3',
+                            'symbol': symbol,
+                            'shares': remaining,
+                            'pnl': pnl * 100,
+                            'reason': f'3차 익절 ({pnl*100:.1f}%) - 대박!'
+                        })
+                        
+                        day_type = "TUESDAY" if position.buy_date.weekday() == 1 else "THURSDAY"
+                        self.target_manager.add_trade(symbol, pnl, position.buy_price, current_price, day_type)
+                        self._close_position(symbol, current_price, 'TAKE_PROFIT_3')
+                        continue
+                
+                # 2차 익절
+                elif current_price >= position.take_profit2 and position.shares_sold_2nd == 0:
+                    remaining = position.get_remaining_shares()
+                    shares_to_sell = int(remaining * 0.67)
+                    if shares_to_sell > 0:
+                        pnl = (current_price - position.buy_price) / position.buy_price
+                        actions.append({
+                            'action': 'TAKE_PROFIT_2',
+                            'symbol': symbol,
+                            'shares': shares_to_sell,
+                            'pnl': pnl * 100,
+                            'reason': f'2차 익절 ({pnl*100:.1f}%) - 40% 매도'
+                        })
+                        
+                        position.shares_sold_2nd = shares_to_sell
+                        self.save_positions()
+                
+                # 1차 익절
+                elif current_price >= position.take_profit1 and position.shares_sold_1st == 0:
+                    shares_to_sell = int(position.shares * 0.4)
+                    if shares_to_sell > 0:
+                        pnl = (current_price - position.buy_price) / position.buy_price
+                        actions.append({
+                            'action': 'TAKE_PROFIT_1',
+                            'symbol': symbol,
+                            'shares': shares_to_sell,
+                            'pnl': pnl * 100,
+                            'reason': f'1차 익절 ({pnl*100:.1f}%) - 40% 매도'
+                        })
+                        
+                        position.shares_sold_1st = shares_to_sell
+                        self.save_positions()
                 
                 # 화목 강제 청산
                 elif self._should_force_exit(position, current_time):
@@ -970,7 +1449,7 @@ class IBKRConnector:
         self.ib = None
         self.connected = False
         self.available = IBKR_AVAILABLE
-        
+    
     async def connect(self) -> bool:
         if not self.available:
             self.connected = True
@@ -1463,7 +1942,6 @@ async def main():
     print("  📊 기술지표: 6개 핵심 (RSI, MACD, 볼린저, 스토캐스틱, ATR, 거래량)")
     print("  🔍 종목헌팅: 3개 지수 통합 (닛케이225 + TOPIX + JPX400)")
     print("  📈 월간관리: 핵심 목표 추적 + 적응형 강도 조절")
-    print("  📅 화목 차별화: 요일별 최적화된 전략")
     print("  💰 3차 익절: 40% → 40% → 20% 분할")
     print("  🛡️ 동적 손절: ATR + 신뢰도 기반")
     print("  🔗 IBKR 연동: 실제 거래 + 시뮬레이션")
@@ -1482,523 +1960,4 @@ async def main():
 
 if __name__ == "__main__":
     Config.DATA_DIR.mkdir(exist_ok=True)
-    asyncio.run(main())
-    
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = datetime.now()
-
-@dataclass 
-class Position:
-    symbol: str
-    buy_price: float
-    shares: int
-    buy_date: datetime
-    stop_loss: float
-    take_profit1: float
-    take_profit2: float
-    take_profit3: float
-    max_hold_date: datetime
-    shares_sold_1st: int = 0
-    shares_sold_2nd: int = 0
-    shares_sold_3rd: int = 0
-    
-    def get_remaining_shares(self) -> int:
-        return self.shares - self.shares_sold_1st - self.shares_sold_2nd - self.shares_sold_3rd
-
-class SignalGenerator:
-    def __init__(self):
-        self.current_usd_jpy = 107.5
-        self.indicators = Indicators()
-        self.target_manager = JapanMonthlyManager()
-        
-    async def update_yen(self):
-        try:
-            ticker = yf.Ticker("USDJPY=X")
-            data = ticker.history(period="1d")
-            if not data.empty:
-                self.current_usd_jpy = float(data['Close'].iloc[-1])
-        except:
-            pass
-    
-    def get_yen_signal(self) -> str:
-        if self.current_usd_jpy <= Config.YEN_STRONG:
-            return "STRONG"
-        elif self.current_usd_jpy >= Config.YEN_WEAK:
-            return "WEAK"
-        else:
-            return "NEUTRAL"
-    
-    def classify_stock_type(self, symbol: str) -> str:
-        """종목 유형 분류"""
-        export_symbols = [
-            '7203.T', '6758.T', '7974.T', '6861.T', '9984.T',
-            '7267.T', '7269.T', '6326.T', '6473.T', '7013.T'
-        ]
-        return "EXPORT" if symbol in export_symbols else "DOMESTIC"
-    
-    def calculate_hybrid_risk_levels(self, price: float, confidence: float, day_type: str, atr: float = 0) -> Tuple[float, float, float, float, int]:
-        """화목 하이브리드 리스크 계산"""
-        if day_type == "TUESDAY":  # 화요일 메인
-            base_stop, base_p1, base_p2, base_p3 = 0.03, 0.04, 0.07, 0.12
-            base_days = Config.TUESDAY_MAX_HOLD
-        else:  # 목요일 보완
-            base_stop, base_p1, base_p2, base_p3 = 0.02, 0.015, 0.03, 0.05
-            base_days = Config.THURSDAY_MAX_HOLD
-        
-        # 신뢰도별 조정
-        if confidence >= 0.8:
-            multiplier = 1.3
-        elif confidence >= 0.6:
-            multiplier = 1.0
-        else:
-            multiplier = 0.8
-        
-        # ATR 기반 변동성 조정
-        if atr > 0:
-            atr_ratio = atr / price
-            if atr_ratio > 0.03:  # 고변동성
-                multiplier *= 1.3
-            elif atr_ratio < 0.015:  # 저변동성
-                multiplier *= 0.8
-        
-        stop_loss = price * (1 - base_stop * (2 - multiplier))
-        take_profit1 = price * (1 + base_p1 * multiplier)
-        take_profit2 = price * (1 + base_p2 * multiplier)
-        take_profit3 = price * (1 + base_p3 * multiplier)
-        
-        return stop_loss, take_profit1, take_profit2, take_profit3, base_days
-    
-    def calculate_hybrid_score(self, symbol: str, rsi: float, macd_signal: str, macd_details: Dict,
-                              bb_signal: str, bb_details: Dict, stoch_signal: str, stoch_details: Dict,
-                              atr: float, volume_analysis: Dict, trend: str, day_type: str) -> float:
-        """6개 지표 통합 화목 점수"""
-        score = 0.0
-        
-        # 1. 엔화 기반 (35%)
-        yen_signal = self.get_yen_signal()
-        stock_type = self.classify_stock_type(symbol)
-        
-        if (yen_signal == "STRONG" and stock_type == "DOMESTIC") or \
-           (yen_signal == "WEAK" and stock_type == "EXPORT"):
-            score += 0.35
-        else:
-            score += 0.20
-        
-        # 2. 요일별 차등 지표
-        if day_type == "TUESDAY":  # 화요일 - MACD/추세 중시
-            # MACD (20%)
-            if macd_signal == "GOLDEN_CROSS":
-                score += 0.20
-            elif macd_signal == "BULLISH":
-                score += 0.15
-            elif macd_signal == "DEAD_CROSS":
-                score += 0.03
-            else:
-                score += 0.10
-                
-            # 추세 (15%)
-            if trend == "STRONG_UP":
-                score += 0.15
-            elif trend == "SIDEWAYS":
-                score += 0.08
-            else:
-                score += 0.03
-                
-            # RSI (10%)
-            if rsi <= 30:
-                score += 0.10
-            elif rsi <= 45:
-                score += 0.08
-            elif rsi >= 70:
-                score += 0.02
-            else:
-                score += 0.05
-                
-        else:  # 목요일 - 단기 지표 중시
-            # 스토캐스틱 (20%)
-            if stoch_signal == "OVERSOLD":
-                score += 0.20
-            elif stoch_signal == "BULLISH_CROSS":
-                score += 0.15
-            elif stoch_signal == "OVERBOUGHT":
-                score += 0.02
-            else:
-                score += 0.08
-                
-            # 볼린저밴드 (15%)
-            if bb_signal == "LOWER_BREAK":
-                score += 0.15
-            elif bb_signal == "LOWER_ZONE":
-                score += 0.12
-            elif bb_signal == "UPPER_BREAK":
-                score += 0.02
-            else:
-                score += 0.06
-                
-            # RSI 극값 중시 (10%)
-            if rsi <= 25:
-                score += 0.10
-            elif rsi <= 35:
-                score += 0.08
-            elif rsi >= 75:
-                score += 0.02
-            else:
-                score += 0.05
-        
-        # 3. 공통 지표
-        # ATR 변동성 (5%)
-        if atr > 0:
-            atr_ratio = atr / self.current_usd_jpy if self.current_usd_jpy > 0 else 0
-            if 0.01 <= atr_ratio <= 0.03:  # 적당한 변동성
-                score += 0.05
-            elif atr_ratio > 0.03:  # 고변동성 - 기회
-                score += 0.03
-            else:  # 저변동성
-                score += 0.02
-        
-        # 거래량 (10%)
-        volume_signal = volume_analysis.get('price_volume_signal', 'NEUTRAL')
-        if volume_signal == "BULLISH_CONFIRM":
-            score += 0.10
-        elif volume_analysis.get('volume_spike', False):
-            score += 0.08
-        elif volume_signal == "WEAK_RALLY":
-            score += 0.03
-        else:
-            score += 0.05
-        
-        # 볼린저 스퀴즈 보너스 (5%)
-        if bb_details.get('squeeze', False):
-            score += 0.05  # 변동성 돌파 기대
-        
-        return min(score, 1.0)
-    
-    def generate_hybrid_reason(self, symbol: str, rsi: float, macd_signal: str, bb_signal: str,
-                              stoch_signal: str, volume_analysis: Dict, day_type: str) -> str:
-        """화목 하이브리드 이유 생성"""
-        reasons = []
-        
-        # 엔화
-        yen_signal = self.get_yen_signal()
-        stock_type = self.classify_stock_type(symbol)
-        
-        if yen_signal == "STRONG" and stock_type == "DOMESTIC":
-            reasons.append("엔강세내수주")
-        elif yen_signal == "WEAK" and stock_type == "EXPORT":
-            reasons.append("엔약세수출주")
-        else:
-            reasons.append(f"엔{yen_signal}")
-        
-        # 요일별 핵심 이유
-        day_name = "화메인" if day_type == "TUESDAY" else "목보완"
-        reasons.append(day_name)
-        
-        if day_type == "TUESDAY":  # 화요일
-            if macd_signal == "GOLDEN_CROSS":
-                reasons.append("MACD골든")
-            elif rsi <= 30:
-                reasons.append(f"RSI과매도({rsi:.0f})")
-        else:  # 목요일
-            if stoch_signal == "OVERSOLD":
-                reasons.append("스토과매도")
-            elif bb_signal == "LOWER_BREAK":
-                reasons.append("볼린저돌파")
-            elif rsi <= 25:
-                reasons.append(f"극과매도({rsi:.0f})")
-        
-        # 추가 근거
-        if volume_analysis.get('volume_spike', False):
-            reasons.append("거래량급증")
-        
-        return " | ".join(reasons[:5])
-
-    async def generate_signal(self, symbol: str) -> Signal:
-        """화목 하이브리드 신호 생성"""
-        try:
-            await self.update_yen()
-            
-            # 화목 체크
-            today = datetime.now()
-            if today.weekday() == 1:
-                day_type = "TUESDAY"
-            elif today.weekday() == 3:
-                day_type = "THURSDAY"
-            else:
-                return Signal(symbol, "HOLD", 0.0, 0.0, "비거래일", self.current_usd_jpy, 50.0, 
-                            "NEUTRAL", "MIDDLE_ZONE", "NEUTRAL", 0, "NEUTRAL", 
-                            0, 0, 0, 0, 0, 0, today)
-            
-            stock = yf.Ticker(symbol)
-            data = stock.history(period="3mo")
-            if data.empty:
-                raise ValueError("데이터 없음")
-            
-            current_price = float(data['Close'].iloc[-1])
-            
-            # 6개 기술지표 계산
-            rsi = self.indicators.rsi(data['Close'])
-            macd_signal, macd_details = self.indicators.macd(data['Close'])
-            bb_signal, bb_details = self.indicators.bollinger_bands(data['Close'])
-            stoch_signal, stoch_details = self.indicators.stochastic(data['High'], data['Low'], data['Close'])
-            atr_value = self.indicators.atr(data['High'], data['Low'], data['Close'])
-            volume_analysis = self.indicators.volume_analysis(data['Close'], data['Volume'])
-            trend = self.indicators.trend_signal(data['Close'])
-            
-            # 하이브리드 점수 계산
-            total_score = self.calculate_hybrid_score(
-                symbol, rsi, macd_signal, macd_details, bb_signal, bb_details,
-                stoch_signal, stoch_details, atr_value, volume_analysis, trend, day_type
-            )
-            
-            # 월간 목표 고려
-            intensity = self.target_manager.get_trading_intensity()
-            
-            # 요일별 임계값
-            threshold = Config.BUY_THRESHOLD_TUESDAY if day_type == "TUESDAY" else Config.BUY_THRESHOLD_THURSDAY
-            
-            if intensity == "STOP_TRADING":
-                action = "HOLD"
-                confidence = 0.0
-            else:
-                # 거래 강도별 임계값 조정
-                if intensity == "VERY_AGGRESSIVE":
-                    threshold *= 0.75
-                elif intensity == "AGGRESSIVE":
-                    threshold *= 0.85
-                elif intensity == "CONSERVATIVE":
-                    threshold *= 1.15
-                
-                if total_score >= threshold:
-                    action = "BUY"
-                    confidence = min(total_score, 0.95)
-                else:
-                    action = "HOLD"
-                    confidence = total_score
-            
-            # 리스크 계산
-            if action == "BUY":
-                stop_loss, tp1, tp2, tp3, max_days = self.calculate_hybrid_risk_levels(
-                    current_price, confidence, day_type, atr_value
-                )
-                
-                base_amount = 1000000
-                position_size = self.target_manager.adjust_position_size(
-                    int(base_amount / current_price / 100) * 100,
-                    confidence,
-                    day_type
-                )
-            else:
-                stop_loss = tp1 = tp2 = tp3 = 0.0
-                max_days = position_size = 0
-            
-            # 이유 생성
-            reason = self.generate_hybrid_reason(
-                symbol, rsi, macd_signal, bb_signal, stoch_signal, volume_analysis, day_type
-            )
-            
-            return Signal(
-                symbol=symbol, action=action, confidence=confidence, price=current_price,
-                reason=reason, yen_rate=self.current_usd_jpy, rsi=rsi,
-                macd_signal=macd_signal, bb_signal=bb_signal, stoch_signal=stoch_signal,
-                atr=atr_value, volume_signal=volume_analysis.get('price_volume_signal', 'NEUTRAL'),
-                stop_loss=stop_loss, take_profit1=tp1, take_profit2=tp2, take_profit3=tp3,
-                max_hold_days=max_days, position_size=position_size, timestamp=today
-            )
-            
-        except Exception as e:
-            return Signal(symbol, "HOLD", 0.0, 0.0, f"실패:{e}", self.current_usd_jpy, 50.0,
-                        "NEUTRAL", "MIDDLE_ZONE", "NEUTRAL", 0, "NEUTRAL",
-                        0, 0, 0, 0, 0, 0, datetime.now())
-
-# ============================================================================
-# 🛡️ 포지션 매니저 (3차 익절)
-# ============================================================================
-class PositionManager:
-    def __init__(self):
-        self.positions: Dict[str, Position] = {}
-        self.closed_positions = []
-        self.target_manager = JapanMonthlyManager()
-        self.load_positions()
-    
-    def load_positions(self):
-        try:
-            positions_file = Config.DATA_DIR / "positions.json"
-            if positions_file.exists():
-                with open(positions_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    for symbol, pos_data in data.items():
-                        self.positions[symbol] = Position(
-                            symbol=pos_data['symbol'],
-                            buy_price=pos_data['buy_price'],
-                            shares=pos_data['shares'],
-                            buy_date=datetime.fromisoformat(pos_data['buy_date']),
-                            stop_loss=pos_data['stop_loss'],
-                            take_profit1=pos_data['take_profit1'],
-                            take_profit2=pos_data['take_profit2'],
-                            take_profit3=pos_data.get('take_profit3', 0),
-                            max_hold_date=datetime.fromisoformat(pos_data['max_hold_date']),
-                            shares_sold_1st=pos_data.get('shares_sold_1st', 0),
-                            shares_sold_2nd=pos_data.get('shares_sold_2nd', 0),
-                            shares_sold_3rd=pos_data.get('shares_sold_3rd', 0)
-                        )
-        except Exception as e:
-            print(f"⚠️ 포지션 로드 실패: {e}")
-    
-    def save_positions(self):
-        try:
-            Config.DATA_DIR.mkdir(exist_ok=True)
-            positions_file = Config.DATA_DIR / "positions.json"
-            data = {}
-            for symbol, position in self.positions.items():
-                data[symbol] = {
-                    'symbol': position.symbol,
-                    'buy_price': position.buy_price,
-                    'shares': position.shares,
-                    'buy_date': position.buy_date.isoformat(),
-                    'stop_loss': position.stop_loss,
-                    'take_profit1': position.take_profit1,
-                    'take_profit2': position.take_profit2,
-                    'take_profit3': position.take_profit3,
-                    'max_hold_date': position.max_hold_date.isoformat(),
-                    'shares_sold_1st': position.shares_sold_1st,
-                    'shares_sold_2nd': position.shares_sold_2nd,
-                    'shares_sold_3rd': position.shares_sold_3rd
-                }
-            
-            with open(positions_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"⚠️ 포지션 저장 실패: {e}")
-    
-    def open_position(self, signal: Signal):
-        if signal.action == "BUY" and signal.position_size > 0:
-            position = Position(
-                symbol=signal.symbol,
-                buy_price=signal.price,
-                shares=signal.position_size,
-                buy_date=signal.timestamp,
-                stop_loss=signal.stop_loss,
-                take_profit1=signal.take_profit1,
-                take_profit2=signal.take_profit2,
-                take_profit3=signal.take_profit3,
-                max_hold_date=signal.timestamp + timedelta(days=signal.max_hold_days)
-            )
-            self.positions[signal.symbol] = position
-            self.save_positions()
-            
-            day_name = "화요일" if signal.timestamp.weekday() == 1 else "목요일"
-            print(f"✅ {signal.symbol} {day_name} 포지션 오픈: {signal.position_size:,}주 @ {signal.price:,.0f}엔")
-            print(f"   🛡️ 손절: {signal.stop_loss:,.0f}엔")
-            print(f"   🎯 익절: {signal.take_profit1:,.0f}→{signal.take_profit2:,.0f}→{signal.take_profit3:,.0f}엔")
-    
-    async def check_positions(self) -> List[Dict]:
-        actions = []
-        current_time = datetime.now()
-        
-        for symbol, position in list(self.positions.items()):
-            try:
-                # 현재가 조회
-                stock = yf.Ticker(symbol)
-                current_data = stock.history(period="1d")
-                if current_data.empty:
-                    continue
-                current_price = float(current_data['Close'].iloc[-1])
-                
-                # 손절
-                if current_price <= position.stop_loss:
-                    remaining = position.get_remaining_shares()
-                    if remaining > 0:
-                        pnl = (current_price - position.buy_price) / position.buy_price
-                        actions.append({
-                            'action': 'STOP_LOSS',
-                            'symbol': symbol,
-                            'shares': remaining,
-                            'pnl': pnl * 100,
-                            'reason': f'손절 ({pnl*100:.1f}%)'
-                        })
-                        
-                        day_type = "TUESDAY" if position.buy_date.weekday() == 1 else "THURSDAY"
-                        self.target_manager.add_trade(symbol, pnl, position.buy_price, current_price, day_type)
-                        self._close_position(symbol, current_price, 'STOP_LOSS')
-                        continue
-                
-                # 3차 익절
-                if current_price >= position.take_profit3 and position.shares_sold_3rd == 0:
-                    remaining = position.get_remaining_shares()
-                    if remaining > 0:
-                        pnl = (current_price - position.buy_price) / position.buy_price
-                        actions.append({
-                            'action': 'TAKE_PROFIT_3',
-                            'symbol': symbol,
-                            'shares': remaining,
-                            'pnl': pnl * 100,
-                            'reason': f'3차 익절 ({pnl*100:.1f}%) - 대박!'
-                        })
-                        
-                        day_type = "TUESDAY" if position.buy_date.weekday() == 1 else "THURSDAY"
-                        self.target_manager.add_trade(symbol, pnl, position.buy_price, current_price, day_type)
-                        self._close_position(symbol, current_price, 'TAKE_PROFIT_3')
-                        continue
-                
-                # 2차 익절
-                elif current_price >= position.take_profit2 and position.shares_sold_2nd == 0:
-                    remaining = position.get_remaining_shares()
-                    shares_to_sell = int(remaining * 0.67)
-                    if shares_to_sell > 0:
-                        pnl = (current_price - position.buy_price) / position.buy_price
-                        actions.append({
-                            'action': 'TAKE_PROFIT_2',
-                            'symbol': symbol,
-                            'shares': shares_to_sell,
-                            'pnl': pnl * 100,
-                            'reason': f'2차 익절 ({pnl*100:.1f}%) - 40% 매도'
-                        })
-                        
-                        position.shares_sold_2nd = shares_to_sell
-                        self.save_positions()
-                
-                # 1차 익절
-                elif current_price >= position.take_profit1 and position.shares_sold_1st == 0:
-                    shares_to_sell = int(position.shares * 0.4)
-                    if shares_to_sell > 0:
-                        pnl = (current_price - position.buy_price) / position.buy_price
-                        actions.append({
-                            'action': 'TAKE_PROFIT_1',
-                            'symbol': symbol,
-                            'shares': shares_to_sell,
-                            'pnl': pnl * 100,
-                            'reason': f'1차 익절 ({pnl*100:.1f}%) - 40% 매도'
-                        })
-                        
-                        position.shares_sold_1st = shares_to_sell
-                        self.save_positions()
-                
-                # 화목 강제 청산
-                elif self._should_force_exit(position, current_time):
-                    remaining = position.get_remaining_shares()
-                    if remaining > 0:
-                        pnl = (current_price - position.buy_price) / position.buy_price
-                        reason = self._get_exit_reason(position, current_time)
-                        
-                        actions.append({
-                            'action': 'FORCE_EXIT',
-                            'symbol': symbol,
-                            'shares': remaining,
-                            'pnl': pnl * 100,
-                            'reason': reason
-                        })
-                        
-                        day_type = "TUESDAY" if position.buy_date.weekday() == 1 else "THURSDAY"
-                        self.target_manager.add_trade(symbol, pnl, position.buy_price, current_price, day_type)
-                        self._close_position(symbol, current_price, 'FORCE_EXIT')
-                
-                # 트레일링 스톱
-                else:
-                    self._update_trailing_stop(position, current_price)
-                
-            except Exception as e:
-                print(f"⚠️ {symbol} 체크 실패: {e}")
-                continue
-        
-        return actions
+    asyncio.run(main())                    
