@@ -720,8 +720,107 @@ class USStrategyManager(StrategyPositionManager):
         except Exception as e:
             return {'symbol': symbol, 'success': False, 'error': str(e)}
 
+class JapanStrategyManager(StrategyPositionManager):
+    """일본 주식 전략 매니저 (화목 하이브리드)"""
+    
+    def __init__(self):
+        super().__init__("JAPAN_STRATEGY")
+    
+    async def get_all_positions(self) -> Dict:
+        """일본 주식 포지션 조회"""
+        # 실제로는 jp_strategy.py의 포지션 매니저에서 조회
+        return {
+            '7203.T': {'quantity': 100, 'avg_price': 2450, 'current_pnl': 2800, 'day_type': 'TUESDAY'},
+            '6758.T': {'quantity': 50, 'avg_price': 6800, 'current_pnl': -1200, 'day_type': 'THURSDAY'},
+            '9984.T': {'quantity': 30, 'avg_price': 3200, 'current_pnl': 900, 'day_type': 'TUESDAY'}
+        }
+    
+    async def emergency_sell_position(self, symbol: str, mode: FailsafeMode) -> Dict:
+        """긴급 포지션 매도"""
+        try:
+            # 실제로는 IBKR API 호출 (일본 계좌)
+            if mode == FailsafeMode.PANIC_SELL:
+                # 즉시 시장가 매도
+                logger.info(f"🚨 {symbol} 패닉 매도 (IBKR-JP)")
+                return {'symbol': symbol, 'success': True, 'type': 'market_sell'}
+            
+            elif mode == FailsafeMode.CONSERVATIVE_SELL:
+                # 화목 전략 특성 고려한 매도
+                position = (await self.get_all_positions()).get(symbol, {})
+                pnl = position.get('current_pnl', 0)
+                day_type = position.get('day_type', 'UNKNOWN')
+                
+                # 화요일 포지션: -3000엔 이상 손실시 매도
+                # 목요일 포지션: -1500엔 이상 손실시 매도
+                loss_threshold = -3000 if day_type == 'TUESDAY' else -1500
+                
+                if pnl < loss_threshold:
+                    logger.info(f"⚠️ {symbol} 화목전략 손실 제한 매도 (IBKR-JP)")
+                    return {'symbol': symbol, 'success': True, 'type': 'conservative_sell'}
+                else:
+                    logger.info(f"⏸️ {symbol} 화목전략 손실 적어 홀딩 유지")
+                    return {'symbol': symbol, 'success': False, 'type': 'hold'}
+            
+            return {'symbol': symbol, 'success': False, 'type': 'unknown_mode'}
+            
+        except Exception as e:
+            return {'symbol': symbol, 'success': False, 'error': str(e)}
+
+class IndiaStrategyManager(StrategyPositionManager):
+    """인도 주식 전략 매니저 (수요일 전용 안정형)"""
+    
+    def __init__(self):
+        super().__init__("INDIA_STRATEGY")
+    
+    async def get_all_positions(self) -> Dict:
+        """인도 주식 포지션 조회"""
+        # 실제로는 inda_strategy.py의 포지션 매니저에서 조회
+        return {
+            'RELIANCE': {'quantity': 100, 'avg_price': 2450, 'current_pnl': 1500, 'index': 'NIFTY50'},
+            'TCS': {'quantity': 50, 'avg_price': 3200, 'current_pnl': -800, 'index': 'NIFTY50'},
+            'HDFCBANK': {'quantity': 80, 'avg_price': 1650, 'current_pnl': 600, 'index': 'SENSEX'},
+            'BAJFINANCE': {'quantity': 30, 'avg_price': 6800, 'current_pnl': -1200, 'index': 'NEXT50'}
+        }
+    
+    async def emergency_sell_position(self, symbol: str, mode: FailsafeMode) -> Dict:
+        """긴급 포지션 매도"""
+        try:
+            # 실제로는 IBKR API 호출 (인도 계좌)
+            if mode == FailsafeMode.PANIC_SELL:
+                # 즉시 시장가 매도
+                logger.info(f"🚨 {symbol} 패닉 매도 (IBKR-IN)")
+                return {'symbol': symbol, 'success': True, 'type': 'market_sell'}
+            
+            elif mode == FailsafeMode.CONSERVATIVE_SELL:
+                # 안정형 전략 특성 고려한 매도
+                position = (await self.get_all_positions()).get(symbol, {})
+                pnl = position.get('current_pnl', 0)
+                index_type = position.get('index', 'UNKNOWN')
+                
+                # 지수별 차등 손실 한도
+                loss_thresholds = {
+                    'NIFTY50': -2000,   # 대형주: -2000루피
+                    'SENSEX': -2000,    # 블루칩: -2000루피
+                    'NEXT50': -2500,    # 중형주: -2500루피
+                    'SMALLCAP': -3000   # 소형주: -3000루피
+                }
+                
+                threshold = loss_thresholds.get(index_type, -2000)
+                
+                if pnl < threshold:
+                    logger.info(f"⚠️ {symbol} 인도안정형 손실 제한 매도 (IBKR-IN)")
+                    return {'symbol': symbol, 'success': True, 'type': 'conservative_sell'}
+                else:
+                    logger.info(f"⏸️ {symbol} 인도안정형 손실 적어 홀딩 유지")
+                    return {'symbol': symbol, 'success': False, 'type': 'hold'}
+            
+            return {'symbol': symbol, 'success': False, 'type': 'unknown_mode'}
+            
+        except Exception as e:
+            return {'symbol': symbol, 'success': False, 'error': str(e)}
+
 class CryptoStrategyManager(StrategyPositionManager):
-    """가상화폐 전략 매니저 예시"""
+    """가상화폐 전략 매니저 (월금 매매)"""
     
     def __init__(self):
         super().__init__("CRYPTO_STRATEGY")
@@ -730,8 +829,10 @@ class CryptoStrategyManager(StrategyPositionManager):
         """가상화폐 포지션 조회"""
         # 실제로는 coin_strategy.py의 포지션 매니저에서 조회
         return {
-            'KRW-BTC': {'quantity': 0.1, 'avg_price': 50000000, 'current_pnl': 500000},
-            'KRW-ETH': {'quantity': 1.0, 'avg_price': 3000000, 'current_pnl': -100000}
+            'KRW-BTC': {'quantity': 0.1, 'avg_price': 50000000, 'current_pnl': 500000, 'quality': 'HIGH'},
+            'KRW-ETH': {'quantity': 1.0, 'avg_price': 3000000, 'current_pnl': -100000, 'quality': 'HIGH'},
+            'KRW-BNB': {'quantity': 10.0, 'avg_price': 500000, 'current_pnl': 200000, 'quality': 'MID'},
+            'KRW-ADA': {'quantity': 1000.0, 'avg_price': 800, 'current_pnl': -50000, 'quality': 'LOW'}
         }
     
     async def emergency_sell_position(self, symbol: str, mode: FailsafeMode) -> Dict:
@@ -745,11 +846,22 @@ class CryptoStrategyManager(StrategyPositionManager):
             elif mode == FailsafeMode.CONSERVATIVE_SELL:
                 position = (await self.get_all_positions()).get(symbol, {})
                 pnl = position.get('current_pnl', 0)
+                quality = position.get('quality', 'LOW')
                 
-                if pnl < -500000:  # 50만원 이상 손실시만 매도
-                    logger.info(f"⚠️ {symbol} 손실 제한 매도 (업비트)")
+                # 품질별 차등 손실 한도
+                loss_thresholds = {
+                    'HIGH': -1000000,   # 고품질(BTC,ETH): -100만원
+                    'MID': -500000,     # 중품질: -50만원
+                    'LOW': -200000      # 저품질: -20만원
+                }
+                
+                threshold = loss_thresholds.get(quality, -300000)
+                
+                if pnl < threshold:
+                    logger.info(f"⚠️ {symbol} 암호화폐 손실 제한 매도 (업비트)")
                     return {'symbol': symbol, 'success': True, 'type': 'conservative_sell'}
                 else:
+                    logger.info(f"⏸️ {symbol} 암호화폐 손실 적어 홀딩 유지")
                     return {'symbol': symbol, 'success': False, 'type': 'hold'}
             
             return {'symbol': symbol, 'success': False, 'type': 'unknown_mode'}
@@ -762,18 +874,22 @@ class CryptoStrategyManager(StrategyPositionManager):
 # ============================================================================
 
 async def main():
-    """네트워크 안전장치 테스트 실행"""
-    print("🚨 네트워크 안전장치 시스템 테스트 🚨")
-    print("="*60)
+    """네트워크 안전장치 4가지 전략 통합 테스트"""
+    print("🚨 네트워크 안전장치 시스템 테스트 - 4가지 전략 통합 🚨")
+    print("="*70)
     
     # 안전장치 시스템 초기화
     failsafe_system = NetworkFailsafeSystem()
     
-    # 전략 매니저들 등록
+    # 4가지 전략 매니저들 등록
     us_manager = USStrategyManager()
+    japan_manager = JapanStrategyManager()
+    india_manager = IndiaStrategyManager()
     crypto_manager = CryptoStrategyManager()
     
     failsafe_system.register_strategy_manager("US_STOCKS", us_manager)
+    failsafe_system.register_strategy_manager("JP_STOCKS", japan_manager)
+    failsafe_system.register_strategy_manager("IN_STOCKS", india_manager)
     failsafe_system.register_strategy_manager("CRYPTO", crypto_manager)
     
     # 시스템 상태 출력
@@ -782,23 +898,40 @@ async def main():
     for key, value in status.items():
         print(f"   {key}: {value}")
     
-    print(f"\n🔍 설정된 기능:")
+    print(f"\n🔍 4가지 전략 설정:")
+    print(f"   🇺🇸 미국주식: IBKR 연동 (포트: {os.getenv('IBKR_PORT_US', '7497')})")
+    print(f"   🇯🇵 일본주식: IBKR 연동 (포트: {os.getenv('IBKR_PORT_JP', '7498')}) - 화목 하이브리드")
+    print(f"   🇮🇳 인도주식: IBKR 연동 (포트: {os.getenv('IBKR_PORT_IN', '7499')}) - 수요일 안정형")
+    print(f"   🪙 가상화폐: 업비트 연동 - 월금 매매")
+    
+    print(f"\n🚨 안전장치 기능:")
     print(f"   네트워크 모니터링: {failsafe_system.enabled}")
     print(f"   장애 대응 모드: {failsafe_system.failsafe_mode.value}")
     print(f"   등록된 전략: {len(failsafe_system.strategy_managers)}개")
     print(f"   텔레그램 알림: {failsafe_system.telegram_enabled}")
+    print(f"   임계 손실 한도: ${failsafe_system.critical_loss_threshold:,.0f}")
+    
+    print(f"\n💡 전략별 손실 한도:")
+    print(f"   🇺🇸 미국: $1,000 이상 손실시 보수적 매도")
+    print(f"   🇯🇵 일본: 화요일 -3,000엔, 목요일 -1,500엔")
+    print(f"   🇮🇳 인도: 대형주 -2,000루피, 중소형주 -2,500~3,000루피")
+    print(f"   🪙 코인: 고품질 -100만원, 중품질 -50만원, 저품질 -20만원")
     
     print(f"\n🛠️ 수동 제어 방법:")
     print(f"   긴급 전량매도: touch {failsafe_system.file_controller.emergency_sell_file}")
     print(f"   거래 중단: touch {failsafe_system.file_controller.emergency_stop_file}")
     print(f"   거래 재개: touch {failsafe_system.file_controller.emergency_enable_file}")
     
-    print(f"\n🚀 안전장치 시스템 시작 (Ctrl+C로 중지)")
+    print(f"\n🔗 체크 URL들:")
+    for i, url in enumerate(failsafe_system.network_monitor.check_urls, 1):
+        print(f"   {i}. {url}")
+    
+    print(f"\n🚀 4가지 전략 통합 안전장치 시스템 시작 (Ctrl+C로 중지)")
     
     try:
         await failsafe_system.start_monitoring()
     except KeyboardInterrupt:
-        print(f"\n👋 안전장치 시스템을 중지합니다")
+        print(f"\n👋 4가지 전략 통합 안전장치 시스템을 중지합니다")
         failsafe_system.stop_monitoring()
     except Exception as e:
         print(f"\n❌ 시스템 오류: {e}")
@@ -807,31 +940,44 @@ def create_emergency_files():
     """긴급 제어 파일들 생성 (수동 실행용)"""
     controller = EmergencyFileController()
     
-    print("🚨 긴급 제어 파일 생성 도구")
-    print("1. 긴급 전량매도")
-    print("2. 거래 중단")
-    print("3. 거래 재개")
-    print("4. 모든 파일 삭제")
+    print("🚨 4가지 전략 통합 긴급 제어 파일 생성 도구")
+    print("="*50)
+    print("🇺🇸 미국주식 + 🇯🇵 일본주식 + 🇮🇳 인도주식 + 🪙 가상화폐")
+    print("="*50)
+    print("1. 🚨 긴급 전량매도 (모든 전략)")
+    print("2. ⏸️ 거래 중단 (신규 거래만)")
+    print("3. ▶️ 거래 재개")
+    print("4. 🗑️ 모든 파일 삭제")
+    print("5. 📊 현재 파일 상태 확인")
     
-    choice = input("선택 (1-4): ").strip()
+    choice = input("선택 (1-5): ").strip()
     
     if choice == '1':
-        reason = input("매도 사유 입력: ").strip() or "Manual emergency sell"
+        reason = input("매도 사유 입력: ").strip() or "Manual emergency sell - All strategies"
         controller.create_emergency_sell_file(reason)
-        print("✅ 긴급 전량매도 파일 생성됨")
+        print("✅ 긴급 전량매도 파일 생성됨 (4가지 전략 모두 적용)")
+        print("⚠️ 모든 포지션이 즉시 매도됩니다!")
     
     elif choice == '2':
-        reason = input("중단 사유 입력: ").strip() or "Manual trading stop"
+        reason = input("중단 사유 입력: ").strip() or "Manual trading stop - All strategies"
         controller.create_emergency_stop_file(reason)
-        print("✅ 거래 중단 파일 생성됨")
+        print("✅ 거래 중단 파일 생성됨 (4가지 전략 신규 거래 중단)")
+        print("ℹ️ 기존 포지션은 유지됩니다")
     
     elif choice == '3':
         controller.create_emergency_enable_file()
-        print("✅ 거래 재개 파일 생성됨")
+        print("✅ 거래 재개 파일 생성됨 (4가지 전략 거래 재개)")
     
     elif choice == '4':
         controller.clear_emergency_files()
         print("✅ 모든 긴급 파일 삭제됨")
+    
+    elif choice == '5':
+        file_status = controller.check_emergency_files()
+        print(f"\n📊 현재 파일 상태:")
+        print(f"   전량매도: {'🔴 활성' if file_status['sell_all'] else '🟢 비활성'}")
+        print(f"   거래중단: {'🔴 활성' if file_status['stop_trading'] else '🟢 비활성'}")
+        print(f"   거래재개: {'🟡 대기' if file_status['enable_trading'] else '⚪ 없음'}")
     
     else:
         print("❌ 잘못된 선택")
