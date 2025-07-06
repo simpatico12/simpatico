@@ -1,56 +1,87 @@
 #!/usr/bin/env python3
 """
-🏆 YEN-HUNTER: 전설적인 일본 주식 퀸트 전략 (TOPIX+JPX400 업그레이드)
+🏆 YEN-HUNTER v2.0 HYBRID: 화목 하이브리드 전략
 ===============================================================================
-🎯 핵심: 엔화가 모든 것을 지배한다
-⚡ 원칙: 단순함이 최고다  
-🚀 목표: 자동화가 승리한다
-🆕 업그레이드: 닛케이225 + TOPIX + JPX400 종합 헌팅
+🎯 핵심: 엔화 + 화목 집중 + 3차 익절
+⚡ 원칙: 핵심 성능 + 관리 용이성  
+🚀 목표: 월 14% (화 2.5% + 목 1.5%) × 4주
 
-Version: LEGENDARY 1.1 (TOPIX+JPX400)
-Author: 퀸트팀 & Claude
+화목 하이브리드:
+- 화요일: 메인 스윙 (2-3일, 4%→7%→12%)
+- 목요일: 보완 단기 (당일~2일, 1.5%→3%→5%)
+
+Option 2 구성:
+- 기술지표: 6개 핵심 (RSI, MACD, 볼린저, 스토캐스틱, ATR, 거래량)
+- 종목헌팅: 3개 지수 전체 (닛케이225 + TOPIX + JPX400)
+- 월간관리: 핵심 목표 관리 시스템
 """
 
 import asyncio
 import logging
 import time
-from datetime import datetime
-from typing import Dict, List, Tuple
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional
 import numpy as np
 import pandas as pd
 import yfinance as yf
 import requests
 from bs4 import BeautifulSoup
 from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
+
+# IBKR 연동
+try:
+    from ib_insync import *
+    IBKR_AVAILABLE = True
+except ImportError:
+    IBKR_AVAILABLE = False
+    print("⚠️ IBKR 시뮬레이션 모드")
 
 # ============================================================================
-# 🔧 전설의 설정 (5개면 충분)
+# 🔧 화목 하이브리드 설정
 # ============================================================================
 class Config:
-    """전설적인 미니멀 설정"""
-    # 엔화 임계값 (핵심)
-    YEN_STRONG = 105.0    # 이하면 내수주 폭탄
-    YEN_WEAK = 110.0      # 이상이면 수출주 전력
+    # 엔화 임계값
+    YEN_STRONG = 105.0
+    YEN_WEAK = 110.0
     
     # 선별 기준
-    MIN_MARKET_CAP = 5e11   # 5000억엔 이상
-    TARGET_STOCKS = 15      # 탑15 선별
+    MIN_MARKET_CAP = 5e11
+    TARGET_STOCKS = 15
     
-    # 매매 임계값
-    BUY_THRESHOLD = 0.7     # 70% 이상이면 매수
+    # 화목 스케줄
+    TRADING_DAYS = [1, 3]  # 화, 목
+    TUESDAY_MAX_HOLD = 5
+    THURSDAY_MAX_HOLD = 2
+    MAX_TUESDAY_TRADES = 2
+    MAX_THURSDAY_TRADES = 3
     
-    # 백테스팅
-    BACKTEST_PERIOD = "1y"  # 1년 백테스트
+    # 월간 목표
+    JAPAN_MONTHLY_TARGET = 0.14
+    JAPAN_MONTHLY_SAFE = 0.10
+    JAPAN_MONTHLY_LIMIT = -0.05
+    
+    # 매수 임계값
+    BUY_THRESHOLD_TUESDAY = 0.75
+    BUY_THRESHOLD_THURSDAY = 0.65
+    
+    # IBKR
+    IBKR_HOST = '127.0.0.1'
+    IBKR_PORT = 7497
+    IBKR_CLIENT_ID = 1
+    
+    # 데이터
+    DATA_DIR = Path("yen_hunter_data")
 
 # ============================================================================
-# 📊 전설의 고급 기술지표 (ta-lib 없이 완전 자체 구현)
+# 📊 핵심 기술지표 6개 (Option 2)
 # ============================================================================
-class LegendaryIndicators:
-    """🏆 전설적인 고급 기술지표 (직접 계산)"""
-    
+class Indicators:
     @staticmethod
     def rsi(prices: pd.Series, period: int = 14) -> float:
-        """전설의 RSI (30이하 매수, 70이상 매도)"""
+        """전설의 RSI"""
         try:
             delta = prices.diff()
             gain = delta.where(delta > 0, 0).rolling(period).mean()
@@ -63,7 +94,7 @@ class LegendaryIndicators:
     
     @staticmethod
     def macd(prices: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[str, Dict]:
-        """🚀 전설의 MACD (추세 전환의 신)"""
+        """전설의 MACD"""
         try:
             ema_fast = prices.ewm(span=fast).mean()
             ema_slow = prices.ewm(span=slow).mean()
@@ -76,14 +107,13 @@ class LegendaryIndicators:
             current_hist = float(histogram.iloc[-1])
             prev_hist = float(histogram.iloc[-2]) if len(histogram) > 1 else 0
             
-            # 신호 판정
             if current_macd > current_signal and current_hist > 0:
-                if prev_hist <= 0:  # 골든크로스
+                if prev_hist <= 0:
                     signal_type = "GOLDEN_CROSS"
                 else:
                     signal_type = "BULLISH"
             elif current_macd < current_signal and current_hist < 0:
-                if prev_hist >= 0:  # 데드크로스
+                if prev_hist >= 0:
                     signal_type = "DEAD_CROSS"
                 else:
                     signal_type = "BEARISH"
@@ -103,7 +133,7 @@ class LegendaryIndicators:
     
     @staticmethod
     def bollinger_bands(prices: pd.Series, period: int = 20, std_dev: float = 2.0) -> Tuple[str, Dict]:
-        """💎 전설의 볼린저밴드 (변동성의 마법사)"""
+        """전설의 볼린저밴드"""
         try:
             sma = prices.rolling(period).mean()
             std = prices.rolling(period).std()
@@ -115,22 +145,19 @@ class LegendaryIndicators:
             middle = float(sma.iloc[-1])
             lower = float(lower_band.iloc[-1])
             
-            # 밴드 위치 계산 (0~1)
             band_position = (current_price - lower) / (upper - lower) if upper != lower else 0.5
             
-            # 신호 판정
             if current_price >= upper:
-                signal = "UPPER_BREAK"  # 상단 돌파 (과매수)
+                signal = "UPPER_BREAK"
             elif current_price <= lower:
-                signal = "LOWER_BREAK"  # 하단 돌파 (과매도 = 매수기회!)
+                signal = "LOWER_BREAK"
             elif band_position >= 0.8:
-                signal = "UPPER_ZONE"   # 상단 근접
+                signal = "UPPER_ZONE"
             elif band_position <= 0.2:
-                signal = "LOWER_ZONE"   # 하단 근접 (매수 관심)
+                signal = "LOWER_ZONE"
             else:
-                signal = "MIDDLE_ZONE"  # 중간대
+                signal = "MIDDLE_ZONE"
             
-            # 밴드 폭 (변동성 측정)
             band_width = (upper - lower) / middle if middle != 0 else 0
             
             details = {
@@ -139,7 +166,7 @@ class LegendaryIndicators:
                 'lower': lower,
                 'position': band_position,
                 'width': band_width,
-                'squeeze': band_width < 0.1  # 볼린저 스퀴즈
+                'squeeze': band_width < 0.1
             }
             
             return signal, details
@@ -148,7 +175,7 @@ class LegendaryIndicators:
     
     @staticmethod
     def stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int = 14, d_period: int = 3) -> Tuple[str, Dict]:
-        """⚡ 전설의 스토캐스틱 (모멘텀의 황제)"""
+        """전설의 스토캐스틱"""
         try:
             lowest_low = low.rolling(k_period).min()
             highest_high = high.rolling(k_period).max()
@@ -159,15 +186,14 @@ class LegendaryIndicators:
             current_d = float(d_percent.iloc[-1]) if not pd.isna(d_percent.iloc[-1]) else 50
             prev_k = float(k_percent.iloc[-2]) if len(k_percent) > 1 and not pd.isna(k_percent.iloc[-2]) else current_k
             
-            # 신호 판정
             if current_k <= 20 and current_d <= 20:
-                signal = "OVERSOLD"      # 과매도 (강력한 매수 신호!)
+                signal = "OVERSOLD"
             elif current_k >= 80 and current_d >= 80:
-                signal = "OVERBOUGHT"    # 과매수 (매도 신호)
+                signal = "OVERBOUGHT"
             elif current_k > current_d and prev_k <= current_d:
-                signal = "BULLISH_CROSS" # 골든크로스
+                signal = "BULLISH_CROSS"
             elif current_k < current_d and prev_k >= current_d:
-                signal = "BEARISH_CROSS" # 데드크로스
+                signal = "BEARISH_CROSS"
             else:
                 signal = "NEUTRAL"
             
@@ -183,7 +209,7 @@ class LegendaryIndicators:
     
     @staticmethod
     def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> float:
-        """🔥 전설의 ATR (변동성의 척도)"""
+        """전설의 ATR"""
         try:
             prev_close = close.shift(1)
             tr1 = high - low
@@ -196,106 +222,36 @@ class LegendaryIndicators:
             return 0.0
     
     @staticmethod
-    def fibonacci_levels(prices: pd.Series, period: int = 50) -> Dict:
-        """🌟 전설의 피보나치 (황금비율의 마법)"""
-        try:
-            recent_data = prices.tail(period)
-            high_price = float(recent_data.max())
-            low_price = float(recent_data.min())
-            current_price = float(prices.iloc[-1])
-            
-            # 피보나치 되돌림 레벨
-            diff = high_price - low_price
-            levels = {
-                'high': high_price,
-                'low': low_price,
-                'fib_23.6': high_price - (diff * 0.236),
-                'fib_38.2': high_price - (diff * 0.382),
-                'fib_50.0': high_price - (diff * 0.500),
-                'fib_61.8': high_price - (diff * 0.618),
-                'fib_78.6': high_price - (diff * 0.786)
-            }
-            
-            # 현재가가 어느 레벨 근처인지 확인
-            tolerance = diff * 0.02  # 2% 허용 오차
-            near_level = None
-            
-            for level_name, level_price in levels.items():
-                if abs(current_price - level_price) <= tolerance:
-                    near_level = level_name
-                    break
-            
-            return {
-                'levels': levels,
-                'current_price': current_price,
-                'near_level': near_level,
-                'trend_direction': 'UP' if current_price > levels['fib_50.0'] else 'DOWN'
-            }
-        except:
-            return {}
-    
-    @staticmethod
-    def momentum_oscillator(prices: pd.Series, period: int = 10) -> Tuple[str, float]:
-        """🚀 전설의 모멘텀 (가속도의 신)"""
-        try:
-            momentum = ((prices / prices.shift(period)) - 1) * 100
-            current_momentum = float(momentum.iloc[-1]) if not pd.isna(momentum.iloc[-1]) else 0
-            
-            # 모멘텀 시그널
-            if current_momentum > 5:
-                signal = "STRONG_BULLISH"
-            elif current_momentum > 2:
-                signal = "BULLISH"
-            elif current_momentum < -5:
-                signal = "STRONG_BEARISH"
-            elif current_momentum < -2:
-                signal = "BEARISH"
-            else:
-                signal = "NEUTRAL"
-            
-            return signal, current_momentum
-        except:
-            return "NEUTRAL", 0.0
-    
-    @staticmethod
     def volume_analysis(prices: pd.Series, volumes: pd.Series) -> Dict:
-        """📊 전설의 볼륨 분석 (돈의 흐름을 읽는다)"""
+        """전설의 볼륨 분석"""
         try:
-            # 가격 변화량
             price_change = prices.pct_change()
             
-            # On-Balance Volume (OBV)
+            # On-Balance Volume
             obv = (volumes * np.sign(price_change)).cumsum()
             obv_trend = "UP" if obv.iloc[-1] > obv.iloc[-10] else "DOWN"
             
-            # Volume Weighted Average Price (VWAP) 근사
-            vwap = (prices * volumes).rolling(20).sum() / volumes.rolling(20).sum()
-            current_vwap = float(vwap.iloc[-1]) if not pd.isna(vwap.iloc[-1]) else 0
-            current_price = float(prices.iloc[-1])
-            
-            # 거래량 급증
+            # Volume spike
             recent_vol = volumes.tail(3).mean()
             avg_vol = volumes.tail(20).head(17).mean()
             volume_spike = recent_vol > avg_vol * 1.5
             volume_ratio = recent_vol / avg_vol if avg_vol > 0 else 1
             
-            # 가격-거래량 발산
+            # Price-Volume divergence
             price_up = price_change.iloc[-1] > 0
             volume_up = volumes.iloc[-1] > volumes.iloc[-2]
             
             if price_up and volume_up:
-                pv_signal = "BULLISH_CONFIRM"     # 상승 + 거래량 증가 (강세 확인)
+                pv_signal = "BULLISH_CONFIRM"
             elif not price_up and volume_up:
-                pv_signal = "BEARISH_VOLUME"      # 하락 + 거래량 증가 (약세 확인)
+                pv_signal = "BEARISH_VOLUME"
             elif price_up and not volume_up:
-                pv_signal = "WEAK_RALLY"          # 상승하지만 거래량 부족 (약한 상승)
+                pv_signal = "WEAK_RALLY"
             else:
                 pv_signal = "NEUTRAL"
             
             return {
                 'obv_trend': obv_trend,
-                'vwap': current_vwap,
-                'price_vs_vwap': 'ABOVE' if current_price > current_vwap else 'BELOW',
                 'volume_spike': volume_spike,
                 'volume_ratio': volume_ratio,
                 'price_volume_signal': pv_signal
@@ -305,7 +261,7 @@ class LegendaryIndicators:
     
     @staticmethod
     def trend_signal(prices: pd.Series) -> str:
-        """전설의 추세 체크 (5일 > 20일 > 60일)"""
+        """추세 신호"""
         try:
             ma5 = prices.rolling(5).mean().iloc[-1]
             ma20 = prices.rolling(20).mean().iloc[-1]
@@ -320,54 +276,39 @@ class LegendaryIndicators:
                 return "SIDEWAYS"
         except:
             return "SIDEWAYS"
-    
-    @staticmethod
-    def volume_spike(volumes: pd.Series) -> bool:
-        """거래량 급증 체크"""
-        try:
-            recent = volumes.tail(3).mean()
-            avg = volumes.tail(20).head(17).mean()
-            return recent > avg * 1.5
-        except:
-            return False
 
 # ============================================================================
-# 🔍 전설의 종목 헌터 (닛케이225 + TOPIX + JPX400)
+# 🔍 3개 지수 통합 종목 헌터 (Option 2)
 # ============================================================================
 class StockHunter:
-    """전설적인 종목 헌터 (3개 지수 통합)"""
-    
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (compatible; YenHunter/1.0)'
-        })
+        self.session.headers.update({'User-Agent': 'Mozilla/5.0 (compatible; YenHunter/2.0)'})
         
-        # 백업 탑종목 (크롤링 실패시)
         self.backup_stocks = [
-            '7203.T', '6758.T', '9984.T', '6861.T', '8306.T',  # 대형주
-            '7974.T', '9432.T', '8316.T', '6367.T', '4063.T',  # 우량주
-            '9983.T', '8411.T', '6954.T', '7201.T', '6981.T'   # 안정주
+            '7203.T', '6758.T', '9984.T', '6861.T', '8306.T',
+            '7974.T', '9432.T', '8316.T', '6367.T', '4063.T',
+            '9983.T', '8411.T', '6954.T', '7201.T', '6981.T'
         ]
     
     async def hunt_japanese_stocks(self) -> List[str]:
-        """🆕 일본 주식 종합 헌팅 (닛케이225 + TOPIX + JPX400)"""
+        """3개 지수 통합 헌팅"""
         all_symbols = set()
         
-        # 1. 닛케이225 크롤링
+        # 1. 닛케이225
         nikkei_symbols = await self.hunt_nikkei225()
         all_symbols.update(nikkei_symbols)
         print(f"📡 닛케이225: {len(nikkei_symbols)}개")
         
-        # 2. TOPIX 크롤링
+        # 2. TOPIX
         topix_symbols = await self.hunt_topix()
         all_symbols.update(topix_symbols)
-        print(f"📊 TOPIX 추가: {len(topix_symbols)}개")
+        print(f"📊 TOPIX: {len(topix_symbols)}개")
         
-        # 3. JPX400 크롤링
+        # 3. JPX400
         jpx400_symbols = await self.hunt_jpx400()
         all_symbols.update(jpx400_symbols)
-        print(f"🏆 JPX400 추가: {len(jpx400_symbols)}개")
+        print(f"🏆 JPX400: {len(jpx400_symbols)}개")
         
         final_symbols = list(all_symbols)
         print(f"🎯 총 수집: {len(final_symbols)}개 종목")
@@ -375,7 +316,7 @@ class StockHunter:
         return final_symbols
     
     async def hunt_nikkei225(self) -> List[str]:
-        """닛케이225 실시간 헌팅"""
+        """닛케이225 헌팅"""
         try:
             url = "https://finance.yahoo.com/quote/%5EN225/components"
             response = self.session.get(url, timeout=15)
@@ -393,11 +334,11 @@ class StockHunter:
             return list(symbols)[:50] if symbols else self.backup_stocks
             
         except Exception as e:
-            print(f"⚠️ 닛케이225 크롤링 실패, 백업 사용: {e}")
+            print(f"⚠️ 닛케이225 실패, 백업 사용: {e}")
             return self.backup_stocks
     
     async def hunt_topix(self) -> List[str]:
-        """📊 TOPIX 구성종목 크롤링"""
+        """TOPIX 헌팅"""
         try:
             symbols = set()
             
@@ -414,148 +355,698 @@ class StockHunter:
                         if symbol.endswith('.T') and len(symbol) <= 8:
                             symbols.add(symbol)
                             
-                print(f"📊 TOPIX Yahoo: {len(symbols)}개")
             except Exception as e:
-                print(f"⚠️ TOPIX Yahoo 실패: {e}")
+                print(f"{emoji} {action['symbol']}: {action['reason']}")
+        
+        # 2. 새로운 기회
+        signals = await self.hunt_and_analyze()
+        buy_signals = [s for s in signals if s.action == 'BUY' and s.symbol not in self.position_mgr.positions]
+        
+        if buy_signals:
+            buy_signals.sort(key=lambda x: x.confidence, reverse=True)
+            max_trades = Config.MAX_TUESDAY_TRADES if today.weekday() == 1 else Config.MAX_THURSDAY_TRADES
             
-            # TOPIX 대형주 위주 추가
+            executed = 0
+            for signal in buy_signals[:max_trades]:
+                if signal.position_size > 0:
+                    print(f"💰 {signal.symbol} 매수: {signal.confidence:.1%}")
+                    
+                    # IBKR 주문
+                    if self.ibkr.connected:
+                        result = await self.ibkr.place_order(signal.symbol, 'BUY', signal.position_size)
+                        if result['status'] == 'success':
+                            self.position_mgr.open_position(signal)
+                            executed += 1
+                    else:
+                        await self.ibkr.connect()
+                        self.position_mgr.open_position(signal)
+                        executed += 1
+            
+            print(f"✅ {day_name} {executed}개 매수 실행")
+        else:
+            print(f"😴 {day_name} 매수 기회 없음")
+        
+        # 현황
+        status = self.get_status()
+        print(f"📊 현재: {status['open_positions']}개 포지션 | 월 진행률: {self.position_mgr.target_manager.get_status()['target_progress']:.1f}%")
+    
+    async def monitor_positions(self):
+        """포지션 모니터링"""
+        print("👁️ 포지션 모니터링 시작...")
+        
+        while True:
+            try:
+                actions = await self.position_mgr.check_positions()
+                if actions:
+                    for action in actions:
+                        emoji = "🛑" if 'STOP' in action['action'] else "💰"
+                        print(f"⚡ {emoji} {action['symbol']}: {action['reason']}")
+                
+                await asyncio.sleep(300)  # 5분마다
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                print(f"⚠️ 모니터링 오류: {e}")
+                await asyncio.sleep(60)
+    
+    def get_status(self) -> Dict:
+        """현황 반환"""
+        total_positions = len(self.position_mgr.positions)
+        closed_trades = len(self.position_mgr.closed_positions)
+        
+        if self.position_mgr.closed_positions:
+            avg_pnl = sum([t['pnl'] for t in self.position_mgr.closed_positions]) / closed_trades
+            win_rate = len([t for t in self.position_mgr.closed_positions if t['pnl'] > 0]) / closed_trades * 100
+        else:
+            avg_pnl = win_rate = 0
+        
+        monthly = self.position_mgr.target_manager.get_status()
+        
+        return {
+            'open_positions': total_positions,
+            'closed_trades': closed_trades,
+            'avg_pnl': avg_pnl,
+            'win_rate': win_rate,
+            'positions': list(self.position_mgr.positions.keys()),
+            'monthly_progress': monthly['target_progress'],
+            'monthly_pnl': monthly['total_pnl'] * 100,
+            'tuesday_pnl': monthly['tuesday_pnl'] * 100,
+            'thursday_pnl': monthly['thursday_pnl'] * 100,
+            'trading_intensity': monthly['trading_intensity']
+        }
+
+# ============================================================================
+# 🎮 편의 함수들
+# ============================================================================
+async def hunt_signals() -> List[Signal]:
+    """신호 헌팅"""
+    hunter = YenHunter()
+    return await hunter.hunt_and_analyze()
+
+async def analyze_single(symbol: str) -> Signal:
+    """단일 분석"""
+    hunter = YenHunter()
+    return await hunter.signal_gen.generate_signal(symbol)
+
+async def run_auto_selection() -> List[Dict]:
+    """자동선별 실행"""
+    hunter = YenHunter()
+    
+    print("🤖 자동선별 시스템 시작!")
+    print("="*50)
+    
+    # 3개 지수 종목 수집
+    symbols = await hunter.hunter.hunt_japanese_stocks()
+    print(f"📡 총 수집: {len(symbols)}개 종목")
+    
+    # 자동선별 실행
+    legends = await hunter.hunter.select_legends(symbols)
+    
+    print(f"\n🏆 자동선별 결과: {len(legends)}개 전설급")
+    print("="*50)
+    
+    for i, stock in enumerate(legends, 1):
+        print(f"{i:2d}. {stock['symbol']} | 점수: {stock['score']:.2f}")
+        print(f"    💰 시총: {stock['market_cap']/1e12:.1f}조엔 | 섹터: {stock['sector']}")
+        print(f"    📊 현재가: {stock['current_price']:,.0f}엔 | 거래량: {stock['avg_volume']/1e6:.1f}M")
+        print(f"    💡 이유: {stock['selection_reason']}")
+        print()
+    
+    return legends
+
+async def analyze_auto_selected() -> List[Signal]:
+    """자동선별 종목들 분석"""
+    hunter = YenHunter()
+    
+    # 자동선별 실행
+    legends = await run_auto_selection()
+    
+    if not hunter.should_trade_today():
+        print("😴 오늘은 비거래일이지만 분석은 진행합니다.")
+    
+    print("\n🔍 자동선별 종목 신호 분석")
+    print("="*50)
+    
+    signals = []
+    for i, stock in enumerate(legends, 1):
+        print(f"⚡ 분석 {i}/{len(legends)} - {stock['symbol']}")
+        signal = await hunter.signal_gen.generate_signal(stock['symbol'])
+        signals.append(signal)
+        
+        # 간단한 결과 출력
+        if signal.action == 'BUY':
+            print(f"   ✅ 매수신호! 신뢰도: {signal.confidence:.1%} | {signal.reason}")
+        else:
+            print(f"   ⏸️ 대기 (신뢰도: {signal.confidence:.1%})")
+    
+    buy_signals = [s for s in signals if s.action == 'BUY']
+    print(f"\n🎯 매수 추천: {len(buy_signals)}개 / {len(signals)}개")
+    
+    return signals
+
+def show_status():
+    """현황 출력"""
+    hunter = YenHunter()
+    status = hunter.get_status()
+    monthly = hunter.position_mgr.target_manager.get_status()
+    
+    print(f"\n📊 YEN-HUNTER v2.0 HYBRID 현황")
+    print("="*50)
+    print(f"💼 오픈 포지션: {status['open_positions']}개")
+    print(f"🎲 완료 거래: {status['closed_trades']}회")
+    print(f"📈 평균 수익: {status['avg_pnl']:.1f}%")
+    print(f"🏆 승률: {status['win_rate']:.1f}%")
+    print(f"\n📅 {monthly['month']} 월간 현황:")
+    print(f"🎯 목표 진행: {monthly['target_progress']:.1f}% / 14%")
+    print(f"💰 총 수익: {monthly['total_pnl']*100:.2f}%")
+    print(f"📊 화요일: {monthly['tuesday_pnl']*100:.2f}% ({monthly['tuesday_trades']}회)")
+    print(f"📊 목요일: {monthly['thursday_pnl']*100:.2f}% ({monthly['thursday_trades']}회)")
+    print(f"⚡ 거래 모드: {monthly['trading_intensity']}")
+    
+    if status['positions']:
+        print(f"📋 보유: {', '.join(status['positions'])}")
+
+# ============================================================================
+# 📈 백테스터 (간소화)
+# ============================================================================
+class HybridBacktester:
+    @staticmethod
+    async def backtest_symbol(symbol: str, period: str = "6mo") -> Dict:
+        """화목 하이브리드 백테스트"""
+        try:
+            stock = yf.Ticker(symbol)
+            data = stock.history(period=period)
+            
+            if len(data) < 100:
+                return {"error": "데이터 부족"}
+            
+            indicators = Indicators()
+            tuesday_trades = []
+            thursday_trades = []
+            
+            for i in range(60, len(data)):
+                current_data = data.iloc[:i+1]
+                current_date = current_data.index[-1]
+                weekday = current_date.weekday()
+                
+                # 화목만 거래
+                if weekday not in [1, 3]:
+                    continue
+                
+                # 기술지표
+                rsi = indicators.rsi(current_data['Close'])
+                macd_signal, _ = indicators.macd(current_data['Close'])
+                bb_signal, _ = indicators.bollinger_bands(current_data['Close'])
+                stoch_signal, _ = indicators.stochastic(current_data['High'], current_data['Low'], current_data['Close'])
+                
+                price = current_data['Close'].iloc[-1]
+                
+                # 화목별 매수 조건
+                should_buy = False
+                if weekday == 1:  # 화요일
+                    if rsi <= 35 and macd_signal == "GOLDEN_CROSS":
+                        should_buy = True
+                elif weekday == 3:  # 목요일
+                    if (rsi <= 25 or bb_signal == "LOWER_BREAK" or stoch_signal == "OVERSOLD"):
+                        should_buy = True
+                
+                if should_buy:
+                    # 매도 조건
+                    if weekday == 1:  # 화요일
+                        hold_target, profit_target, stop_loss = 5, 0.07, 0.03
+                    else:  # 목요일
+                        hold_target, profit_target, stop_loss = 2, 0.03, 0.02
+                    
+                    # 결과 계산
+                    future_data = data.iloc[i:i+hold_target+1]
+                    if len(future_data) > 1:
+                        for j, (future_date, future_row) in enumerate(future_data.iterrows()):
+                            if j == 0:
+                                continue
+                                
+                            future_price = future_row['Close']
+                            pnl = (future_price - price) / price
+                            
+                            if pnl >= profit_target or pnl <= -stop_loss or j == len(future_data) - 1:
+                                trade_info = {
+                                    'return': pnl * 100,
+                                    'day_type': '화요일' if weekday == 1 else '목요일'
+                                }
+                                
+                                if weekday == 1:
+                                    tuesday_trades.append(trade_info)
+                                else:
+                                    thursday_trades.append(trade_info)
+                                break
+            
+            all_trades = tuesday_trades + thursday_trades
+            if all_trades:
+                returns = [t['return']/100 for t in all_trades]
+                total_return = np.prod([1 + r for r in returns]) - 1
+                
+                return {
+                    "symbol": symbol,
+                    "total_return": total_return * 100,
+                    "total_trades": len(all_trades),
+                    "win_rate": len([r for r in returns if r > 0]) / len(returns) * 100,
+                    "tuesday_trades": len(tuesday_trades),
+                    "thursday_trades": len(thursday_trades),
+                    "tuesday_avg": np.mean([t['return'] for t in tuesday_trades]) if tuesday_trades else 0,
+                    "thursday_avg": np.mean([t['return'] for t in thursday_trades]) if thursday_trades else 0,
+                }
+            else:
+                return {"error": "거래 없음"}
+                
+        except Exception as e:
+            return {"error": str(e)}
+
+async def backtest_hybrid(symbol: str) -> Dict:
+    """백테스트"""
+    return await HybridBacktester.backtest_symbol(symbol)
+
+# ============================================================================
+# 🧪 테스트 실행
+# ============================================================================
+async def main():
+    """YEN-HUNTER v2.0 HYBRID 테스트"""
+    print("🏆 YEN-HUNTER v2.0 HYBRID 테스트!")
+    print("="*60)
+    print("📅 화목 하이브리드 전략")
+    print("🎯 월 14% 목표 (화 2.5% + 목 1.5%)")
+    print("💰 6개 핵심 지표 + 3개 지수 헌팅")
+    print("🔗 IBKR 연동 + 완전 자동화")
+    
+    # 현황 출력
+    show_status()
+    
+    # 거래일 체크
+    hunter = YenHunter()
+    if not hunter.should_trade_today():
+        print(f"\n😴 오늘은 비거래일 (월,수,금,토,일)")
+        return
+    
+    # 신호 헌팅
+    signals = await hunt_signals()
+    
+    if signals:
+        buy_signals = [s for s in signals if s.action == 'BUY']
+        buy_signals.sort(key=lambda x: x.confidence, reverse=True)
+        
+        print(f"\n🎯 매수 추천 TOP 3:")
+        for i, signal in enumerate(buy_signals[:3], 1):
+            profit1_pct = ((signal.take_profit1 - signal.price) / signal.price * 100)
+            profit2_pct = ((signal.take_profit2 - signal.price) / signal.price * 100)
+            profit3_pct = ((signal.take_profit3 - signal.price) / signal.price * 100)
+            stop_pct = ((signal.price - signal.stop_loss) / signal.price * 100)
+            
+            print(f"\n{i}. {signal.symbol} (신뢰도: {signal.confidence:.1%})")
+            print(f"   💰 {signal.price:,.0f}엔 | {signal.position_size:,}주")
+            print(f"   🛡️ 손절: -{stop_pct:.1f}%")
+            print(f"   🎯 익절: +{profit1_pct:.1f}% → +{profit2_pct:.1f}% → +{profit3_pct:.1f}%")
+            print(f"   📊 지표: RSI({signal.rsi:.0f}) {signal.macd_signal} {signal.bb_signal} {signal.stoch_signal}")
+            print(f"   💡 {signal.reason}")
+        
+        # 백테스트
+        if buy_signals:
+            print(f"\n📈 백테스트 ({buy_signals[0].symbol}):")
+            backtest_result = await backtest_hybrid(buy_signals[0].symbol)
+            if "error" not in backtest_result:
+                print(f"   📊 총 수익: {backtest_result['total_return']:.1f}%")
+                print(f"   🏆 승률: {backtest_result['win_rate']:.1f}%")
+                print(f"   📅 화요일: {backtest_result['tuesday_trades']}회 (평균 {backtest_result['tuesday_avg']:.1f}%)")
+                print(f"   📅 목요일: {backtest_result['thursday_trades']}회 (평균 {backtest_result['thursday_avg']:.1f}%)")
+    
+    print("\n✅ YEN-HUNTER v2.0 HYBRID 테스트 완료!")
+    print("\n🚀 핵심 특징 (Option 2):")
+    print("  📊 기술지표: 6개 핵심 (RSI, MACD, 볼린저, 스토캐스틱, ATR, 거래량)")
+    print("  🔍 종목헌팅: 3개 지수 통합 (닛케이225 + TOPIX + JPX400)")
+    print("  📈 월간관리: 핵심 목표 추적 + 적응형 강도 조절")
+    print("  📅 화목 차별화: 요일별 최적화된 전략")
+    print("  💰 3차 익절: 40% → 40% → 20% 분할")
+    print("  🛡️ 동적 손절: ATR + 신뢰도 기반")
+    print("  🔗 IBKR 연동: 실제 거래 + 시뮬레이션")
+    
+    print("\n💡 사용법:")
+    print("  🤖 자동선별: await run_auto_selection()")
+    print("  🔍 선별+분석: await analyze_auto_selected()")
+    print("  🚀 자동매매: await run_auto_trading()")
+    print("  🤖 완전자동: await run_full_auto_system()")
+    print("  📊 현황: show_status()")
+    print("  🔍 단일분석: await analyze_single('7203.T')")
+    print("  📈 백테스트: await backtest_hybrid('7203.T')")
+    
+    print(f"\n📁 데이터: {Config.DATA_DIR}")
+    print("🎯 화목 하이브리드로 월 14% 달성!")
+
+if __name__ == "__main__":
+    Config.DATA_DIR.mkdir(exist_ok=True)
+    asyncio.run(main())"⚠️ TOPIX Yahoo 실패: {e}")
+            
+            # TOPIX 대형주 추가
             topix_large_caps = [
-                # 대형 기술주
                 '6758.T', '9984.T', '4689.T', '6861.T', '6954.T', '4704.T',
-                # 대형 자동차
                 '7203.T', '7267.T', '7201.T', '7269.T',
-                # 대형 금융
                 '8306.T', '8316.T', '8411.T', '8604.T', '7182.T', '8766.T',
-                # 대형 통신
                 '9432.T', '9433.T', '9437.T',
-                # 대형 소매
                 '9983.T', '3382.T', '8267.T', '3086.T',
-                # 대형 에너지/유틸리티
                 '5020.T', '9501.T', '9502.T', '9503.T',
-                # 대형 화학/소재
                 '4063.T', '3407.T', '5401.T', '4188.T',
-                # 대형 제약/의료
                 '4568.T', '4502.T', '4506.T', '4523.T'
             ]
             symbols.update(topix_large_caps)
             
-            return list(symbols)[:100]  # 최대 100개
+            return list(symbols)[:80]
             
         except Exception as e:
-            print(f"⚠️ TOPIX 크롤링 실패: {e}")
+            print(f"⚠️ TOPIX 실패: {e}")
             return []
     
     async def hunt_jpx400(self) -> List[str]:
-        """🏆 JPX400 구성종목 크롤링 (수익성 좋은 종목들)"""
+        """JPX400 헌팅"""
         try:
             symbols = set()
             
-            # JPX400 대표 종목들 (ROE, 영업이익 우수)
+            # JPX400 우량주 (수익성 우수)
             jpx400_quality = [
-                # 고수익성 기술주
                 '6758.T', '6861.T', '9984.T', '4689.T', '6954.T', '4704.T', '8035.T',
-                # 고수익성 자동차
                 '7203.T', '7267.T', '7269.T',
-                # 우량 금융
                 '8306.T', '8316.T', '8411.T', '7182.T',
-                # 고수익 소재/화학
                 '4063.T', '3407.T', '4188.T', '5401.T', '4042.T',
-                # 우량 소비재
                 '2914.T', '4911.T', '9983.T', '3382.T',
-                # 고수익 제약
                 '4568.T', '4502.T', '4506.T', '4523.T',
-                # 우량 건설/부동산
                 '1803.T', '8801.T', '8802.T',
-                # 고수익 서비스
                 '9432.T', '9433.T', '4307.T', '6367.T',
-                # 우량 제조업
                 '6326.T', '6473.T', '7013.T', '6301.T'
             ]
             symbols.update(jpx400_quality)
             
-            # Yahoo Finance에서 JPX400 시도
-            try:
-                # JPX400은 직접 URL이 없어서 우량주 중심으로
-                urls = [
-                    "https://finance.yahoo.com/quote/1306.T/components",  # TOPIX ETF
-                    "https://finance.yahoo.com/quote/1570.T/components"   # NEXT JPX400
-                ]
-                
-                for url in urls:
-                    try:
-                        response = self.session.get(url, timeout=10)
-                        soup = BeautifulSoup(response.text, 'html.parser')
-                        
-                        for link in soup.find_all('a', href=True):
-                            href = link.get('href', '')
-                            if '/quote/' in href and '.T' in href:
-                                symbol = href.split('/quote/')[-1].split('?')[0]
-                                if symbol.endswith('.T') and len(symbol) <= 8:
-                                    symbols.add(symbol)
-                    except:
-                        continue
-                        
-                print(f"🏆 JPX400 수집: {len(symbols)}개")
-            except:
-                pass
-            
-            return list(symbols)[:80]  # 최대 80개
+            return list(symbols)[:60]
             
         except Exception as e:
-            print(f"⚠️ JPX400 크롤링 실패: {e}")
+            print(f"⚠️ JPX400 실패: {e}")
             return []
     
     async def select_legends(self, symbols: List[str]) -> List[Dict]:
-        """전설급 종목들만 선별"""
+        """전설급 자동선별 (완전체)"""
         legends = []
         
-        for symbol in symbols:
+        print(f"🔍 {len(symbols)}개 종목 자동선별 시작...")
+        
+        for i, symbol in enumerate(symbols, 1):
             try:
+                if i % 10 == 0:
+                    print(f"   ⚡ 선별 진행: {i}/{len(symbols)}")
+                
+                # 기본 데이터 수집
                 stock = yf.Ticker(symbol)
                 info = stock.info
+                hist = stock.history(period="3mo")
                 
+                if hist.empty or len(hist) < 60:
+                    continue
+                
+                # 기본 필터링
                 market_cap = info.get('marketCap', 0)
                 avg_volume = info.get('averageVolume', 0)
+                current_price = float(hist['Close'].iloc[-1])
                 
-                # 기준 통과 체크
-                if market_cap >= Config.MIN_MARKET_CAP and avg_volume >= 1e6:
-                    score = self._calculate_legend_score(market_cap, avg_volume, info)
-                    
+                if market_cap < Config.MIN_MARKET_CAP or avg_volume < 1e6 or current_price < 100:
+                    continue
+                
+                # 자동선별 점수 계산
+                auto_score = await self._calculate_auto_selection_score(symbol, info, hist)
+                
+                if auto_score >= 0.6:  # 자동선별 임계값
                     legends.append({
                         'symbol': symbol,
                         'market_cap': market_cap,
-                        'score': score,
-                        'sector': info.get('sector', 'Unknown')
+                        'score': auto_score,
+                        'sector': info.get('sector', 'Unknown'),
+                        'current_price': current_price,
+                        'avg_volume': avg_volume,
+                        'selection_reason': self._get_selection_reason(symbol, info, hist)
                     })
                     
-            except:
+            except Exception as e:
                 continue
         
-        # 점수순 정렬 후 탑15 선별
+        # 점수순 정렬
         legends.sort(key=lambda x: x['score'], reverse=True)
-        return legends[:Config.TARGET_STOCKS]
+        selected = legends[:Config.TARGET_STOCKS]
+        
+        print(f"✅ 자동선별 완료: {len(selected)}개 전설급 종목")
+        for i, stock in enumerate(selected[:5], 1):
+            print(f"   {i}. {stock['symbol']} (점수: {stock['score']:.2f}) - {stock['selection_reason']}")
+        
+        return selected
+    
+    async def _calculate_auto_selection_score(self, symbol: str, info: Dict, hist: pd.DataFrame) -> float:
+        """자동선별 종합점수 계산"""
+        score = 0.0
+        
+        try:
+            current_price = float(hist['Close'].iloc[-1])
+            market_cap = info.get('marketCap', 0)
+            avg_volume = info.get('averageVolume', 0)
+            
+            # 1. 기술적 점수 (40%)
+            tech_score = self._calculate_technical_score(hist)
+            score += tech_score * 0.4
+            
+            # 2. 펀더멘털 점수 (30%)
+            fundamental_score = self._calculate_fundamental_score(info)
+            score += fundamental_score * 0.3
+            
+            # 3. 거래량/유동성 점수 (20%)
+            liquidity_score = self._calculate_liquidity_score(avg_volume, market_cap)
+            score += liquidity_score * 0.2
+            
+            # 4. 엔화 적합성 점수 (10%)
+            yen_score = self._calculate_yen_fitness_score(symbol)
+            score += yen_score * 0.1
+            
+            return min(score, 1.0)
+            
+        except:
+            return 0.0
+    
+    def _calculate_technical_score(self, hist: pd.DataFrame) -> float:
+        """기술적 분석 점수"""
+        try:
+            indicators = Indicators()
+            close = hist['Close']
+            high = hist['High']
+            low = hist['Low']
+            volume = hist['Volume']
+            
+            score = 0.0
+            
+            # RSI (25%)
+            rsi = indicators.rsi(close)
+            if 20 <= rsi <= 40:  # 매수 적정 구간
+                score += 0.25
+            elif 40 < rsi <= 60:
+                score += 0.15
+            
+            # MACD (25%)
+            macd_signal, _ = indicators.macd(close)
+            if macd_signal in ["GOLDEN_CROSS", "BULLISH"]:
+                score += 0.25
+            elif macd_signal == "NEUTRAL":
+                score += 0.15
+            
+            # 볼린저밴드 (20%)
+            bb_signal, bb_details = indicators.bollinger_bands(close)
+            if bb_signal in ["LOWER_BREAK", "LOWER_ZONE"]:
+                score += 0.20
+            elif bb_signal == "MIDDLE_ZONE":
+                score += 0.15
+            
+            # 추세 (15%)
+            trend = indicators.trend_signal(close)
+            if trend == "STRONG_UP":
+                score += 0.15
+            elif trend == "SIDEWAYS":
+                score += 0.10
+            
+            # 거래량 (15%)
+            vol_analysis = indicators.volume_analysis(close, volume)
+            if vol_analysis.get('price_volume_signal') == 'BULLISH_CONFIRM':
+                score += 0.15
+            elif vol_analysis.get('volume_spike', False):
+                score += 0.10
+            
+            return min(score, 1.0)
+            
+        except:
+            return 0.5
+    
+    def _calculate_fundamental_score(self, info: Dict) -> float:
+        """펀더멘털 점수"""
+        try:
+            score = 0.0
+            
+            # PER (30%)
+            pe_ratio = info.get('trailingPE', 999)
+            if 5 <= pe_ratio <= 15:
+                score += 0.30
+            elif 15 < pe_ratio <= 25:
+                score += 0.20
+            elif 25 < pe_ratio <= 40:
+                score += 0.10
+            
+            # PBR (25%)
+            pb_ratio = info.get('priceToBook', 999)
+            if 0.5 <= pb_ratio <= 1.5:
+                score += 0.25
+            elif 1.5 < pb_ratio <= 3.0:
+                score += 0.15
+            
+            # ROE (20%)
+            roe = info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0
+            if roe >= 15:
+                score += 0.20
+            elif roe >= 10:
+                score += 0.15
+            elif roe >= 5:
+                score += 0.10
+            
+            # 부채비율 (15%)
+            debt_ratio = info.get('debtToEquity', 999)
+            if debt_ratio <= 50:
+                score += 0.15
+            elif debt_ratio <= 100:
+                score += 0.10
+            elif debt_ratio <= 200:
+                score += 0.05
+            
+            # 배당수익률 (10%)
+            dividend_yield = info.get('dividendYield', 0) * 100 if info.get('dividendYield') else 0
+            if dividend_yield >= 3:
+                score += 0.10
+            elif dividend_yield >= 1:
+                score += 0.05
+            
+            return min(score, 1.0)
+            
+        except:
+            return 0.5
+    
+    def _calculate_liquidity_score(self, avg_volume: float, market_cap: float) -> float:
+        """유동성 점수"""
+        try:
+            score = 0.0
+            
+            # 거래량 점수 (60%)
+            if avg_volume >= 10e6:
+                score += 0.60
+            elif avg_volume >= 5e6:
+                score += 0.45
+            elif avg_volume >= 2e6:
+                score += 0.30
+            elif avg_volume >= 1e6:
+                score += 0.15
+            
+            # 시가총액 점수 (40%)
+            if market_cap >= 5e12:  # 5조엔
+                score += 0.40
+            elif market_cap >= 2e12:  # 2조엔
+                score += 0.30
+            elif market_cap >= 1e12:  # 1조엔
+                score += 0.20
+            elif market_cap >= 5e11:  # 5000억엔
+                score += 0.10
+            
+            return min(score, 1.0)
+            
+        except:
+            return 0.5
+    
+    def _calculate_yen_fitness_score(self, symbol: str) -> float:
+        """엔화 적합성 점수"""
+        try:
+            # 수출주 리스트 (엔약세 수혜)
+            export_stocks = [
+                '7203.T', '6758.T', '7974.T', '6861.T', '9984.T',
+                '7267.T', '7269.T', '6326.T', '6473.T', '7013.T',
+                '4063.T', '6954.T', '8035.T'
+            ]
+            
+            # 내수주 리스트 (엔강세 수혜)  
+            domestic_stocks = [
+                '8306.T', '8316.T', '8411.T', '9432.T', '9433.T',
+                '3382.T', '8267.T', '9983.T', '2914.T', '4911.T',
+                '8801.T', '8802.T', '5401.T'
+            ]
+            
+            if symbol in export_stocks:
+                return 1.0  # 수출주 우대
+            elif symbol in domestic_stocks:
+                return 0.8  # 내수주 적정
+            else:
+                return 0.6  # 기타
+                
+        except:
+            return 0.6
+    
+    def _get_selection_reason(self, symbol: str, info: Dict, hist: pd.DataFrame) -> str:
+        """선별 이유"""
+        try:
+            reasons = []
+            
+            # 시가총액
+            market_cap = info.get('marketCap', 0)
+            if market_cap >= 2e12:
+                reasons.append("대형주")
+            elif market_cap >= 1e12:
+                reasons.append("중견주")
+            
+            # PER
+            pe = info.get('trailingPE', 999)
+            if pe <= 15:
+                reasons.append("저PER")
+            
+            # 기술적
+            indicators = Indicators()
+            rsi = indicators.rsi(hist['Close'])
+            if rsi <= 30:
+                reasons.append("과매도")
+            
+            macd_signal, _ = indicators.macd(hist['Close'])
+            if macd_signal == "GOLDEN_CROSS":
+                reasons.append("MACD골든")
+            
+            # 엔화 적합성
+            export_stocks = ['7203.T', '6758.T', '7974.T', '6861.T', '9984.T']
+            if symbol in export_stocks:
+                reasons.append("수출주")
+            
+            return " | ".join(reasons[:3]) if reasons else "기본선별"
+            
+        except:
+            return "자동선별"
     
     def _calculate_legend_score(self, market_cap: float, volume: float, info: Dict) -> float:
         """전설 점수 계산"""
         score = 0.0
         
-        # 시가총액 점수 (40%)
-        if market_cap >= 2e12:      # 2조엔 이상
+        # 시가총액 점수
+        if market_cap >= 2e12:
             score += 0.4
-        elif market_cap >= 1e12:    # 1조엔 이상  
+        elif market_cap >= 1e12:
             score += 0.3
-        else:                       # 5000억엔 이상
+        else:
             score += 0.2
             
-        # 거래량 점수 (30%)
-        if volume >= 5e6:           # 500만주 이상
+        # 거래량 점수
+        if volume >= 5e6:
             score += 0.3
-        elif volume >= 2e6:         # 200만주 이상
+        elif volume >= 2e6:
             score += 0.2
-        else:                       # 100만주 이상
+        else:
             score += 0.1
             
-        # 재무 건전성 (30%)
+        # 재무 건전성
         pe = info.get('trailingPE', 999)
         if 5 <= pe <= 25:
             score += 0.3
@@ -565,45 +1056,274 @@ class StockHunter:
         return min(score, 1.0)
 
 # ============================================================================
-# 🎯 전설의 신호 생성기
+# 📈 화목 월간 목표 관리자 (Option 2)
+# ============================================================================
+class JapanMonthlyManager:
+    """화목 월간 목표 관리"""
+    
+    def __init__(self):
+        self.data_dir = Config.DATA_DIR
+        self.data_dir.mkdir(exist_ok=True)
+        
+        self.current_month = datetime.now().strftime('%Y-%m')
+        self.monthly_data = self.load_monthly_data()
+        
+    def load_monthly_data(self) -> Dict:
+        """월간 데이터 로드"""
+        try:
+            performance_file = self.data_dir / "japan_monthly.json"
+            if performance_file.exists():
+                with open(performance_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get(self.current_month, {
+                        'tuesday_trades': [],
+                        'thursday_trades': [],
+                        'total_pnl': 0.0,
+                        'tuesday_pnl': 0.0,
+                        'thursday_pnl': 0.0,
+                        'trade_count': 0,
+                        'win_count': 0,
+                        'target_reached': False
+                    })
+            return {
+                'tuesday_trades': [],
+                'thursday_trades': [],
+                'total_pnl': 0.0,
+                'tuesday_pnl': 0.0,
+                'thursday_pnl': 0.0,
+                'trade_count': 0,
+                'win_count': 0,
+                'target_reached': False
+            }
+        except:
+            return {
+                'tuesday_trades': [],
+                'thursday_trades': [],
+                'total_pnl': 0.0,
+                'tuesday_pnl': 0.0,
+                'thursday_pnl': 0.0,
+                'trade_count': 0,
+                'win_count': 0,
+                'target_reached': False
+            }
+    
+    def save_monthly_data(self):
+        """월간 데이터 저장"""
+        try:
+            performance_file = self.data_dir / "japan_monthly.json"
+            all_data = {}
+            if performance_file.exists():
+                with open(performance_file, 'r', encoding='utf-8') as f:
+                    all_data = json.load(f)
+            
+            all_data[self.current_month] = self.monthly_data
+            
+            with open(performance_file, 'w', encoding='utf-8') as f:
+                json.dump(all_data, f, ensure_ascii=False, indent=2, default=str)
+        except Exception as e:
+            print(f"⚠️ 월간 데이터 저장 실패: {e}")
+    
+    def add_trade(self, symbol: str, pnl: float, entry_price: float, exit_price: float, day_type: str):
+        """거래 기록 추가"""
+        trade = {
+            'symbol': symbol,
+            'pnl': pnl,
+            'entry_price': entry_price,
+            'exit_price': exit_price,
+            'timestamp': datetime.now().isoformat(),
+            'win': pnl > 0,
+            'day_type': day_type
+        }
+        
+        # 요일별 분류
+        if day_type == "TUESDAY":
+            self.monthly_data['tuesday_trades'].append(trade)
+            self.monthly_data['tuesday_pnl'] += pnl
+        elif day_type == "THURSDAY":
+            self.monthly_data['thursday_trades'].append(trade)
+            self.monthly_data['thursday_pnl'] += pnl
+        
+        # 전체 집계
+        self.monthly_data['total_pnl'] += pnl
+        self.monthly_data['trade_count'] += 1
+        if pnl > 0:
+            self.monthly_data['win_count'] += 1
+        
+        # 목표 달성 체크
+        if self.monthly_data['total_pnl'] >= Config.JAPAN_MONTHLY_TARGET:
+            self.monthly_data['target_reached'] = True
+            
+        self.save_monthly_data()
+    
+    def get_trading_intensity(self) -> str:
+        """거래 강도 결정"""
+        current_pnl = self.monthly_data['total_pnl']
+        days_passed = datetime.now().day
+        progress = days_passed / 30
+        pnl_progress = current_pnl / Config.JAPAN_MONTHLY_TARGET if Config.JAPAN_MONTHLY_TARGET > 0 else 0
+        
+        # 손실 제한
+        if current_pnl <= Config.JAPAN_MONTHLY_LIMIT:
+            return "STOP_TRADING"
+        
+        # 목표 달성
+        if current_pnl >= Config.JAPAN_MONTHLY_TARGET:
+            return "CONSERVATIVE"
+        
+        # 화목만 하니까 더 공격적
+        if progress > 0.75 and pnl_progress < 0.6:
+            return "VERY_AGGRESSIVE"
+        elif progress > 0.5 and pnl_progress < 0.4:
+            return "AGGRESSIVE"
+        
+        return "NORMAL"
+    
+    def adjust_position_size(self, base_size: int, confidence: float, day_type: str) -> int:
+        """포지션 크기 조절"""
+        intensity = self.get_trading_intensity()
+        
+        if intensity == "STOP_TRADING":
+            return 0
+        
+        # 요일별 조정
+        base_multiplier = 1.2 if day_type == "TUESDAY" else 0.8
+        
+        # 거래 강도별 조정
+        if intensity == "VERY_AGGRESSIVE":
+            multiplier = base_multiplier * 2.0
+        elif intensity == "AGGRESSIVE":
+            multiplier = base_multiplier * 1.5
+        elif intensity == "CONSERVATIVE":
+            multiplier = base_multiplier * 0.6
+        else:
+            multiplier = base_multiplier
+        
+        return int(base_size * multiplier * confidence)
+    
+    def get_status(self) -> Dict:
+        """월간 현황"""
+        current_pnl = self.monthly_data['total_pnl']
+        tuesday_pnl = self.monthly_data['tuesday_pnl']
+        thursday_pnl = self.monthly_data['thursday_pnl']
+        trade_count = self.monthly_data['trade_count']
+        win_count = self.monthly_data['win_count']
+        win_rate = (win_count / trade_count * 100) if trade_count > 0 else 0
+        
+        tuesday_trades = len(self.monthly_data['tuesday_trades'])
+        thursday_trades = len(self.monthly_data['thursday_trades'])
+        
+        return {
+            'month': self.current_month,
+            'total_pnl': current_pnl,
+            'tuesday_pnl': tuesday_pnl,
+            'thursday_pnl': thursday_pnl,
+            'target_progress': (current_pnl / Config.JAPAN_MONTHLY_TARGET * 100) if Config.JAPAN_MONTHLY_TARGET > 0 else 0,
+            'trade_count': trade_count,
+            'tuesday_trades': tuesday_trades,
+            'thursday_trades': thursday_trades,
+            'win_rate': win_rate,
+            'trading_intensity': self.get_trading_intensity(),
+            'target_reached': self.monthly_data['target_reached']
+        }
+
+# ============================================================================
+# 🎯 화목 신호 생성기 (6개 지표)
 # ============================================================================
 @dataclass
-class LegendarySignal:
-    """전설적인 매매 신호"""
+class Signal:
     symbol: str
-    action: str         # BUY/SELL/HOLD
-    confidence: float   # 0.0 ~ 1.0
+    action: str
+    confidence: float
     price: float
     reason: str
     yen_rate: float
-    
-    # 🏆 전설의 기술지표들
     rsi: float
-    trend: str
     macd_signal: str
-    macd_strength: float
     bb_signal: str
-    bb_position: float
     stoch_signal: str
-    stoch_k: float
     atr: float
-    momentum_signal: str
-    momentum_value: float
     volume_signal: str
-    fibonacci_level: str
+    stop_loss: float
+    take_profit1: float
+    take_profit2: float
+    take_profit3: float
+    max_hold_days: int
+    position_size: int
+    timestamp: datetime = async def run_auto_trading():
+    """자동매매 실행"""
+    hunter = YenHunter()
     
-    timestamp: datetime
+    try:
+        await hunter.ibkr.connect()
+        print("🚀 화목 자동매매 시작 (Ctrl+C로 종료)")
+        
+        while True:
+            now = datetime.now()
+            
+            # 화목 09시에 거래
+            if now.weekday() in [1, 3] and now.hour == 9 and now.minute == 0:
+                await hunter.run_trading_session()
+                await asyncio.sleep(60)
+            else:
+                # 포지션 모니터링
+                actions = await hunter.position_mgr.check_positions()
+                if actions:
+                    for action in actions:
+                        print(f"⚡ {action['symbol']}: {action['reason']}")
+                await asyncio.sleep(300)
+                
+    except KeyboardInterrupt:
+        print("🛑 자동매매 종료")
+    finally:
+        await hunter.ibkr.disconnect()
+
+async def run_full_auto_system():
+    """완전 자동화 시스템 (자동선별 + 자동매매)"""
+    hunter = YenHunter()
     
-    # 🛡️ 리스크 관리
-    stop_loss: float    # 손절가
-    take_profit1: float # 1차 익절가 (50% 매도)
-    take_profit2: float # 2차 익절가 (나머지 매도)
-    max_hold_days: int  # 최대 보유일
-    position_size: int  # 포지션 크기
+    try:
+        await hunter.ibkr.connect()
+        print("🤖 완전 자동화 시스템 시작!")
+        print("🔄 자동선별 + 자동매매 + 자동관리")
+        print("="*50)
+        
+        last_selection_day = -1
+        
+        while True:
+            now = datetime.now()
+            
+            # 매일 오전 8시에 자동선별 업데이트 (화목 거래일 전에)
+            if now.hour == 8 and now.minute == 0 and now.day != last_selection_day:
+                if now.weekday() in [0, 2]:  # 월, 수 (화목 거래 전날)
+                    print("\n🔄 자동선별 업데이트 중...")
+                    await run_auto_selection()
+                    last_selection_day = now.day
+            
+            # 화목 09시에 거래
+            elif now.weekday() in [1, 3] and now.hour == 9 and now.minute == 0:
+                print(f"\n🏯 {['월','화','수','목','금','토','일'][now.weekday()]}요일 자동거래 시작")
+                await hunter.run_trading_session()
+                await asyncio.sleep(60)
+            
+            # 포지션 모니터링 (5분마다)
+            else:
+                actions = await hunter.position_mgr.check_positions()
+                if actions:
+                    for action in actions:
+                        print(f"⚡ {action['symbol']}: {action['reason']}")
+                await asyncio.sleep(300)
+                
+    except KeyboardInterrupt:
+        print("🛑 완전 자동화 시스템 종료")
+    finally:
+        await hunter.ibkr.disconnect()
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now()
 
 @dataclass 
 class Position:
-    """포지션 관리"""
     symbol: str
     buy_price: float
     shares: int
@@ -611,389 +1331,381 @@ class Position:
     stop_loss: float
     take_profit1: float
     take_profit2: float
+    take_profit3: float
     max_hold_date: datetime
-    shares_sold_1st: int = 0  # 1차 익절 매도량
+    shares_sold_1st: int = 0
+    shares_sold_2nd: int = 0
+    shares_sold_3rd: int = 0
+    
+    def get_remaining_shares(self) -> int:
+        return self.shares - self.shares_sold_1st - self.shares_sold_2nd - self.shares_sold_3rd
 
 class SignalGenerator:
-    """전설적인 신호 생성기"""
-    
     def __init__(self):
         self.current_usd_jpy = 107.5
-        self.indicators = LegendaryIndicators()
-    
-    def calculate_risk_levels(self, price: float, confidence: float, stock_type: str, yen_signal: str, atr: float = 0) -> Tuple[float, float, float, int]:
-        """🛡️ 전설적인 리스크 관리 계산 (ATR 기반 개선)"""
+        self.indicators = Indicators()
+        self.target_manager = JapanMonthlyManager()
         
-        # 기본 손절/익절률
-        base_stop = 0.08    # 8% 손절
-        base_profit1 = 0.15 # 15% 1차 익절
-        base_profit2 = 0.25 # 25% 2차 익절
-        base_days = 30      # 30일 최대보유
-        
-        # ATR 기반 조정 (변동성 고려)
-        if atr > 0:
-            atr_ratio = atr / price
-            if atr_ratio > 0.03:  # 고변동성
-                base_stop *= 1.3  # 손절 넓게
-                base_profit1 *= 1.4  # 익절도 크게
-                base_profit2 *= 1.5
-            elif atr_ratio < 0.015:  # 저변동성
-                base_stop *= 0.8  # 손절 타이트
-                base_profit1 *= 0.9
-                base_profit2 *= 0.95
-        
-        # 신뢰도에 따른 조정
-        if confidence >= 0.8:
-            # 고신뢰도: 손절 넓게, 익절 크게
-            stop_rate = base_stop * 1.2
-            profit1_rate = base_profit1 * 1.3
-            profit2_rate = base_profit2 * 1.4
-            max_days = base_days + 15
-        elif confidence >= 0.6:
-            # 중신뢰도: 기본값
-            stop_rate = base_stop
-            profit1_rate = base_profit1
-            profit2_rate = base_profit2
-            max_days = base_days
-        else:
-            # 저신뢰도: 손절 타이트, 익절 작게
-            stop_rate = base_stop * 0.7
-            profit1_rate = base_profit1 * 0.8
-            profit2_rate = base_profit2 * 0.9
-            max_days = base_days - 10
-        
-        # 엔화 + 종목타입에 따른 조정
-        if (yen_signal == "STRONG" and stock_type == "DOMESTIC") or \
-           (yen_signal == "WEAK" and stock_type == "EXPORT"):
-            # 유리한 조건: 손절 넓게, 익절 크게
-            stop_rate *= 0.8
-            profit1_rate *= 1.2
-            profit2_rate *= 1.3
-            max_days += 10
-        elif yen_signal == "NEUTRAL":
-            # 중립: 기본값 유지
-            pass
-        else:
-            # 불리한 조건: 손절 타이트, 익절 작게
-            stop_rate *= 1.2
-            profit1_rate *= 0.9
-            profit2_rate *= 0.95
-            max_days -= 5
-        
-        # 최종 가격 계산
-        stop_loss = price * (1 - stop_rate)
-        take_profit1 = price * (1 + profit1_rate)
-        take_profit2 = price * (1 + profit2_rate)
-        
-        # 범위 제한
-        max_days = max(15, min(60, max_days))
-        
-        return stop_loss, take_profit1, take_profit2, max_days
-    
     async def update_yen(self):
-        """USD/JPY 업데이트"""
         try:
             ticker = yf.Ticker("USDJPY=X")
             data = ticker.history(period="1d")
             if not data.empty:
                 self.current_usd_jpy = float(data['Close'].iloc[-1])
         except:
-            pass  # 기본값 유지
+            pass
     
-    def get_yen_signal(self) -> Tuple[str, float]:
-        """엔화 신호 분석"""
+    def get_yen_signal(self) -> str:
         if self.current_usd_jpy <= Config.YEN_STRONG:
-            return "STRONG", 0.4  # 엔화 강세 = 내수주 유리
+            return "STRONG"
         elif self.current_usd_jpy >= Config.YEN_WEAK:
-            return "WEAK", 0.4    # 엔화 약세 = 수출주 유리
+            return "WEAK"
         else:
-            return "NEUTRAL", 0.2
+            return "NEUTRAL"
     
     def classify_stock_type(self, symbol: str) -> str:
-        """수출주/내수주 분류"""
-        # 간단 분류 (실제로는 섹터 정보 활용)
-        export_symbols = ['7203.T', '6758.T', '7974.T', '6861.T', '9984.T', 
-                         '6954.T', '7201.T', '6981.T', '4063.T']
-        
+        """종목 유형 분류"""
+        export_symbols = [
+            '7203.T', '6758.T', '7974.T', '6861.T', '9984.T',
+            '7267.T', '7269.T', '6326.T', '6473.T', '7013.T'
+        ]
         return "EXPORT" if symbol in export_symbols else "DOMESTIC"
     
-    def _calculate_legendary_score(self, symbol: str, rsi: float, trend: str, 
-                                 macd_signal: str, macd_details: Dict,
-                                 bb_signal: str, bb_details: Dict,
-                                 stoch_signal: str, stoch_details: Dict,
-                                 momentum_signal: str, momentum_value: float,
-                                 volume_analysis: Dict) -> float:
-        """🏆 전설의 종합 점수 계산 (고급 지표 통합)"""
+    def calculate_hybrid_risk_levels(self, price: float, confidence: float, day_type: str, atr: float = 0) -> Tuple[float, float, float, float, int]:
+        """화목 하이브리드 리스크 계산"""
+        if day_type == "TUESDAY":  # 화요일 메인
+            base_stop, base_p1, base_p2, base_p3 = 0.03, 0.04, 0.07, 0.12
+            base_days = Config.TUESDAY_MAX_HOLD
+        else:  # 목요일 보완
+            base_stop, base_p1, base_p2, base_p3 = 0.02, 0.015, 0.03, 0.05
+            base_days = Config.THURSDAY_MAX_HOLD
+        
+        # 신뢰도별 조정
+        if confidence >= 0.8:
+            multiplier = 1.3
+        elif confidence >= 0.6:
+            multiplier = 1.0
+        else:
+            multiplier = 0.8
+        
+        # ATR 기반 변동성 조정
+        if atr > 0:
+            atr_ratio = atr / price
+            if atr_ratio > 0.03:  # 고변동성
+                multiplier *= 1.3
+            elif atr_ratio < 0.015:  # 저변동성
+                multiplier *= 0.8
+        
+        stop_loss = price * (1 - base_stop * (2 - multiplier))
+        take_profit1 = price * (1 + base_p1 * multiplier)
+        take_profit2 = price * (1 + base_p2 * multiplier)
+        take_profit3 = price * (1 + base_p3 * multiplier)
+        
+        return stop_loss, take_profit1, take_profit2, take_profit3, base_days
+    
+    def calculate_hybrid_score(self, symbol: str, rsi: float, macd_signal: str, macd_details: Dict,
+                              bb_signal: str, bb_details: Dict, stoch_signal: str, stoch_details: Dict,
+                              atr: float, volume_analysis: Dict, trend: str, day_type: str) -> float:
+        """6개 지표 통합 화목 점수"""
         score = 0.0
         
-        # 1. 엔화 기반 점수 (25%) - 여전히 핵심
-        yen_signal, yen_score = self.get_yen_signal()
+        # 1. 엔화 기반 (35%)
+        yen_signal = self.get_yen_signal()
         stock_type = self.classify_stock_type(symbol)
         
         if (yen_signal == "STRONG" and stock_type == "DOMESTIC") or \
            (yen_signal == "WEAK" and stock_type == "EXPORT"):
-            score += 0.25
+            score += 0.35
         else:
-            score += 0.125
+            score += 0.20
         
-        # 2. RSI 점수 (15%)
-        if rsi <= 30:           # 과매도 = 매수기회
-            score += 0.15
-        elif 30 < rsi <= 50:    # 건전한 수준
-            score += 0.12
-        elif 50 < rsi <= 70:    # 상승 중
-            score += 0.08
-        else:                   # 과매수 = 위험
-            score += 0.03
+        # 2. 요일별 차등 지표
+        if day_type == "TUESDAY":  # 화요일 - MACD/추세 중시
+            # MACD (20%)
+            if macd_signal == "GOLDEN_CROSS":
+                score += 0.20
+            elif macd_signal == "BULLISH":
+                score += 0.15
+            elif macd_signal == "DEAD_CROSS":
+                score += 0.03
+            else:
+                score += 0.10
+                
+            # 추세 (15%)
+            if trend == "STRONG_UP":
+                score += 0.15
+            elif trend == "SIDEWAYS":
+                score += 0.08
+            else:
+                score += 0.03
+                
+            # RSI (10%)
+            if rsi <= 30:
+                score += 0.10
+            elif rsi <= 45:
+                score += 0.08
+            elif rsi >= 70:
+                score += 0.02
+            else:
+                score += 0.05
+                
+        else:  # 목요일 - 단기 지표 중시
+            # 스토캐스틱 (20%)
+            if stoch_signal == "OVERSOLD":
+                score += 0.20
+            elif stoch_signal == "BULLISH_CROSS":
+                score += 0.15
+            elif stoch_signal == "OVERBOUGHT":
+                score += 0.02
+            else:
+                score += 0.08
+                
+            # 볼린저밴드 (15%)
+            if bb_signal == "LOWER_BREAK":
+                score += 0.15
+            elif bb_signal == "LOWER_ZONE":
+                score += 0.12
+            elif bb_signal == "UPPER_BREAK":
+                score += 0.02
+            else:
+                score += 0.06
+                
+            # RSI 극값 중시 (10%)
+            if rsi <= 25:
+                score += 0.10
+            elif rsi <= 35:
+                score += 0.08
+            elif rsi >= 75:
+                score += 0.02
+            else:
+                score += 0.05
         
-        # 3. MACD 점수 (15%)
-        if macd_signal == "GOLDEN_CROSS":
-            score += 0.15  # 골든크로스 = 최고점수
-        elif macd_signal == "BULLISH":
-            score += 0.12
-        elif macd_signal == "DEAD_CROSS":
-            score += 0.02  # 데드크로스 = 최저점수
-        elif macd_signal == "BEARISH":
-            score += 0.05
-        else:  # NEUTRAL
-            score += 0.08
+        # 3. 공통 지표
+        # ATR 변동성 (5%)
+        if atr > 0:
+            atr_ratio = atr / self.current_usd_jpy if self.current_usd_jpy > 0 else 0
+            if 0.01 <= atr_ratio <= 0.03:  # 적당한 변동성
+                score += 0.05
+            elif atr_ratio > 0.03:  # 고변동성 - 기회
+                score += 0.03
+            else:  # 저변동성
+                score += 0.02
         
-        # 4. 볼린저밴드 점수 (12%)
-        if bb_signal == "LOWER_BREAK":
-            score += 0.12  # 하단 돌파 = 매수기회
-        elif bb_signal == "LOWER_ZONE":
-            score += 0.10
-        elif bb_signal == "UPPER_BREAK":
-            score += 0.03  # 상단 돌파 = 과매수
-        elif bb_signal == "UPPER_ZONE":
-            score += 0.05
-        else:  # MIDDLE_ZONE
-            score += 0.08
-        
-        # 5. 스토캐스틱 점수 (10%)
-        if stoch_signal == "OVERSOLD":
-            score += 0.10  # 과매도 = 매수기회
-        elif stoch_signal == "BULLISH_CROSS":
-            score += 0.08
-        elif stoch_signal == "OVERBOUGHT":
-            score += 0.02  # 과매수 = 위험
-        elif stoch_signal == "BEARISH_CROSS":
-            score += 0.03
-        else:  # NEUTRAL
-            score += 0.06
-        
-        # 6. 모멘텀 점수 (8%)
-        if momentum_signal == "STRONG_BULLISH":
-            score += 0.08
-        elif momentum_signal == "BULLISH":
-            score += 0.06
-        elif momentum_signal == "STRONG_BEARISH":
-            score += 0.01
-        elif momentum_signal == "BEARISH":
-            score += 0.03
-        else:  # NEUTRAL
-            score += 0.05
-        
-        # 7. 추세 점수 (10%)
-        if trend == "STRONG_UP":
-            score += 0.10
-        elif trend == "SIDEWAYS":
-            score += 0.05
-        else:  # STRONG_DOWN
-            score += 0.02
-        
-        # 8. 거래량 점수 (5%)
+        # 거래량 (10%)
         volume_signal = volume_analysis.get('price_volume_signal', 'NEUTRAL')
         if volume_signal == "BULLISH_CONFIRM":
-            score += 0.05
+            score += 0.10
+        elif volume_analysis.get('volume_spike', False):
+            score += 0.08
         elif volume_signal == "WEAK_RALLY":
-            score += 0.02
-        elif volume_signal == "BEARISH_VOLUME":
-            score += 0.01
-        else:
             score += 0.03
+        else:
+            score += 0.05
+        
+        # 볼린저 스퀴즈 보너스 (5%)
+        if bb_details.get('squeeze', False):
+            score += 0.05  # 변동성 돌파 기대
         
         return min(score, 1.0)
     
-    def _generate_legendary_reason(self, symbol: str, rsi: float, trend: str,
-                                 macd_signal: str, bb_signal: str, stoch_signal: str,
-                                 momentum_signal: str, volume_analysis: Dict) -> str:
-        """🎯 전설의 이유 생성 (고급 지표 포함)"""
+    def generate_hybrid_reason(self, symbol: str, rsi: float, macd_signal: str, bb_signal: str,
+                              stoch_signal: str, volume_analysis: Dict, day_type: str) -> str:
+        """화목 하이브리드 이유 생성"""
         reasons = []
         
-        # 엔화 이유
-        yen_signal, _ = self.get_yen_signal()
+        # 엔화
+        yen_signal = self.get_yen_signal()
         stock_type = self.classify_stock_type(symbol)
         
         if yen_signal == "STRONG" and stock_type == "DOMESTIC":
-            reasons.append("엔화강세+내수주")
+            reasons.append("엔강세내수주")
         elif yen_signal == "WEAK" and stock_type == "EXPORT":
-            reasons.append("엔화약세+수출주")
+            reasons.append("엔약세수출주")
         else:
-            reasons.append(f"엔화{yen_signal.lower()}")
+            reasons.append(f"엔{yen_signal}")
         
-        # 핵심 지표들
-        if macd_signal == "GOLDEN_CROSS":
-            reasons.append("MACD골든크로스")
-        elif macd_signal == "DEAD_CROSS":
-            reasons.append("MACD데드크로스")
-        else:
-            reasons.append(f"MACD{macd_signal.lower()}")
+        # 요일별 핵심 이유
+        day_name = "화메인" if day_type == "TUESDAY" else "목보완"
+        reasons.append(day_name)
         
-        if bb_signal == "LOWER_BREAK":
-            reasons.append("볼린저하단돌파")
-        elif bb_signal == "UPPER_BREAK":
-            reasons.append("볼린저상단돌파")
-        else:
-            reasons.append(f"볼린저{bb_signal.lower()}")
+        if day_type == "TUESDAY":  # 화요일
+            if macd_signal == "GOLDEN_CROSS":
+                reasons.append("MACD골든")
+            elif rsi <= 30:
+                reasons.append(f"RSI과매도({rsi:.0f})")
+        else:  # 목요일
+            if stoch_signal == "OVERSOLD":
+                reasons.append("스토과매도")
+            elif bb_signal == "LOWER_BREAK":
+                reasons.append("볼린저돌파")
+            elif rsi <= 25:
+                reasons.append(f"극과매도({rsi:.0f})")
         
-        if stoch_signal == "OVERSOLD":
-            reasons.append("스토캐스틱과매도")
-        elif stoch_signal == "OVERBOUGHT":
-            reasons.append("스토캐스틱과매수")
-        elif "CROSS" in stoch_signal:
-            reasons.append(f"스토캐스틱{stoch_signal.lower()}")
+        # 추가 근거
+        if volume_analysis.get('volume_spike', False):
+            reasons.append("거래량급증")
         
-        # RSI
-        if rsi <= 30:
-            reasons.append(f"RSI과매도({rsi:.0f})")
-        elif rsi >= 70:
-            reasons.append(f"RSI과매수({rsi:.0f})")
-        else:
-            reasons.append(f"RSI({rsi:.0f})")
-        
-        # 추세
-        reasons.append(f"추세{trend.lower()}")
-        
-        # 거래량
-        volume_signal = volume_analysis.get('price_volume_signal', 'NEUTRAL')
-        if volume_signal == "BULLISH_CONFIRM":
-            reasons.append("거래량확인")
-        elif volume_signal == "WEAK_RALLY":
-            reasons.append("거래량부족")
-        
-        return " | ".join(reasons[:6])  # 최대 6개까지만
+        return " | ".join(reasons[:5])
 
-    async def generate_signal(self, symbol: str) -> LegendarySignal:
-        """🏆 전설적인 신호 생성 (고급 지표 통합)"""
+    async def generate_signal(self, symbol: str) -> Signal:
+        """화목 하이브리드 신호 생성"""
         try:
-            # 엔화 업데이트
             await self.update_yen()
             
-            # 주식 데이터 수집
+            # 화목 체크
+            today = datetime.now()
+            if today.weekday() == 1:
+                day_type = "TUESDAY"
+            elif today.weekday() == 3:
+                day_type = "THURSDAY"
+            else:
+                return Signal(symbol, "HOLD", 0.0, 0.0, "비거래일", self.current_usd_jpy, 50.0, 
+                            "NEUTRAL", "MIDDLE_ZONE", "NEUTRAL", 0, "NEUTRAL", 
+                            0, 0, 0, 0, 0, 0, today)
+            
             stock = yf.Ticker(symbol)
             data = stock.history(period="3mo")
-            
             if data.empty:
                 raise ValueError("데이터 없음")
             
             current_price = float(data['Close'].iloc[-1])
             
-            # 🏆 전설의 고급 기술지표 계산
+            # 6개 기술지표 계산
             rsi = self.indicators.rsi(data['Close'])
-            trend = self.indicators.trend_signal(data['Close'])
             macd_signal, macd_details = self.indicators.macd(data['Close'])
             bb_signal, bb_details = self.indicators.bollinger_bands(data['Close'])
             stoch_signal, stoch_details = self.indicators.stochastic(data['High'], data['Low'], data['Close'])
             atr_value = self.indicators.atr(data['High'], data['Low'], data['Close'])
-            momentum_signal, momentum_value = self.indicators.momentum_oscillator(data['Close'])
             volume_analysis = self.indicators.volume_analysis(data['Close'], data['Volume'])
-            fib_analysis = self.indicators.fibonacci_levels(data['Close'])
+            trend = self.indicators.trend_signal(data['Close'])
             
-            # 🎯 전설의 종합 점수 계산
-            total_score = self._calculate_legendary_score(
-                symbol, rsi, trend, macd_signal, macd_details,
-                bb_signal, bb_details, stoch_signal, stoch_details,
-                momentum_signal, momentum_value, volume_analysis
+            # 하이브리드 점수 계산
+            total_score = self.calculate_hybrid_score(
+                symbol, rsi, macd_signal, macd_details, bb_signal, bb_details,
+                stoch_signal, stoch_details, atr_value, volume_analysis, trend, day_type
             )
             
-            # 최종 판단
-            if total_score >= Config.BUY_THRESHOLD:
-                action = "BUY"
-                confidence = min(total_score, 0.95)
-            elif total_score <= 0.3:
-                action = "SELL" 
-                confidence = min(1 - total_score, 0.95)
-            else:
+            # 월간 목표 고려
+            intensity = self.target_manager.get_trading_intensity()
+            
+            # 요일별 임계값
+            threshold = Config.BUY_THRESHOLD_TUESDAY if day_type == "TUESDAY" else Config.BUY_THRESHOLD_THURSDAY
+            
+            if intensity == "STOP_TRADING":
                 action = "HOLD"
-                confidence = 0.5
-            
-            # 🛡️ 리스크 관리 계산 (ATR 기반 개선)
-            yen_signal, _ = self.get_yen_signal()
-            stock_type = self.classify_stock_type(symbol)
-            
-            if action == "BUY":
-                stop_loss, take_profit1, take_profit2, max_hold_days = self.calculate_risk_levels(
-                    current_price, confidence, stock_type, yen_signal, atr_value
-                )
-                # 포지션 크기 (신뢰도에 따라)
-                base_amount = 1000000  # 100만엔
-                position_size = int((base_amount * confidence) / current_price / 100) * 100  # 100주 단위
+                confidence = 0.0
             else:
-                stop_loss = take_profit1 = take_profit2 = 0.0
-                max_hold_days = 0
-                position_size = 0
+                # 거래 강도별 임계값 조정
+                if intensity == "VERY_AGGRESSIVE":
+                    threshold *= 0.75
+                elif intensity == "AGGRESSIVE":
+                    threshold *= 0.85
+                elif intensity == "CONSERVATIVE":
+                    threshold *= 1.15
+                
+                if total_score >= threshold:
+                    action = "BUY"
+                    confidence = min(total_score, 0.95)
+                else:
+                    action = "HOLD"
+                    confidence = total_score
             
-            # 🎯 전설의 이유 생성
-            reason = self._generate_legendary_reason(
-                symbol, rsi, trend, macd_signal, bb_signal, 
-                stoch_signal, momentum_signal, volume_analysis
+            # 리스크 계산
+            if action == "BUY":
+                stop_loss, tp1, tp2, tp3, max_days = self.calculate_hybrid_risk_levels(
+                    current_price, confidence, day_type, atr_value
+                )
+                
+                base_amount = 1000000
+                position_size = self.target_manager.adjust_position_size(
+                    int(base_amount / current_price / 100) * 100,
+                    confidence,
+                    day_type
+                )
+            else:
+                stop_loss = tp1 = tp2 = tp3 = 0.0
+                max_days = position_size = 0
+            
+            # 이유 생성
+            reason = self.generate_hybrid_reason(
+                symbol, rsi, macd_signal, bb_signal, stoch_signal, volume_analysis, day_type
             )
             
-            return LegendarySignal(
-                symbol=symbol,
-                action=action,
-                confidence=confidence,
-                price=current_price,
-                reason=reason,
-                yen_rate=self.current_usd_jpy,
-                
-                # 🏆 전설의 기술지표
-                rsi=rsi,
-                trend=trend,
-                macd_signal=macd_signal,
-                macd_strength=macd_details.get('strength', 0),
-                bb_signal=bb_signal,
-                bb_position=bb_details.get('position', 0.5),
-                stoch_signal=stoch_signal,
-                stoch_k=stoch_details.get('k_percent', 50),
-                atr=atr_value,
-                momentum_signal=momentum_signal,
-                momentum_value=momentum_value,
-                volume_signal=volume_analysis.get('price_volume_signal', 'NEUTRAL'),
-                fibonacci_level=fib_analysis.get('near_level', 'NONE'),
-                
-                timestamp=datetime.now(),
-                stop_loss=stop_loss,
-                take_profit1=take_profit1,
-                take_profit2=take_profit2,
-                max_hold_days=max_hold_days,
-                position_size=position_size
+            return Signal(
+                symbol=symbol, action=action, confidence=confidence, price=current_price,
+                reason=reason, yen_rate=self.current_usd_jpy, rsi=rsi,
+                macd_signal=macd_signal, bb_signal=bb_signal, stoch_signal=stoch_signal,
+                atr=atr_value, volume_signal=volume_analysis.get('price_volume_signal', 'NEUTRAL'),
+                stop_loss=stop_loss, take_profit1=tp1, take_profit2=tp2, take_profit3=tp3,
+                max_hold_days=max_days, position_size=position_size, timestamp=today
             )
             
         except Exception as e:
-            return LegendarySignal(
-                symbol=symbol, action="HOLD", confidence=0.0, price=0.0,
-                reason=f"분석실패: {e}", yen_rate=self.current_usd_jpy,
-                rsi=50.0, trend="UNKNOWN", macd_signal="NEUTRAL", macd_strength=0,
-                bb_signal="MIDDLE_ZONE", bb_position=0.5, stoch_signal="NEUTRAL", stoch_k=50,
-                atr=0, momentum_signal="NEUTRAL", momentum_value=0, volume_signal="NEUTRAL",
-                fibonacci_level="NONE", timestamp=datetime.now(),
-                stop_loss=0.0, take_profit1=0.0, take_profit2=0.0, max_hold_days=0, position_size=0
-            )
+            return Signal(symbol, "HOLD", 0.0, 0.0, f"실패:{e}", self.current_usd_jpy, 50.0,
+                        "NEUTRAL", "MIDDLE_ZONE", "NEUTRAL", 0, "NEUTRAL",
+                        0, 0, 0, 0, 0, 0, datetime.now())
 
 # ============================================================================
-# 🛡️ 전설의 포지션 매니저
+# 🛡️ 포지션 매니저 (3차 익절)
 # ============================================================================
 class PositionManager:
-    """전설적인 포지션 관리"""
-    
     def __init__(self):
         self.positions: Dict[str, Position] = {}
         self.closed_positions = []
+        self.target_manager = JapanMonthlyManager()
+        self.load_positions()
     
-    def open_position(self, signal: LegendarySignal):
-        """포지션 오픈"""
+    def load_positions(self):
+        try:
+            positions_file = Config.DATA_DIR / "positions.json"
+            if positions_file.exists():
+                with open(positions_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    for symbol, pos_data in data.items():
+                        self.positions[symbol] = Position(
+                            symbol=pos_data['symbol'],
+                            buy_price=pos_data['buy_price'],
+                            shares=pos_data['shares'],
+                            buy_date=datetime.fromisoformat(pos_data['buy_date']),
+                            stop_loss=pos_data['stop_loss'],
+                            take_profit1=pos_data['take_profit1'],
+                            take_profit2=pos_data['take_profit2'],
+                            take_profit3=pos_data.get('take_profit3', 0),
+                            max_hold_date=datetime.fromisoformat(pos_data['max_hold_date']),
+                            shares_sold_1st=pos_data.get('shares_sold_1st', 0),
+                            shares_sold_2nd=pos_data.get('shares_sold_2nd', 0),
+                            shares_sold_3rd=pos_data.get('shares_sold_3rd', 0)
+                        )
+        except Exception as e:
+            print(f"⚠️ 포지션 로드 실패: {e}")
+    
+    def save_positions(self):
+        try:
+            Config.DATA_DIR.mkdir(exist_ok=True)
+            positions_file = Config.DATA_DIR / "positions.json"
+            data = {}
+            for symbol, position in self.positions.items():
+                data[symbol] = {
+                    'symbol': position.symbol,
+                    'buy_price': position.buy_price,
+                    'shares': position.shares,
+                    'buy_date': position.buy_date.isoformat(),
+                    'stop_loss': position.stop_loss,
+                    'take_profit1': position.take_profit1,
+                    'take_profit2': position.take_profit2,
+                    'take_profit3': position.take_profit3,
+                    'max_hold_date': position.max_hold_date.isoformat(),
+                    'shares_sold_1st': position.shares_sold_1st,
+                    'shares_sold_2nd': position.shares_sold_2nd,
+                    'shares_sold_3rd': position.shares_sold_3rd
+                }
+            
+            with open(positions_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ 포지션 저장 실패: {e}")
+    
+    def open_position(self, signal: Signal):
         if signal.action == "BUY" and signal.position_size > 0:
             position = Position(
                 symbol=signal.symbol,
@@ -1003,16 +1715,18 @@ class PositionManager:
                 stop_loss=signal.stop_loss,
                 take_profit1=signal.take_profit1,
                 take_profit2=signal.take_profit2,
-                max_hold_date=signal.timestamp + pd.Timedelta(days=signal.max_hold_days)
+                take_profit3=signal.take_profit3,
+                max_hold_date=signal.timestamp + timedelta(days=signal.max_hold_days)
             )
             self.positions[signal.symbol] = position
-            print(f"✅ {signal.symbol} 포지션 오픈: {signal.position_size:,}주 @ {signal.price:,.0f}엔")
-            print(f"   🛡️ 손절: {signal.stop_loss:,.0f}엔 (-{((signal.price-signal.stop_loss)/signal.price*100):.1f}%)")
-            print(f"   🎯 1차익절: {signal.take_profit1:,.0f}엔 (+{((signal.take_profit1-signal.price)/signal.price*100):.1f}%)")
-            print(f"   🚀 2차익절: {signal.take_profit2:,.0f}엔 (+{((signal.take_profit2-signal.price)/signal.price*100):.1f}%)")
+            self.save_positions()
+            
+            day_name = "화요일" if signal.timestamp.weekday() == 1 else "목요일"
+            print(f"✅ {signal.symbol} {day_name} 포지션 오픈: {signal.position_size:,}주 @ {signal.price:,.0f}엔")
+            print(f"   🛡️ 손절: {signal.stop_loss:,.0f}엔")
+            print(f"   🎯 익절: {signal.take_profit1:,.0f}→{signal.take_profit2:,.0f}→{signal.take_profit3:,.0f}엔")
     
     async def check_positions(self) -> List[Dict]:
-        """포지션 체크 및 매도 신호"""
         actions = []
         current_time = datetime.now()
         
@@ -1023,301 +1737,590 @@ class PositionManager:
                 current_data = stock.history(period="1d")
                 if current_data.empty:
                     continue
-                
                 current_price = float(current_data['Close'].iloc[-1])
                 
-                # 손절 체크
+                # 손절
                 if current_price <= position.stop_loss:
-                    pnl = (current_price - position.buy_price) / position.buy_price * 100
-                    actions.append({
-                        'action': 'STOP_LOSS',
-                        'symbol': symbol,
-                        'shares': position.shares - position.shares_sold_1st,
-                        'price': current_price,
-                        'pnl': pnl,
-                        'reason': f'손절 실행 ({pnl:.1f}%)'
-                    })
-                    self._close_position(symbol, current_price, 'STOP_LOSS')
-                    
-                # 1차 익절 체크 (50% 매도)
-                elif current_price >= position.take_profit1 and position.shares_sold_1st == 0:
-                    shares_to_sell = position.shares // 2
-                    pnl = (current_price - position.buy_price) / position.buy_price * 100
-                    actions.append({
-                        'action': 'TAKE_PROFIT_1',
-                        'symbol': symbol,
-                        'shares': shares_to_sell,
-                        'price': current_price,
-                        'pnl': pnl,
-                        'reason': f'1차 익절 ({pnl:.1f}%) - 50% 매도'
-                    })
-                    position.shares_sold_1st = shares_to_sell
-                    
-                # 2차 익절 체크 (나머지 전량 매도)
-                elif current_price >= position.take_profit2:
-                    remaining_shares = position.shares - position.shares_sold_1st
-                    pnl = (current_price - position.buy_price) / position.buy_price * 100
-                    actions.append({
-                        'action': 'TAKE_PROFIT_2',
-                        'symbol': symbol,
-                        'shares': remaining_shares,
-                        'price': current_price,
-                        'pnl': pnl,
-                        'reason': f'2차 익절 ({pnl:.1f}%) - 전량 매도'
-                    })
-                    self._close_position(symbol, current_price, 'TAKE_PROFIT_2')
-                    
-                # 최대 보유기간 초과
-                elif current_time >= position.max_hold_date:
-                    remaining_shares = position.shares - position.shares_sold_1st
-                    pnl = (current_price - position.buy_price) / position.buy_price * 100
-                    actions.append({
-                        'action': 'TIME_EXIT',
-                        'symbol': symbol,
-                        'shares': remaining_shares,
-                        'price': current_price,
-                        'pnl': pnl,
-                        'reason': f'보유기간 만료 ({pnl:.1f}%)'
-                    })
-                    self._close_position(symbol, current_price, 'TIME_EXIT')
+                    remaining = position.get_remaining_shares()
+                    if remaining > 0:
+                        pnl = (current_price - position.buy_price) / position.buy_price
+                        actions.append({
+                            'action': 'STOP_LOSS',
+                            'symbol': symbol,
+                            'shares': remaining,
+                            'pnl': pnl * 100,
+                            'reason': f'손절 ({pnl*100:.1f}%)'
+                        })
+                        
+                        day_type = "TUESDAY" if position.buy_date.weekday() == 1 else "THURSDAY"
+                        self.target_manager.add_trade(symbol, pnl, position.buy_price, current_price, day_type)
+                        self._close_position(symbol, current_price, 'STOP_LOSS')
+                        continue
                 
-                # 트레일링 스톱 (고급 기능)
+                # 3차 익절
+                if current_price >= position.take_profit3 and position.shares_sold_3rd == 0:
+                    remaining = position.get_remaining_shares()
+                    if remaining > 0:
+                        pnl = (current_price - position.buy_price) / position.buy_price
+                        actions.append({
+                            'action': 'TAKE_PROFIT_3',
+                            'symbol': symbol,
+                            'shares': remaining,
+                            'pnl': pnl * 100,
+                            'reason': f'3차 익절 ({pnl*100:.1f}%) - 대박!'
+                        })
+                        
+                        day_type = "TUESDAY" if position.buy_date.weekday() == 1 else "THURSDAY"
+                        self.target_manager.add_trade(symbol, pnl, position.buy_price, current_price, day_type)
+                        self._close_position(symbol, current_price, 'TAKE_PROFIT_3')
+                        continue
+                
+                # 2차 익절
+                elif current_price >= position.take_profit2 and position.shares_sold_2nd == 0:
+                    remaining = position.get_remaining_shares()
+                    shares_to_sell = int(remaining * 0.67)
+                    if shares_to_sell > 0:
+                        pnl = (current_price - position.buy_price) / position.buy_price
+                        actions.append({
+                            'action': 'TAKE_PROFIT_2',
+                            'symbol': symbol,
+                            'shares': shares_to_sell,
+                            'pnl': pnl * 100,
+                            'reason': f'2차 익절 ({pnl*100:.1f}%) - 40% 매도'
+                        })
+                        
+                        position.shares_sold_2nd = shares_to_sell
+                        self.save_positions()
+                
+                # 1차 익절
+                elif current_price >= position.take_profit1 and position.shares_sold_1st == 0:
+                    shares_to_sell = int(position.shares * 0.4)
+                    if shares_to_sell > 0:
+                        pnl = (current_price - position.buy_price) / position.buy_price
+                        actions.append({
+                            'action': 'TAKE_PROFIT_1',
+                            'symbol': symbol,
+                            'shares': shares_to_sell,
+                            'pnl': pnl * 100,
+                            'reason': f'1차 익절 ({pnl*100:.1f}%) - 40% 매도'
+                        })
+                        
+                        position.shares_sold_1st = shares_to_sell
+                        self.save_positions()
+                
+                # 화목 강제 청산
+                elif self._should_force_exit(position, current_time):
+                    remaining = position.get_remaining_shares()
+                    if remaining > 0:
+                        pnl = (current_price - position.buy_price) / position.buy_price
+                        reason = self._get_exit_reason(position, current_time)
+                        
+                        actions.append({
+                            'action': 'FORCE_EXIT',
+                            'symbol': symbol,
+                            'shares': remaining,
+                            'pnl': pnl * 100,
+                            'reason': reason
+                        })
+                        
+                        day_type = "TUESDAY" if position.buy_date.weekday() == 1 else "THURSDAY"
+                        self.target_manager.add_trade(symbol, pnl, position.buy_price, current_price, day_type)
+                        self._close_position(symbol, current_price, 'FORCE_EXIT')
+                
+                # 트레일링 스톱
                 else:
-                    # 수익이 15% 이상일 때 손절가를 매수가 근처로 올림
-                    if current_price >= position.buy_price * 1.15:
-                        new_stop = position.buy_price * 1.02  # 매수가 +2%로 손절 조정
-                        if new_stop > position.stop_loss:
-                            position.stop_loss = new_stop
-                            print(f"📈 {symbol} 트레일링 스톱 조정: {new_stop:,.0f}엔")
-                            
+                    self._update_trailing_stop(position, current_price)
+                
             except Exception as e:
-                print(f"⚠️ {symbol} 포지션 체크 실패: {e}")
+                print(f"⚠️ {symbol} 체크 실패: {e}")
                 continue
         
         return actions
     
-    def _close_position(self, symbol: str, exit_price: float, exit_reason: str):
-        """포지션 종료"""
+    def _should_force_exit(self, position: Position, current_time: datetime) -> bool:
+        if current_time >= position.max_hold_date:
+            return True
+        # 화→목, 목→월 청산
+        if position.buy_date.weekday() == 1 and current_time.weekday() == 3:  # 화→목
+            return (current_time - position.buy_date).days >= 2
+        if position.buy_date.weekday() == 3 and current_time.weekday() == 0:  # 목→월
+            return True
+        return False
+    
+    def _get_exit_reason(self, position: Position, current_time: datetime) -> str:
+        if current_time >= position.max_hold_date:
+            return "최대 보유기간 만료"
+        elif position.buy_date.weekday() == 1 and current_time.weekday() == 3:
+            return "화→목 중간 청산"
+        elif position.buy_date.weekday() == 3:
+            return "목→월 주말 청산"
+        else:
+            return "화목 규칙 청산"
+    
+    def _update_trailing_stop(self, position: Position, current_price: float):
+        # 화요일: 5% 수익시 +1%
+        if position.buy_date.weekday() == 1:
+            if current_price >= position.buy_price * 1.05:
+                new_stop = position.buy_price * 1.01
+                if new_stop > position.stop_loss:
+                    position.stop_loss = new_stop
+                    self.save_positions()
+        # 목요일: 2% 수익시 매수가
+        else:
+            if current_price >= position.buy_price * 1.02:
+                new_stop = position.buy_price * 1.001
+                if new_stop > position.stop_loss:
+                    position.stop_loss = new_stop
+                    self.save_positions()
+    
+    def _close_position(self, symbol: str, exit_price: float, reason: str):
         if symbol in self.positions:
             position = self.positions[symbol]
             pnl = (exit_price - position.buy_price) / position.buy_price * 100
             
             self.closed_positions.append({
-                'symbol': symbol,
-                'buy_price': position.buy_price,
-                'exit_price': exit_price,
-                'shares': position.shares,
-                'pnl': pnl,
-                'exit_reason': exit_reason,
-                'hold_days': (datetime.now() - position.buy_date).days,
-                'exit_date': datetime.now()
+                'symbol': symbol, 'pnl': pnl, 'reason': reason,
+                'exit_date': datetime.now().isoformat(),
+                'buy_day': '화요일' if position.buy_date.weekday() == 1 else '목요일'
             })
             
             del self.positions[symbol]
-            print(f"🔚 {symbol} 포지션 종료: {pnl:.1f}% ({exit_reason})")
-    
-    def get_portfolio_status(self) -> Dict:
-        """포트폴리오 현황"""
-        total_value = 0
-        total_pnl = 0
-        
-        for position in self.positions.values():
-            # 간단 계산 (실제로는 실시간 가격 조회 필요)
-            value = position.buy_price * position.shares
-            total_value += value
-        
-        if self.closed_positions:
-            total_pnl = sum([pos['pnl'] for pos in self.closed_positions]) / len(self.closed_positions)
-        
-        return {
-            'open_positions': len(self.positions),
-            'closed_trades': len(self.closed_positions),
-            'total_value': total_value,
-            'avg_pnl': total_pnl,
-            'positions': list(self.positions.keys())
-        }
+            self.save_positions()
+            print(f"🔚 {symbol} 종료: {pnl:.1f}% ({reason})")
 
 # ============================================================================
-# 🏆 전설의 메인 엔진 (업그레이드)
+# 🔗 IBKR 연동
+# ============================================================================
+class IBKRConnector:
+    def __init__(self):
+        self.ib = None
+        self.connected = False
+        self.available = IBKR_AVAILABLE
+        
+    async def connect(self) -> bool:
+        if not self.available:
+            self.connected = True
+            return True
+        try:
+            self.ib = IB()
+            await self.ib.connectAsync(Config.IBKR_HOST, Config.IBKR_PORT, Config.IBKR_CLIENT_ID)
+            self.connected = True
+            print("🔗 IBKR 연결 완료")
+            return True
+        except Exception as e:
+            print(f"❌ IBKR 실패: {e}, 시뮬레이션 모드")
+            self.connected = True
+            return True
+    
+    async def place_order(self, symbol: str, action: str, quantity: int) -> Dict:
+        if not self.available:
+            print(f"🎭 시뮬레이션: {action} {symbol} {quantity}주")
+            return {'status': 'success', 'simulation': True}
+        
+        try:
+            contract = Stock(symbol.replace('.T', ''), 'TSE', 'JPY')
+            order = MarketOrder(action, quantity)
+            trade = self.ib.placeOrder(contract, order)
+            print(f"📝 IBKR: {action} {symbol} {quantity}주")
+            return {'status': 'success', 'orderId': trade.order.orderId}
+        except Exception as e:
+            print(f"❌ 주문 실패: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    async def disconnect(self):
+        if self.ib and self.available:
+            self.ib.disconnect()
+        print("🔌 IBKR 연결 해제")
+
+# ============================================================================
+# 🏆 YEN-HUNTER v2.0 메인
 # ============================================================================
 class YenHunter:
-    """전설적인 YEN-HUNTER 메인 엔진 (TOPIX+JPX400 업그레이드)"""
-    
     def __init__(self):
         self.hunter = StockHunter()
         self.signal_gen = SignalGenerator()
         self.position_mgr = PositionManager()
-        self.selected_stocks = []
+        self.ibkr = IBKRConnector()
         
-        print("🏆 YEN-HUNTER 초기화 완료! (TOPIX+JPX400 업그레이드)")
-        print(f"💱 엔화 임계값: 강세({Config.YEN_STRONG}) 약세({Config.YEN_WEAK})")
-        print(f"🎯 선별 기준: 시총{Config.MIN_MARKET_CAP/1e11:.0f}천억엔+ 탑{Config.TARGET_STOCKS}개")
-        print("🛡️ 리스크 관리: ATR 기반 동적 손절/익절 + 트레일링 스톱")
-        print("🆕 3개 지수 통합: 닛케이225 + TOPIX + JPX400")
+        print("🏆 YEN-HUNTER v2.0 HYBRID 초기화!")
+        print("📅 화목 하이브리드 | 🎯 월 14% | 💰 6개 지표 | 🔗 IBKR")
+        
+        # 현황
+        status = self.position_mgr.target_manager.get_status()
+        print(f"📊 {status['month']} 진행률: {status['target_progress']:.1f}%")
     
-    async def full_trading_cycle(self) -> Dict:
-        """🚀 완전한 매매 사이클 (신호 + 포지션 관리)"""
-        print("\n🔥 전설적인 완전 매매 사이클 시작!")
+    def should_trade_today(self) -> bool:
+        return datetime.now().weekday() in Config.TRADING_DAYS
+    
+    async def hunt_and_analyze(self) -> List[Signal]:
+        if not self.should_trade_today():
+            print("😴 오늘은 비거래일")
+            return []
         
-        # 1단계: 기존 포지션 체크
-        print("🛡️ 기존 포지션 체크...")
-        position_actions = await self.position_mgr.check_positions()
+        day_type = "화요일" if datetime.now().weekday() == 1 else "목요일"
+        print(f"\n🔍 {day_type} 헌팅 시작...")
+        start_time = time.time()
         
-        for action in position_actions:
-            emoji = "🛑" if action['action'] == 'STOP_LOSS' else "💰" if 'PROFIT' in action['action'] else "⏰"
-            print(f"{emoji} {action['symbol']}: {action['reason']}")
+        # 3개 지수 종목 수집
+        symbols = await self.hunter.hunt_japanese_stocks()
+        legends = await self.hunter.select_legends(symbols)
+        print(f"🏆 {len(legends)}개 전설급 선별")
         
-        # 2단계: 새로운 매수 기회 탐색
-        print("\n🔍 새로운 기회 탐색...")
+        # 6개 지표 신호 생성
+        signals = []
+        for i, stock in enumerate(legends, 1):
+            print(f"⚡ 분석 {i}/{len(legends)} - {stock['symbol']}")
+            signal = await self.signal_gen.generate_signal(stock['symbol'])
+            signals.append(signal)
+            await asyncio.sleep(0.05)
+        
+        elapsed = time.time() - start_time
+        buy_count = len([s for s in signals if s.action == 'BUY'])
+        
+        print(f"🎯 {day_type} 완료! ({elapsed:.1f}초) 매수: {buy_count}개")
+        return signals
+    
+    async def run_trading_session(self):
+        """화목 거래 세션"""
+        today = datetime.now()
+        if not self.should_trade_today():
+            print("😴 오늘은 비거래일")
+            return
+        
+        day_name = "화요일" if today.weekday() == 1 else "목요일"
+        print(f"\n🏯 {day_name} 거래 세션 시작")
+        
+        # 1. 포지션 체크
+        actions = await self.position_mgr.check_positions()
+        if actions:
+            for action in actions:
+                emoji = "🛑" if 'STOP' in action['action'] else "💰" if 'PROFIT' in action['action'] else "⏰"
+                print(f"{emoji} {action['symbol']}: {action['reason']}")
+        
+        # 2. 새로운 기회
         signals = await self.hunt_and_analyze()
-        
-        # 3단계: 매수 신호 실행
         buy_signals = [s for s in signals if s.action == 'BUY' and s.symbol not in self.position_mgr.positions]
         
-        executed_buys = []
-        for signal in buy_signals[:3]:  # 최대 3개까지만
-            self.position_mgr.open_position(signal)
-            executed_buys.append(signal)
+        if buy_signals:
+            buy_signals.sort(key=lambda x: x.confidence, reverse=True)
+            max_trades = Config.MAX_TUESDAY_TRADES if today.weekday() == 1 else Config.MAX_THURSDAY_TRADES
+            
+            executed = 0
+            for signal in buy_signals[:max_trades]:
+                if signal.position_size > 0:
+                    print(f"💰 {signal.symbol} 매수: {signal.confidence:.1%}")
+                    
+                    # IBKR 주문
+                    if self.ibkr.connected:
+                        result = await self.ibkr.place_order(signal.symbol, 'BUY', signal.position_size)
+                        if result['status'] == 'success':
+                            self.position_mgr.open_position(signal)
+                            executed += 1
+                    else:
+                        await self.ibkr.connect()
+                        self.position_mgr.open_position(signal)
+                        executed += 1
+            
+            print(f"✅ {day_name} {executed}개 매수 실행")
+        else:
+            print(f"😴 {day_name} 매수 기회 없음")
         
-        # 4단계: 포트폴리오 현황
-        portfolio = self.position_mgr.get_portfolio_status()
-        
-        return {
-            'timestamp': datetime.now(),
-            'position_actions': position_actions,
-            'new_signals': len(signals),
-            'executed_buys': len(executed_buys),
-            'portfolio': portfolio,
-            'top_signals': signals[:5] if signals else []
-        }
+        # 현황
+        status = self.get_status()
+        print(f"📊 현재: {status['open_positions']}개 포지션 | 월 진행률: {self.position_mgr.target_manager.get_status()['target_progress']:.1f}%")
     
     async def monitor_positions(self):
-        """포지션 모니터링 (실시간 실행용)"""
+        """포지션 모니터링"""
         print("👁️ 포지션 모니터링 시작...")
         
         while True:
             try:
                 actions = await self.position_mgr.check_positions()
-                
                 if actions:
-                    print(f"\n⚡ {len(actions)}개 액션 발생:")
                     for action in actions:
-                        print(f"  {action['symbol']}: {action['reason']}")
+                        emoji = "🛑" if 'STOP' in action['action'] else "💰"
+                        print(f"⚡ {emoji} {action['symbol']}: {action['reason']}")
                 
-                # 포트폴리오 현황
-                portfolio = self.position_mgr.get_portfolio_status()
-                if portfolio['open_positions'] > 0:
-                    print(f"📊 현재 포트폴리오: {portfolio['open_positions']}개 포지션, 평균 수익률: {portfolio['avg_pnl']:.1f}%")
-                
-                await asyncio.sleep(300)  # 5분마다 체크
-                
+                await asyncio.sleep(300)  # 5분마다
             except KeyboardInterrupt:
-                print("🛑 모니터링 종료")
                 break
             except Exception as e:
                 print(f"⚠️ 모니터링 오류: {e}")
-                await asyncio.sleep(60)  # 1분 후 재시도
+                await asyncio.sleep(60)
     
-    async def hunt_and_analyze(self) -> List[LegendarySignal]:
-        """전설적인 헌팅 + 분석 (3개 지수 통합)"""
-        print("\n🔍 전설적인 종목 헌팅 시작...")
-        start_time = time.time()
+    def get_status(self) -> Dict:
+        """현황 반환"""
+        total_positions = len(self.position_mgr.positions)
+        closed_trades = len(self.position_mgr.closed_positions)
         
-        try:
-            # 🆕 일본 주식 종합 헌팅 (3개 지수 통합)
-            symbols = await self.hunter.hunt_japanese_stocks()
-            print(f"📡 일본주식 종합 수집: {len(symbols)}개")
-            
-            # 2단계: 전설급 선별
-            legends = await self.hunter.select_legends(symbols)
-            print(f"🏆 전설급 선별: {len(legends)}개")
-            
-            self.selected_stocks = legends
-            
-            # 3단계: 신호 생성
-            signals = []
-            for i, stock in enumerate(legends, 1):
-                print(f"⚡ 분석 중... {i}/{len(legends)} - {stock['symbol']}")
-                signal = await self.signal_gen.generate_signal(stock['symbol'])
-                signals.append(signal)
-                await asyncio.sleep(0.1)  # API 제한
-            
-            elapsed = time.time() - start_time
-            
-            # 결과 요약
-            buy_count = len([s for s in signals if s.action == 'BUY'])
-            sell_count = len([s for s in signals if s.action == 'SELL'])
-            
-            print(f"\n🎯 전설적인 분석 완료! ({elapsed:.1f}초)")
-            print(f"📊 매수:{buy_count} 매도:{sell_count} 보유:{len(signals)-buy_count-sell_count}")
-            print(f"💱 USD/JPY: {self.signal_gen.current_usd_jpy:.2f}")
-            
-            return signals
-            
-        except Exception as e:
-            print(f"❌ 헌팅 실패: {e}")
-            return []
-    
-    async def analyze_single(self, symbol: str) -> LegendarySignal:
-        """단일 종목 분석"""
-        return await self.signal_gen.generate_signal(symbol)
-    
-    def get_top_signals(self, signals: List[LegendarySignal], action: str = "BUY", top: int = 5) -> List[LegendarySignal]:
-        """상위 신호 추출"""
-        filtered = [s for s in signals if s.action == action]
-        return sorted(filtered, key=lambda x: x.confidence, reverse=True)[:top]
+        if self.position_mgr.closed_positions:
+            avg_pnl = sum([t['pnl'] for t in self.position_mgr.closed_positions]) / closed_trades
+            win_rate = len([t for t in self.position_mgr.closed_positions if t['pnl'] > 0]) / closed_trades * 100
+        else:
+            avg_pnl = win_rate = 0
+        
+        monthly = self.position_mgr.target_manager.get_status()
+        
+        return {
+            'open_positions': total_positions,
+            'closed_trades': closed_trades,
+            'avg_pnl': avg_pnl,
+            'win_rate': win_rate,
+            'positions': list(self.position_mgr.positions.keys()),
+            'monthly_progress': monthly['target_progress'],
+            'monthly_pnl': monthly['total_pnl'] * 100,
+            'tuesday_pnl': monthly['tuesday_pnl'] * 100,
+            'thursday_pnl': monthly['thursday_pnl'] * 100,
+            'trading_intensity': monthly['trading_intensity']
+        }
 
 # ============================================================================
-# 📈 간단 백테스터
+# 🎮 편의 함수들
 # ============================================================================
-class SimpleBacktester:
-    """전설적인 간단 백테스터"""
+async def hunt_signals() -> List[Signal]:
+    """신호 헌팅"""
+    hunter = YenHunter()
+    return await hunter.hunt_and_analyze()
+
+async def analyze_single(symbol: str) -> Signal:
+    """단일 분석"""
+    hunter = YenHunter()
+    return await hunter.signal_gen.generate_signal(symbol)
+
+async def run_auto_selection() -> List[Dict]:
+    """자동선별 실행"""
+    hunter = YenHunter()
     
+    print("🤖 자동선별 시스템 시작!")
+    print("="*50)
+    
+    # 3개 지수 종목 수집
+    symbols = await hunter.hunter.hunt_japanese_stocks()
+    print(f"📡 총 수집: {len(symbols)}개 종목")
+    
+    # 자동선별 실행
+    legends = await hunter.hunter.select_legends(symbols)
+    
+    print(f"\n🏆 자동선별 결과: {len(legends)}개 전설급")
+    print("="*50)
+    
+    for i, stock in enumerate(legends, 1):
+        print(f"{i:2d}. {stock['symbol']} | 점수: {stock['score']:.2f}")
+        print(f"    💰 시총: {stock['market_cap']/1e12:.1f}조엔 | 섹터: {stock['sector']}")
+        print(f"    📊 현재가: {stock['current_price']:,.0f}엔 | 거래량: {stock['avg_volume']/1e6:.1f}M")
+        print(f"    💡 이유: {stock['selection_reason']}")
+        print()
+    
+    return legends
+
+async def analyze_auto_selected() -> List[Signal]:
+    """자동선별 종목들 분석"""
+    hunter = YenHunter()
+    
+    # 자동선별 실행
+    legends = await run_auto_selection()
+    
+    if not hunter.should_trade_today():
+        print("😴 오늘은 비거래일이지만 분석은 진행합니다.")
+    
+    print("\n🔍 자동선별 종목 신호 분석")
+    print("="*50)
+    
+    signals = []
+    for i, stock in enumerate(legends, 1):
+        print(f"⚡ 분석 {i}/{len(legends)} - {stock['symbol']}")
+        signal = await hunter.signal_gen.generate_signal(stock['symbol'])
+        signals.append(signal)
+        
+        # 간단한 결과 출력
+        if signal.action == 'BUY':
+            print(f"   ✅ 매수신호! 신뢰도: {signal.confidence:.1%} | {signal.reason}")
+        else:
+            print(f"   ⏸️ 대기 (신뢰도: {signal.confidence:.1%})")
+    
+    buy_signals = [s for s in signals if s.action == 'BUY']
+    print(f"\n🎯 매수 추천: {len(buy_signals)}개 / {len(signals)}개")
+    
+    return signals
+
+async def run_auto_trading():
+    """자동매매 실행"""
+    hunter = YenHunter()
+    
+    try:
+        await hunter.ibkr.connect()
+        print("🚀 화목 자동매매 시작 (Ctrl+C로 종료)")
+        
+        while True:
+            now = datetime.now()
+            
+            # 화목 09시에 거래
+            if now.weekday() in [1, 3] and now.hour == 9 and now.minute == 0:
+                await hunter.run_trading_session()
+                await asyncio.sleep(60)
+            else:
+                # 포지션 모니터링
+                actions = await hunter.position_mgr.check_positions()
+                if actions:
+                    for action in actions:
+                        print(f"⚡ {action['symbol']}: {action['reason']}")
+                await asyncio.sleep(300)
+                
+    except KeyboardInterrupt:
+        print("🛑 자동매매 종료")
+    finally:
+        await hunter.ibkr.disconnect()
+
+async def run_full_auto_system():
+    """완전 자동화 시스템 (자동선별 + 자동매매)"""
+    hunter = YenHunter()
+    
+    try:
+        await hunter.ibkr.connect()
+        print("🤖 완전 자동화 시스템 시작!")
+        print("🔄 자동선별 + 자동매매 + 자동관리")
+        print("="*50)
+        
+        last_selection_day = -1
+        
+        while True:
+            now = datetime.now()
+            
+            # 매일 오전 8시에 자동선별 업데이트 (화목 거래일 전에)
+            if now.hour == 8 and now.minute == 0 and now.day != last_selection_day:
+                if now.weekday() in [0, 2]:  # 월, 수 (화목 거래 전날)
+                    print("\n🔄 자동선별 업데이트 중...")
+                    await run_auto_selection()
+                    last_selection_day = now.day
+            
+            # 화목 09시에 거래
+            elif now.weekday() in [1, 3] and now.hour == 9 and now.minute == 0:
+                print(f"\n🏯 {['월','화','수','목','금','토','일'][now.weekday()]}요일 자동거래 시작")
+                await hunter.run_trading_session()
+                await asyncio.sleep(60)
+            
+            # 포지션 모니터링 (5분마다)
+            else:
+                actions = await hunter.position_mgr.check_positions()
+                if actions:
+                    for action in actions:
+                        print(f"⚡ {action['symbol']}: {action['reason']}")
+                await asyncio.sleep(300)
+                
+    except KeyboardInterrupt:
+        print("🛑 완전 자동화 시스템 종료")
+    finally:
+        await hunter.ibkr.disconnect()
+
+def show_status():
+    """현황 출력"""
+    hunter = YenHunter()
+    status = hunter.get_status()
+    monthly = hunter.position_mgr.target_manager.get_status()
+    
+    print(f"\n📊 YEN-HUNTER v2.0 HYBRID 현황")
+    print("="*50)
+    print(f"💼 오픈 포지션: {status['open_positions']}개")
+    print(f"🎲 완료 거래: {status['closed_trades']}회")
+    print(f"📈 평균 수익: {status['avg_pnl']:.1f}%")
+    print(f"🏆 승률: {status['win_rate']:.1f}%")
+    print(f"\n📅 {monthly['month']} 월간 현황:")
+    print(f"🎯 목표 진행: {monthly['target_progress']:.1f}% / 14%")
+    print(f"💰 총 수익: {monthly['total_pnl']*100:.2f}%")
+    print(f"📊 화요일: {monthly['tuesday_pnl']*100:.2f}% ({monthly['tuesday_trades']}회)")
+    print(f"📊 목요일: {monthly['thursday_pnl']*100:.2f}% ({monthly['thursday_trades']}회)")
+    print(f"⚡ 거래 모드: {monthly['trading_intensity']}")
+    
+    if status['positions']:
+        print(f"📋 보유: {', '.join(status['positions'])}")
+
+# ============================================================================
+# 📈 백테스터 (간소화)
+# ============================================================================
+class HybridBacktester:
     @staticmethod
-    async def backtest_symbol(symbol: str, period: str = "1y") -> Dict:
-        """단일 종목 백테스트"""
+    async def backtest_symbol(symbol: str, period: str = "6mo") -> Dict:
+        """화목 하이브리드 백테스트"""
         try:
-            # 과거 데이터
             stock = yf.Ticker(symbol)
             data = stock.history(period=period)
             
-            if len(data) < 60:
+            if len(data) < 100:
                 return {"error": "데이터 부족"}
             
-            # 간단 전략: RSI 30 매수, 70 매도
-            indicators = LegendaryIndicators()
-            
-            returns = []
-            position = 0
-            buy_price = 0
+            indicators = Indicators()
+            tuesday_trades = []
+            thursday_trades = []
             
             for i in range(60, len(data)):
                 current_data = data.iloc[:i+1]
+                current_date = current_data.index[-1]
+                weekday = current_date.weekday()
+                
+                # 화목만 거래
+                if weekday not in [1, 3]:
+                    continue
+                
+                # 기술지표
                 rsi = indicators.rsi(current_data['Close'])
+                macd_signal, _ = indicators.macd(current_data['Close'])
+                bb_signal, _ = indicators.bollinger_bands(current_data['Close'])
+                stoch_signal, _ = indicators.stochastic(current_data['High'], current_data['Low'], current_data['Close'])
+                
                 price = current_data['Close'].iloc[-1]
                 
-                # 매수 신호
-                if rsi <= 30 and position == 0:
-                    position = 1
-                    buy_price = price
+                # 화목별 매수 조건
+                should_buy = False
+                if weekday == 1:  # 화요일
+                    if rsi <= 35 and macd_signal == "GOLDEN_CROSS":
+                        should_buy = True
+                elif weekday == 3:  # 목요일
+                    if (rsi <= 25 or bb_signal == "LOWER_BREAK" or stoch_signal == "OVERSOLD"):
+                        should_buy = True
                 
-                # 매도 신호  
-                elif rsi >= 70 and position == 1:
-                    ret = (price - buy_price) / buy_price
-                    returns.append(ret)
-                    position = 0
+                if should_buy:
+                    # 매도 조건
+                    if weekday == 1:  # 화요일
+                        hold_target, profit_target, stop_loss = 5, 0.07, 0.03
+                    else:  # 목요일
+                        hold_target, profit_target, stop_loss = 2, 0.03, 0.02
+                    
+                    # 결과 계산
+                    future_data = data.iloc[i:i+hold_target+1]
+                    if len(future_data) > 1:
+                        for j, (future_date, future_row) in enumerate(future_data.iterrows()):
+                            if j == 0:
+                                continue
+                                
+                            future_price = future_row['Close']
+                            pnl = (future_price - price) / price
+                            
+                            if pnl >= profit_target or pnl <= -stop_loss or j == len(future_data) - 1:
+                                trade_info = {
+                                    'return': pnl * 100,
+                                    'day_type': '화요일' if weekday == 1 else '목요일'
+                                }
+                                
+                                if weekday == 1:
+                                    tuesday_trades.append(trade_info)
+                                else:
+                                    thursday_trades.append(trade_info)
+                                break
             
-            if returns:
+            all_trades = tuesday_trades + thursday_trades
+            if all_trades:
+                returns = [t['return']/100 for t in all_trades]
                 total_return = np.prod([1 + r for r in returns]) - 1
-                win_rate = len([r for r in returns if r > 0]) / len(returns)
-                avg_return = np.mean(returns)
                 
                 return {
                     "symbol": symbol,
                     "total_return": total_return * 100,
-                    "win_rate": win_rate * 100,
-                    "avg_return": avg_return * 100,
-                    "trades": len(returns)
+                    "total_trades": len(all_trades),
+                    "win_rate": len([r for r in returns if r > 0]) / len(returns) * 100,
+                    "tuesday_trades": len(tuesday_trades),
+                    "thursday_trades": len(thursday_trades),
+                    "tuesday_avg": np.mean([t['return'] for t in tuesday_trades]) if tuesday_trades else 0,
+                    "thursday_avg": np.mean([t['return'] for t in thursday_trades]) if thursday_trades else 0,
                 }
             else:
                 return {"error": "거래 없음"}
@@ -1325,130 +2328,84 @@ class SimpleBacktester:
         except Exception as e:
             return {"error": str(e)}
 
-# ============================================================================
-# 🎮 편의 함수들
-# ============================================================================
-async def hunt_jp_legends() -> List[LegendarySignal]:
-    """일본 전설급 종목 헌팅 (3개 지수 통합)"""
-    hunter = YenHunter()
-    return await hunter.hunt_and_analyze()
-
-async def analyze_jp_single(symbol: str) -> LegendarySignal:
-    """단일 종목 분석"""
-    hunter = YenHunter()
-    return await hunter.analyze_single(symbol)
-
-async def backtest_jp(symbol: str) -> Dict:
-    """백테스트 실행"""
-    return await SimpleBacktester.backtest_symbol(symbol)
+async def backtest_hybrid(symbol: str) -> Dict:
+    """백테스트"""
+    return await HybridBacktester.backtest_symbol(symbol)
 
 # ============================================================================
-# 🧪 테스트 실행 (업그레이드)
+# 🧪 테스트 실행
 # ============================================================================
 async def main():
-    """전설적인 테스트 (TOPIX+JPX400 업그레이드)"""
-    print("🏆 YEN-HUNTER 전설적인 테스트 시작! (TOPIX+JPX400 업그레이드)")
+    """YEN-HUNTER v2.0 HYBRID 테스트"""
+    print("🏆 YEN-HUNTER v2.0 HYBRID 테스트!")
     print("="*60)
+    print("📅 화목 하이브리드 전략")
+    print("🎯 월 14% 목표 (화 2.5% + 목 1.5%)")
+    print("💰 6개 핵심 지표 + 3개 지수 헌팅")
+    print("🔗 IBKR 연동 + 완전 자동화")
     
-    # 전체 헌팅 + 분석 (3개 지수 통합)
-    signals = await hunt_jp_legends()
+    # 현황 출력
+    show_status()
+    
+    # 거래일 체크
+    hunter = YenHunter()
+    if not hunter.should_trade_today():
+        print(f"\n😴 오늘은 비거래일 (월,수,금,토,일)")
+        return
+    
+    # 신호 헌팅
+    signals = await hunt_signals()
     
     if signals:
-        # 상위 매수 추천
-        top_buys = YenHunter().get_top_signals(signals, "BUY", 3)
+        buy_signals = [s for s in signals if s.action == 'BUY']
+        buy_signals.sort(key=lambda x: x.confidence, reverse=True)
         
-        print(f"\n🎯 전설적인 매수 추천 (3개 지수 통합):")
-        for i, signal in enumerate(top_buys, 1):
-            print(f"{i}. {signal.symbol}: {signal.confidence:.1%} 신뢰도")
-            print(f"   💰 {signal.price:,.0f}엔 | 포지션: {signal.position_size:,}주")
-            print(f"   🛡️ 손절: {signal.stop_loss:,.0f}엔 (-{((signal.price-signal.stop_loss)/signal.price*100):.1f}%)")
-            print(f"   🎯 1차익절: {signal.take_profit1:,.0f}엔 (+{((signal.take_profit1-signal.price)/signal.price*100):.1f}%)")
-            print(f"   🚀 2차익절: {signal.take_profit2:,.0f}엔 (+{((signal.take_profit2-signal.price)/signal.price*100):.1f}%)")
-            print(f"   ⏰ 최대보유: {signal.max_hold_days}일")
-            print(f"   🏆 고급지표: RSI({signal.rsi:.0f}) MACD({signal.macd_signal}) BB({signal.bb_signal})")
-            print(f"   📊 스토캐스틱({signal.stoch_signal}) 모멘텀({signal.momentum_signal}) ATR({signal.atr:.1f})")
-            print(f"   📈 추세({signal.trend}) 거래량({signal.volume_signal}) 피보나치({signal.fibonacci_level})")
+        print(f"\n🎯 매수 추천 TOP 3:")
+        for i, signal in enumerate(buy_signals[:3], 1):
+            profit1_pct = ((signal.take_profit1 - signal.price) / signal.price * 100)
+            profit2_pct = ((signal.take_profit2 - signal.price) / signal.price * 100)
+            profit3_pct = ((signal.take_profit3 - signal.price) / signal.price * 100)
+            stop_pct = ((signal.price - signal.stop_loss) / signal.price * 100)
+            
+            print(f"\n{i}. {signal.symbol} (신뢰도: {signal.confidence:.1%})")
+            print(f"   💰 {signal.price:,.0f}엔 | {signal.position_size:,}주")
+            print(f"   🛡️ 손절: -{stop_pct:.1f}%")
+            print(f"   🎯 익절: +{profit1_pct:.1f}% → +{profit2_pct:.1f}% → +{profit3_pct:.1f}%")
+            print(f"   📊 지표: RSI({signal.rsi:.0f}) {signal.macd_signal} {signal.bb_signal} {signal.stoch_signal}")
             print(f"   💡 {signal.reason}")
         
-        # 실제 포지션 관리 테스트
-        print(f"\n🛡️ 포지션 관리 시스템 테스트:")
-        hunter = YenHunter()
-        
-        # 가상 매수 실행
-        if top_buys:
-            print(f"   📝 {top_buys[0].symbol} 가상 포지션 오픈:")
-            hunter.position_mgr.open_position(top_buys[0])
-            
-            # 포트폴리오 현황
-            portfolio = hunter.position_mgr.get_portfolio_status()
-            print(f"   📊 포트폴리오: {portfolio['open_positions']}개 포지션")
-            
-            # 포지션 체크 시뮬레이션
-            print(f"   🔍 포지션 체크 시뮬레이션:")
-            actions = await hunter.position_mgr.check_positions()
-            if actions:
-                print(f"      ⚡ {len(actions)}개 액션 발생")
-            else:
-                print(f"      ✅ 모든 포지션 정상")
-        
-        # 완전 매매 사이클 테스트
-        print(f"\n🚀 완전 매매 사이클 테스트:")
-        cycle_result = await hunter.full_trading_cycle()
-        print(f"   📊 새 신호: {cycle_result['new_signals']}개")
-        print(f"   💰 실행된 매수: {cycle_result['executed_buys']}개")
-        print(f"   🛡️ 포지션 액션: {len(cycle_result['position_actions'])}개")
-        
-        # 백테스트 (첫 번째 종목)
-        if top_buys:
-            print(f"\n📈 {top_buys[0].symbol} 백테스트:")
-            backtest_result = await backtest_jp(top_buys[0].symbol)
+        # 백테스트
+        if buy_signals:
+            print(f"\n📈 백테스트 ({buy_signals[0].symbol}):")
+            backtest_result = await backtest_hybrid(buy_signals[0].symbol)
             if "error" not in backtest_result:
-                print(f"   📊 총수익: {backtest_result['total_return']:.1f}%")
-                print(f"   🎯 승률: {backtest_result['win_rate']:.1f}%")
-                print(f"   💹 거래횟수: {backtest_result['trades']}회")
+                print(f"   📊 총 수익: {backtest_result['total_return']:.1f}%")
+                print(f"   🏆 승률: {backtest_result['win_rate']:.1f}%")
+                print(f"   📅 화요일: {backtest_result['tuesday_trades']}회 (평균 {backtest_result['tuesday_avg']:.1f}%)")
+                print(f"   📅 목요일: {backtest_result['thursday_trades']}회 (평균 {backtest_result['thursday_avg']:.1f}%)")
     
-    print("\n✅ 전설적인 테스트 완료! (TOPIX+JPX400 업그레이드)")
-    print("\n🚀 YEN-HUNTER 특징 (업그레이드):")
-    print("  ⚡ 900라인 전설급 완전체")
-    print("  💱 엔화 기반 수출/내수 매칭")
-    print("  🆕 3개 지수 통합 헌팅:")
-    print("    - 📡 닛케이225: 대형주 225개")
-    print("    - 📊 TOPIX: 도쿄증권거래소 전체")
-    print("    - 🏆 JPX400: 수익성 우수 400개")
-    print("  🏆 전설의 고급 기술지표 (8개)")
-    print("    - RSI + MACD + 볼린저밴드")
-    print("    - 스토캐스틱 + ATR + 모멘텀")
-    print("    - 피보나치 + 고급거래량분석")
-    print("  🛡️ ATR 기반 동적 손절/익절")
-    print("  💰 분할 익절 (1차 50%, 2차 전량)")
-    print("  ⏰ 변동성 고려 보유기간 관리")
-    print("  🤖 완전 자동화 포지션 관리")
-    print("  📈 백테스트 내장")
-    print("\n💡 실전 사용법:")
-    print("  - await hunter.full_trading_cycle() : 완전 매매 사이클")
-    print("  - await hunter.monitor_positions() : 실시간 포지션 모니터링")
-    print("  - hunter.position_mgr.get_portfolio_status() : 포트폴리오 현황")
-    print("\n🎯 전설의 리스크 관리:")
-    print("  - 신뢰도별 동적 손절률 (5-15%)")
-    print("  - ATR 기반 변동성 조정")
-    print("  - 2단계 분할 익절 (15%, 25%)")
-    print("  - 엔화 상황별 목표 조정")
-    print("  - 트레일링 스톱으로 수익 보호")
-    print("  - 최대 보유기간으로 리스크 제한")
-    print("\n🏆 전설의 고급 지표 시스템:")
-    print("  - MACD 골든/데드크로스 감지")
-    print("  - 볼린저밴드 돌파 포착")
-    print("  - 스토캐스틱 과매수/과매도")
-    print("  - 피보나치 레벨 지지/저항")
-    print("  - 거래량-가격 발산 분석")
-    print("  - ATR 변동성 측정")
-    print("  - 모멘텀 가속도 추적")
-    print("\n🆕 TOPIX+JPX400 업그레이드 효과:")
-    print("  - 더 넓은 종목 풀에서 선별")
-    print("  - 대형주 중심의 안정성")
-    print("  - 수익성 우수 종목 집중")
-    print("  - 섹터 다양성 확보")
-    print("  - 숨겨진 보석 발굴 가능")
+    print("\n✅ YEN-HUNTER v2.0 HYBRID 테스트 완료!")
+    print("\n🚀 핵심 특징 (Option 2):")
+    print("  📊 기술지표: 6개 핵심 (RSI, MACD, 볼린저, 스토캐스틱, ATR, 거래량)")
+    print("  🔍 종목헌팅: 3개 지수 통합 (닛케이225 + TOPIX + JPX400)")
+    print("  📈 월간관리: 핵심 목표 추적 + 적응형 강도 조절")
+    print("  📅 화목 차별화: 요일별 최적화된 전략")
+    print("  💰 3차 익절: 40% → 40% → 20% 분할")
+    print("  🛡️ 동적 손절: ATR + 신뢰도 기반")
+    print("  🔗 IBKR 연동: 실제 거래 + 시뮬레이션")
+    
+    print("\n💡 사용법:")
+    print("  🤖 자동선별: await run_auto_selection()")
+    print("  🔍 선별+분석: await analyze_auto_selected()")
+    print("  🚀 자동매매: await run_auto_trading()")
+    print("  🤖 완전자동: await run_full_auto_system()")
+    print("  📊 현황: show_status()")
+    print("  🔍 단일분석: await analyze_single('7203.T')")
+    print("  📈 백테스트: await backtest_hybrid('7203.T')")
+    
+    print(f"\n📁 데이터: {Config.DATA_DIR}")
+    print("🎯 화목 하이브리드로 월 14% 달성!")
 
 if __name__ == "__main__":
+    Config.DATA_DIR.mkdir(exist_ok=True)
     asyncio.run(main())
