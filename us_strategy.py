@@ -25,7 +25,16 @@ import json
 import time
 import warnings
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any
+# 타입 힌트를 간단하게 수정
+try:
+    from typing import Dict, List, Optional, Tuple, Any
+except ImportError:
+    # 구버전 Python 대응
+    Dict = dict
+    List = list
+    Optional = object
+    Tuple = tuple
+    Any = object
 from dataclasses import dataclass, asdict
 from pathlib import Path
 import numpy as np
