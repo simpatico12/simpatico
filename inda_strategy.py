@@ -1034,58 +1034,7 @@ class LegendaryIndiaStrategy:
         }
         
         return risk_metrics
-    
-    # ================== 메인 실행 함수 ==================
-    
-    def run_strategy(self, df):
-        """전체 전략 실행 - 4개 지수 통합 버전"""
-        print("🚀 인도 4대 지수 통합 전설 투자전략 실행 중...")
-        
-        # 1. 기술지표 계산
-        df = self.calculate_all_indicators(df)
-        print("✅ 전설급 기술지표 계산 완료")
-        
-        # 2. 전설 전략 적용
-        df = self.apply_all_strategies(df)
-        print("✅ 5대 전설 전략 적용 완료")
-        
-        # 3. 통합 점수 생성
-        df = self.generate_master_score(df)
-        print("✅ 마스터 점수 생성 완료")
-        
-        # 4. 지수별 맞춤 전략 적용
-        df = self.apply_index_specific_strategy(df)
-        print("✅ 지수별 맞춤 전략 적용 완료")
-        
-        # 5. 전체 상위 종목 선별
-        selected_stocks = self.auto_stock_selection(df)
-        print(f"✅ 전체 상위 {len(selected_stocks)}개 종목 선별 완료")
-        
-        # 6. 지수별 상위 종목 선별
-        index_selections = self.select_by_index(df)
-        print("✅ 지수별 상위 종목 선별 완료")
-        
-        # 7. 전설급 매매 신호 생성
-        df = self.generate_legendary_buy_signals(df)
-        df = self.generate_legendary_sell_signals(df)
-        print("✅ 전설급 매매 신호 생성 완료")
-        
-        # 8. 포트폴리오 구성
-        portfolio = self.portfolio_management(selected_stocks)
-        print("✅ 포트폴리오 구성 완료")
-        
-        # 9. 리스크 평가
-        risk_metrics = self.risk_management(df)
-        print("✅ 리스크 평가 완료")
-        
-        return {
-            'selected_stocks': selected_stocks,
-            'index_selections': index_selections,
-            'portfolio': portfolio,
-            'risk_metrics': risk_metrics,
-            'signals': pd.DataFrame()  # 일단 빈 DataFrame으로 안전하게
-        }
-    
+     
     # ================== 샘플 데이터 생성 ==================
     
     def create_sample_data(self):
