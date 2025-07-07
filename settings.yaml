@@ -1,588 +1,570 @@
-# ===============================================================================
-# 🏆 전설적 퀸트프로젝트 통합 설정 파일 (Complete Edition)
-# ===============================================================================
+# ================================================================================================
+# 🏆 퀸트프로젝트 통합 설정 파일 (settings.yaml)
+# ================================================================================================
+# 🇺🇸 미국주식 + 🇯🇵 일본주식 + 🇮🇳 인도주식 + 💰 암호화폐 (4대 전략 통합)
 # 
-# 📋 4대 전략 통합 설정:
-# 1. 🇺🇸 미국주식 전략 (S&P500 + NASDAQ + VIX 연동)
-# 2. 🇯🇵 일본주식 전략 (화목 하이브리드 + 3개 지수)
-# 3. 🇮🇳 인도주식 전략 (5대 투자거장 + IBKR 연동)
-# 4. 🪙 가상화폐 전략 (업비트 + 전설급 5대 시스템)
-#
-# ⚡ 특징: 환경변수 치환 지원 (${변수명:-기본값})
-# 🔧 사용법: 각 전략별 독립 실행 + 통합 포트폴리오 관리
-#
-# ===============================================================================
+# 사용법:
+# 1. 필요한 전략만 enabled: true로 설정
+# 2. API 키 및 민감 정보는 .env 파일에 저장
+# 3. 각 전략별 세부 설정 조정
+# 4. 백테스팅 먼저 실행 후 실거래 적용
 
-# ===============================================================================
-# 🌟 전체 시스템 공통 설정
-# ===============================================================================
+# ================================================================================================
+# 🌟 전체 시스템 설정
+# ================================================================================================
 system:
-  # 프로젝트 메타데이터
-  project_name: "LEGENDARY_QUINT_PROJECT"
-  version: "6.2.1"
-  author: "QuintMaster Team"
-  
-  # 운영 모드
-  mode: "production"  # development, staging, production
-  debug: false
-  demo_mode: true  # true=시뮬레이션, false=실거래
-  
-  # 전역 설정
+  version: "6.3.0"
+  environment: "production"  # development, staging, production
+  debug_mode: false
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
   timezone: "Asia/Seoul"
-  locale: "ko_KR.UTF-8"
   
-  # 로깅 설정
-  logging:
-    level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-    file: "legendary_quant.log"
-    max_size: "50MB"
-    backup_count: 10
-    format: "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
+  # 데이터 저장 경로
+  data_directory: "./data"
+  log_directory: "./logs"
+  backup_directory: "./backups"
   
-  # 데이터 디렉토리
-  data_directories:
-    base: "./data"
-    us_data: "./data/us_strategy"
-    japan_data: "./yen_hunter_data"
-    india_data: "./data/india_strategy"
-    crypto_data: "./data/crypto_strategy"
-    backups: "./data/backups"
-    logs: "./logs"
+  # 성능 설정
+  max_workers: 4
+  api_timeout: 30
+  retry_count: 3
+  cache_duration: 3600  # 1시간
 
-# ===============================================================================
-# 💰 포트폴리오 및 자금 관리
-# ===============================================================================
-portfolio:
-  # 총 운용 자산
-  total_capital: 1000000000  # 10억원 (KRW)
+# ================================================================================================
+# 🇺🇸 미국 주식 전략 설정 (legendary_quant_v63.py)
+# ================================================================================================
+us_strategy:
+  enabled: true
+  name: "전설적퀸트 V6.3"
+  description: "월5-7% 달성형 주2회 화목 매매 시스템"
   
-  # 전략별 자금 배분 (%)
-  allocation:
-    us_strategy: 40.0      # 미국주식 40%
-    japan_strategy: 25.0   # 일본주식 25%
-    india_strategy: 20.0   # 인도주식 20%
-    crypto_strategy: 10.0  # 가상화폐 10%
-    cash_reserve: 5.0      # 현금 비축 5%
+  # 기본 설정
+  mode: "swing"  # swing, classic, hybrid
+  target_stocks:
+    classic: 20
+    swing: 8
+  
+  # 월간 목표
+  monthly_target:
+    min: 5.0  # 5%
+    max: 7.0  # 7%
+  
+  # 4가지 투자전략 가중치
+  strategy_weights:
+    buffett: 25.0    # 버핏 가치투자
+    lynch: 25.0      # 린치 성장투자
+    momentum: 25.0   # 모멘텀 전략
+    technical: 25.0  # 기술적 분석
+  
+  # VIX 임계값
+  vix_thresholds:
+    low: 15.0   # 저변동성
+    high: 30.0  # 고변동성
+  
+  # 거래 설정 (월5-7% 최적화)
+  trading:
+    swing:
+      take_profit: [6.0, 12.0]  # 1차, 2차 익절
+      profit_ratios: [60.0, 40.0]  # 매도 비율
+      stop_loss: 8.0
+    classic:
+      take_profit: [20.0, 35.0]
+      stop_loss: 15.0
+    
+    # 주2회 화목 매매 시스템
+    weekly:
+      enabled: true
+      tuesday_targets: 4
+      thursday_targets: 2
+      tuesday_allocation: 12.5  # %
+      thursday_allocation: 8.0  # %
+      profit_taking_threshold: 8.0
+      loss_cutting_threshold: -6.0
+      tuesday_time: "10:30"
+      thursday_time: "10:30"
   
   # 리스크 관리
-  risk_management:
-    max_daily_loss: 1.0    # 일일 최대 손실 1%
-    max_monthly_loss: 3.0  # 월간 최대 손실 3%
-    max_position_size: 8.0 # 개별 종목 최대 8%
-    max_sector_exposure: 25.0  # 섹터별 최대 25%
-    correlation_limit: 0.7  # 상관관계 제한
+  risk:
+    max_position: 15.0          # 개별 종목 최대 비중 (%)
+    daily_loss_limit: 1.0       # 일일 손실 한도 (%)
+    monthly_loss_limit: 3.0     # 월간 손실 한도 (%)
+    weekly_loss_limit: 3.0      # 주간 손실 한도 (%)
+    trailing_stop: true
   
-  # 성과 목표
-  targets:
-    monthly_return: 
-      min: 5.0   # 최소 월 5%
-      max: 7.0   # 목표 월 7%
-    annual_return: 80.0  # 연 80% 목표
-    max_drawdown: 10.0   # 최대 낙폭 10%
-    sharpe_ratio: 1.5    # 샤프 비율 1.5+
+  # 종목 선별 기준
+  selection:
+    min_market_cap: 5000000000  # 50억달러
+    min_volume: 1000000         # 100만주
+    excluded_symbols: ["SPXL", "TQQQ", "SQQQ"]
+    refresh_hours: 24
 
-# ===============================================================================
-# 🇺🇸 미국주식 전략 설정
-# ===============================================================================
-us_strategy:
-  # 전략 활성화
+# ================================================================================================
+# 🇯🇵 일본 주식 전략 설정 (jp_strategy.py)
+# ================================================================================================
+japan_strategy:
   enabled: true
+  name: "YEN-HUNTER v2.0 HYBRID"
+  description: "화목 하이브리드 + 엔화 연동 + 3차 익절"
   
-  # 운영 모드
-  mode: "swing"  # classic, swing, hybrid
+  # 엔화 임계값
+  yen_thresholds:
+    strong: 105.0   # 엔화 강세
+    weak: 110.0     # 엔화 약세
+  
+  # 월간 목표
+  monthly_target: 0.14    # 14%
+  monthly_safe: 0.10      # 10% (안전선)
+  monthly_limit: -0.05    # -5% (손실 한도)
+  
+  # 화목 하이브리드 스케줄
+  trading_schedule:
+    trading_days: [1, 3]     # 화요일(1), 목요일(3)
+    tuesday_max_hold: 5      # 화요일 최대 보유일
+    thursday_max_hold: 2     # 목요일 최대 보유일
+    max_tuesday_trades: 2    # 화요일 최대 거래
+    max_thursday_trades: 3   # 목요일 최대 거래
+  
+  # 매수 임계값
+  buy_thresholds:
+    tuesday: 0.75   # 화요일 매수 임계값
+    thursday: 0.65  # 목요일 매수 임계값
   
   # 종목 선별
   selection:
-    target_stocks:
-      classic: 20
-      swing: 8
-    universe:
-      sp500_quota: 60.0    # S&P500에서 60%
-      nasdaq_quota: 40.0   # NASDAQ에서 40%
-    filtering:
-      min_market_cap: 5000000000   # 50억달러
-      min_volume: 1000000          # 100만주
-      excluded_symbols: ["SPXL", "TQQQ", "SQQQ"]
-    refresh_interval: 24  # 24시간마다 갱신
-  
-  # 투자 전략 가중치
-  strategy_weights:
-    buffett: 25.0      # 버핏 가치투자
-    lynch: 25.0        # 린치 성장투자
-    momentum: 25.0     # 모멘텀 전략
-    technical: 25.0    # 기술적 분석
-  
-  # VIX 기반 시장 판단
-  vix_thresholds:
-    low: 15.0          # 저변동성 임계값
-    high: 30.0         # 고변동성 임계값
-    adjustment_factor: 0.15  # VIX 조정 계수
-  
-  # 매매 전략
-  trading:
-    classic:
-      stages: [40.0, 35.0, 25.0]    # 분할매매 비율
-      triggers: [-5.0, -10.0]       # 추가매수 조건
-      take_profit: [20.0, 35.0]     # 익절 조건 (%)
-      stop_loss: 15.0               # 손절 조건 (%)
-    
-    swing:
-      take_profit: [6.0, 12.0]      # 2단계 익절 (%)
-      profit_ratios: [60.0, 40.0]   # 매도 비율 (%)
-      stop_loss: 8.0                # 손절 (%)
-      max_hold_days: 14             # 최대 보유일
-  
-  # 자동화 설정
-  automation:
-    monitoring_interval: 15         # 모니터링 간격 (분)
-    trading_hours:
-      start: "09:30"               # 거래 시작
-      end: "16:00"                 # 거래 종료
-      timezone: "America/New_York"
-    weekend_shutdown: true
-    holiday_shutdown: true
-    morning_scan: "09:00"
-    evening_report: "16:00"
-
-# ===============================================================================
-# 🇯🇵 일본주식 전략 설정 (YEN-HUNTER)
-# ===============================================================================
-japan_strategy:
-  # 전략 활성화
-  enabled: true
-  
-  # 화목 하이브리드 모드
-  mode: "hybrid"  # hybrid, tuesday_only, thursday_only
-  
-  # 엔화 설정
-  yen_settings:
-    strong_threshold: 105.0      # 엔화 강세 기준
-    weak_threshold: 110.0        # 엔화 약세 기준
-    hedge_ratio: 0.0             # 환헤지 비율 (0=무헤지)
-  
-  # 종목 선별 (3개 지수 통합)
-  selection:
-    target_stocks: 15
     min_market_cap: 500000000000  # 5000억엔
+    target_stocks: 15
+    
+    # 3개 지수 통합 헌팅
     indices:
       nikkei225: true
       topix: true
       jpx400: true
-    refresh_hours: 24
   
-  # 거래 스케줄 (화목 하이브리드)
-  trading_schedule:
-    enabled_days: [1, 3]          # 화요일(1), 목요일(3)
-    tuesday:
-      max_trades: 2
-      max_hold_days: 5
-      target_return: 2.5          # 화요일 목표 2.5%
-    thursday:
-      max_trades: 3
-      max_hold_days: 2
-      target_return: 1.5          # 목요일 목표 1.5%
-  
-  # 기술지표 설정 (6개 핵심)
+  # 기술지표 (6개 핵심)
   indicators:
-    rsi:
-      period: 14
-      oversold: 30
-      overbought: 70
-    macd:
-      fast: 12
-      slow: 26
-      signal: 9
-    bollinger:
-      period: 20
-      std_dev: 2.0
-    stochastic:
-      k_period: 14
-      d_period: 3
-    atr:
-      period: 14
-    volume:
-      spike_threshold: 2.0
-  
-  # 매수 임계값
-  buy_thresholds:
-    tuesday: 0.75
-    thursday: 0.65
-  
-  # 월간 목표 관리
-  monthly_targets:
-    target_return: 0.14           # 월 14%
-    safe_return: 0.10             # 안전 수익 10%
-    loss_limit: -0.05             # 손실 한도 -5%
+    rsi_period: 14
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    bollinger_period: 20
+    bollinger_std: 2.0
+    stochastic_k: 14
+    stochastic_d: 3
+    atr_period: 14
+    volume_period: 20
 
-# ===============================================================================
-# 🇮🇳 인도주식 전략 설정
-# ===============================================================================
+# ================================================================================================
+# 🇮🇳 인도 주식 전략 설정 (inda_strategy.py)
+# ================================================================================================
 india_strategy:
-  # 전략 활성화
   enabled: true
+  name: "인도 전설 투자전략"
+  description: "5대 투자 거장 + 수요일 전용 월5-7% 안정형"
   
-  # 운영 모드
-  mode: "conservative"  # aggressive, conservative, balanced
-  
-  # 수요일 전용 설정
+  # 수요일 전용 매매
   trading_schedule:
-    enabled_days: [2]             # 수요일(2)만 거래
+    wednesday_only: true
     max_stocks: 4
-    weekly_target: 1.5            # 주간 1-2% 목표
+    max_investment_per_stock: 0.20  # 20%
+  
+  # 월간 목표 (안정형)
+  monthly_target:
+    min: 5.0   # 5%
+    max: 7.0   # 7%
+    safe: 4.0  # 4% (안전선)
+  
+  # 지수별 안정형 손익절 설정
+  stop_loss_by_index:
+    nifty50: 0.03   # -3%
+    sensex: 0.03    # -3%
+    next50: 0.04    # -4%
+    smallcap: 0.05  # -5%
+  
+  take_profit_by_index:
+    nifty50: 0.06   # +6%
+    sensex: 0.06    # +6%
+    next50: 0.08    # +8%
+    smallcap: 0.10  # +10%
   
   # 5대 전설 투자자 전략 가중치
-  legend_weights:
-    rakesh_jhunjhunwala: 0.25     # 라케시 준준왈라
-    raamdeo_agrawal: 0.25         # 라메데오 아그라왈 (QGLP)
-    vijay_kedia: 0.20             # 비제이 케디아 (SMILE)
-    porinju_veliyath: 0.15        # 포리뉴 벨리야스
-    nitin_karnik: 0.15            # 니틴 카르닉
+  legend_strategies:
+    rakesh_jhunjhunwala: 0.25    # 준준왈라 (워런 버핏 킬러)
+    raamdeo_agrawal_qglp: 0.25   # QGLP 진화 전략
+    vijay_kedia_smile: 0.20      # SMILE 투자법
+    porinju_veliyath: 0.15       # 콘트라리안 마스터
+    nitin_karnik_infra: 0.15     # 인프라 제왕
   
-  # 지수별 선별
-  indices:
-    nifty50:
-      enabled: true
-      max_allocation: 50.0        # 최대 50% 배분
-      min_score: 20
-    sensex:
-      enabled: true
-      max_allocation: 30.0
-      min_score: 18
-    next50:
-      enabled: true
-      max_allocation: 15.0
-      min_score: 15
-    smallcap:
-      enabled: false              # 소형주 비활성화 (안정성 우선)
-      max_allocation: 5.0
-      min_score: 25
-  
-  # 안정형 손익절 설정 (지수별)
-  risk_levels:
-    nifty50:
-      stop_loss: 0.03             # -3%
-      take_profit: 0.06           # +6%
-    sensex:
-      stop_loss: 0.03
-      take_profit: 0.06
-    next50:
-      stop_loss: 0.04             # -4%
-      take_profit: 0.08           # +8%
-    smallcap:
-      stop_loss: 0.05             # -5%
-      take_profit: 0.10           # +10%
-  
-  # 펀더멘털 필터링
-  fundamental_filters:
-    min_roe: 15.0                 # ROE 15% 이상
-    max_debt_equity: 1.0          # 부채비율 100% 이하
-    min_current_ratio: 1.5        # 유동비율 1.5 이상
-    min_promoter_holding: 30.0    # 프로모터 지분 30% 이상
-    max_promoter_pledge: 15.0     # 프로모터 담보 15% 이하
-  
-  # 월간 목표
-  monthly_targets:
-    target_return: 0.06           # 월 6%
-    safe_return: 0.05             # 안전 수익 5%
-    loss_limit: -0.03             # 손실 한도 -3%
+  # 선별 기준 (엄격)
+  selection:
+    min_score: 20               # 최소 점수
+    min_market_cap: 50000       # 500억루피
+    max_debt_to_equity: 1.0     # 부채비율
+    min_roe: 10                 # 최소 ROE
+    stability_filter: true
 
-# ===============================================================================
-# 🪙 가상화폐 전략 설정
-# ===============================================================================
+# ================================================================================================
+# 💰 암호화폐 전략 설정 (coin_strategy.py)
+# ================================================================================================
 crypto_strategy:
-  # 전략 활성화
   enabled: true
+  name: "LEGENDARY QUANT STRATEGY COMPLETE"
+  description: "월5-7% 최적화 + 5대 전설급 시스템"
   
-  # 운영 모드
-  mode: "monthly_optimized"       # aggressive, conservative, monthly_optimized
+  # 기본 설정
+  portfolio_value: 100000000    # 1억원
+  min_volume: 5000000000       # 50억원
+  target_portfolio_size: 8
+  demo_mode: true              # 시뮬레이션 모드
   
-  # 거래소 설정
-  exchange: "upbit"
-  base_currency: "KRW"
+  # 월5-7% 최적화 설정
+  monthly_optimization:
+    target_min: 5.0   # 5%
+    target_max: 7.0   # 7%
+    
+    # 0차 익절 추가
+    take_profit_0: [4, 5, 6]     # 4-6% 구간
+    take_profit_1: [10, 12, 15]  # 1차 익절
+    take_profit_2: [15, 20, 25]  # 2차 익절
+    # 3차 익절 삭제 (무제한 홀딩)
+    
+    # 타이트한 손절
+    stop_loss:
+      high_quality: 5   # -5% (BTC, ETH급)
+      mid_quality: 7    # -7%
+      low_quality: 8    # -8%
   
   # 월금 매매 시스템
   trading_schedule:
-    buy_days: [0]                 # 월요일(0)만 매수
-    sell_days: [4]                # 금요일(4)만 매도
-    emergency_sell: true          # 응급 매도 허용
-    max_hold_days: 14             # 최대 2주 보유
+    monday_buy: true      # 월요일 매수
+    friday_sell: true     # 금요일 매도
+    emergency_sell: true  # 응급 매도 허용
   
-  # 전설급 5대 시스템 가중치
-  system_weights:
-    neural_quality: 0.30          # Neural Quality Engine
-    quantum_cycle: 0.25           # Quantum Cycle Matrix
-    fractal_filter: 0.25          # Fractal Filtering
-    technical_score: 0.20         # Technical Analysis
+  # 3단계 분할 진입
+  stage_allocation:
+    stage1_ratio: 0.40   # 40%
+    stage2_ratio: 0.35   # 35% 
+    stage3_ratio: 0.25   # 25%
   
-  # 포트폴리오 구성
-  portfolio:
-    target_coins: 8               # 목표 8개 코인
-    max_investment_per_coin: 0.15 # 코인당 최대 15%
-    min_volume_krw: 10000000000   # 최소 거래량 100억원
-  
-  # 월 5-7% 최적화 손익절 설정
-  profit_taking:
-    # 품질별 차등 적용
-    high_quality:  # BTC, ETH급 (품질점수 0.8+)
-      stage_0: 0.06               # 0차 익절 +6% (20% 매도)
-      stage_1: 0.15               # 1차 익절 +15% (30% 매도)
-      stage_2: 0.25               # 2차 익절 +25% (50% 매도)
-      stop_loss: 0.05             # 손절 -5%
+  # 5대 전설급 엔진 설정
+  engines:
+    neural_quality:
+      enabled: true
+      weights: [0.30, 0.30, 0.20, 0.20]  # 기술력, 생태계, 커뮤니티, 채택도
     
-    medium_quality:  # 중품질 (0.6-0.8)
-      stage_0: 0.05               # 0차 익절 +5%
-      stage_1: 0.12               # 1차 익절 +12%
-      stage_2: 0.20               # 2차 익절 +20%
-      stop_loss: 0.07             # 손절 -7%
+    quantum_cycle:
+      enabled: true
+      confidence_threshold: 0.7
     
-    low_quality:  # 저품질 (0.6 미만)
-      stage_0: 0.04               # 0차 익절 +4%
-      stage_1: 0.10               # 1차 익절 +10%
-      stage_2: 0.15               # 2차 익절 +15%
-      stop_loss: 0.08             # 손절 -8%
-  
-  # 켈리 공식 설정
-  kelly_settings:
-    max_fraction: 0.25            # 최대 25% 투자
-    min_fraction: 0.01            # 최소 1% 투자
-    confidence_weight: 0.3        # 신뢰도 가중치
-  
-  # 실시간 모니터링
-  monitoring:
-    check_interval: 180           # 3분마다 체크
-    price_alert_threshold: 0.03   # 3% 이상 변동시 알림
-    emergency_conditions:
-      - "stop_loss"
-      - "cycle_change"
-      - "trailing_stop_40"
+    fractal_filtering:
+      enabled: true
+      volume_cv_threshold: 2.0      # 거래량 변동계수
+      price_cv_threshold: 0.3       # 가격 변동계수
+    
+    diamond_hand:
+      enabled: true
+      max_kelly_fraction: 0.25      # 최대 켈리 비율
+    
+    exit_strategy:
+      enabled: true
+      trailing_stop_ratio: 0.10     # 10% 트레일링 스톱
+      max_holding_days: 14          # 최대 보유 14일
 
-# ===============================================================================
-# 🔗 IBKR 통합 설정
-# ===============================================================================
-ibkr:
-  # 연결 설정
-  connection:
-    host: "${IBKR_HOST:-127.0.0.1}"
-    port: 7497                    # TWS=7497, Gateway=4001
+# ================================================================================================
+# 🔗 브로커 API 설정
+# ================================================================================================
+brokers:
+  ibkr:
+    enabled: true
+    host: "127.0.0.1"
+    port: 7497              # 7497 (live), 7496 (paper)
     client_id: 1
+    paper_trading: true
+    max_daily_trades: 20
     timeout: 30
+    
+    # 지역별 설정
+    regions:
+      us: 
+        exchange: "SMART"
+        currency: "USD"
+      japan:
+        exchange: "TSE"
+        currency: "JPY"
+      india:
+        exchange: "NSE"
+        currency: "INR"
   
-  # 계좌 설정
-  account:
-    account_id: "${IBKR_ACCOUNT_ID:-}"
-    paper_trading: true           # true=모의투자, false=실거래
-    currency: "USD"               # 기본 통화
-  
-  # 주문 설정
-  order_settings:
-    default_order_type: "MKT"     # MKT, LMT, STP
-    max_daily_trades: 50          # 일일 최대 거래 수
-    order_timeout: 300            # 주문 타임아웃 (초)
-    price_tolerance: 0.02         # 가격 허용 오차 2%
-  
-  # 리스크 관리
-  risk_controls:
-    max_order_value: 100000       # 최대 주문 금액 ($)
-    daily_loss_limit: 5000        # 일일 손실 한도 ($)
-    position_limit_per_symbol: 50000  # 종목당 포지션 한도 ($)
+  upbit:
+    enabled: true
+    demo_mode: true
+    rate_limit: 100         # requests per minute
+    timeout: 10
 
-# ===============================================================================
+# ================================================================================================
 # 📱 알림 시스템 설정
-# ===============================================================================
+# ================================================================================================
 notifications:
-  # 텔레그램 설정
   telegram:
     enabled: true
-    bot_token: "${TELEGRAM_BOT_TOKEN:-}"
-    chat_id: "${TELEGRAM_CHAT_ID:-}"
-    alerts:
-      trade_execution: true       # 거래 실행 알림
-      profit_taking: true         # 익절 알림
-      stop_loss: true             # 손절 알림
-      daily_summary: true         # 일일 요약
-      weekly_report: true         # 주간 리포트
-      emergency_only: false       # 응급상황만 알림
+    # API 키는 .env 파일에 설정
+    # TELEGRAM_BOT_TOKEN=your_bot_token
+    # TELEGRAM_CHAT_ID=your_chat_id
+    
+    # 알림 레벨
+    levels:
+      trade_execution: true     # 거래 실행 알림
+      profit_loss: true        # 손익 알림
+      risk_warning: true       # 리스크 경고
+      daily_summary: true      # 일일 요약
+      weekly_summary: true     # 주간 요약
+      monthly_summary: true    # 월간 요약
   
-  # 이메일 설정
   email:
     enabled: false
     smtp_server: "smtp.gmail.com"
     smtp_port: 587
-    username: "${EMAIL_USERNAME:-}"
-    password: "${EMAIL_PASSWORD:-}"
-    recipient: "${EMAIL_RECIPIENT:-}"
-    reports:
-      daily: true
-      weekly: true
-      monthly: true
-  
-  # 슬랙 설정
+    # 인증 정보는 .env 파일에 설정
+    
   slack:
     enabled: false
-    webhook_url: "${SLACK_WEBHOOK_URL:-}"
-    channel: "#trading-alerts"
-  
-  # 알림 레벨
-  alert_levels:
-    emergency: ["stop_loss", "system_error", "connection_lost"]
-    important: ["trade_execution", "profit_taking", "daily_pnl"]
-    info: ["market_open", "strategy_signal", "position_update"]
+    # 웹훅 URL은 .env 파일에 설정
 
-# ===============================================================================
-# 📊 성과 추적 설정
-# ===============================================================================
-performance:
-  # 데이터베이스
-  database:
-    type: "sqlite"                # sqlite, postgresql, mysql
-    file: "legendary_performance.db"
-    backup_interval: 24           # 백업 간격 (시간)
+# ================================================================================================
+# 📊 모니터링 및 로깅
+# ================================================================================================
+monitoring:
+  real_time:
+    enabled: true
+    check_interval: 180      # 3분마다
+    position_tracking: true
+    risk_monitoring: true
   
-  # 벤치마크
-  benchmarks:
-    us_strategy: ["SPY", "QQQ"]
-    japan_strategy: ["1306.T", "1308.T"]  # TOPIX, Nikkei225 ETF
-    india_strategy: ["SENSEX", "NIFTY"]
-    crypto_strategy: ["BTC", "ETH"]
+  performance:
+    daily_report: true
+    weekly_report: true  
+    monthly_report: true
+    
+    # 성과 메트릭
+    metrics:
+      return_calculation: true
+      sharpe_ratio: true
+      max_drawdown: true
+      win_rate: true
+      profit_factor: true
   
-  # 성과 지표
-  metrics:
-    calculate_sharpe: true
-    calculate_sortino: true
-    calculate_calmar: true
-    calculate_max_drawdown: true
-    calculate_win_rate: true
-    calculate_profit_factor: true
-  
-  # 리포팅
-  reports:
-    daily_snapshot: true
-    weekly_analysis: true
-    monthly_deep_dive: true
-    quarterly_review: true
-    real_time_dashboard: true
+  logging:
+    level: "INFO"
+    file_rotation: "daily"
+    retention_days: 30
+    
+    # 로그 카테고리
+    categories:
+      trading: true
+      analysis: true
+      errors: true
+      performance: true
 
-# ===============================================================================
-# 🔄 백테스팅 설정
-# ===============================================================================
+# ================================================================================================
+# 🛡️ 리스크 관리 (통합)
+# ================================================================================================
+risk_management:
+  global:
+    max_portfolio_risk: 0.05        # 5%
+    emergency_stop_enabled: true
+    correlation_limit: 0.7          # 상관관계 한도
+  
+  position_sizing:
+    max_position_size: 0.20         # 개별 포지션 최대 20%
+    concentration_limit: 0.60       # 섹터 집중도 한도
+    
+  drawdown_protection:
+    max_daily_drawdown: 0.02        # 2%
+    max_weekly_drawdown: 0.05       # 5%
+    max_monthly_drawdown: 0.10      # 10%
+  
+  network_monitoring:
+    enabled: true
+    check_interval: 30              # 30초마다
+    timeout: 10
+    retry_count: 3
+    
+    # 네트워크 끊김 시 대응
+    disconnect_action: "hold"       # hold, sell_all, partial_sell
+    grace_period: 300               # 5분
+
+# ================================================================================================
+# 📈 백테스팅 설정
+# ================================================================================================
 backtesting:
-  # 기본 설정
-  default_period: "2Y"            # 기본 백테스트 기간
-  commission: 0.001               # 수수료 0.1%
-  slippage: 0.0005                # 슬리피지 0.05%
-  initial_capital: 100000000      # 초기 자본 1억원
+  enabled: true
   
-  # 시뮬레이션 설정
-  simulation:
-    monte_carlo_runs: 1000        # 몬테카를로 시뮬레이션 횟수
-    confidence_intervals: [0.05, 0.95]  # 신뢰구간
-    stress_test_scenarios: true   # 스트레스 테스트
+  # 테스트 기간
+  periods:
+    short: "3mo"     # 3개월
+    medium: "1y"     # 1년
+    long: "3y"       # 3년
   
-  # 최적화 설정
-  optimization:
-    parameter_ranges:
-      take_profit: [0.05, 0.30]   # 익절 범위
-      stop_loss: [0.03, 0.15]     # 손절 범위
-      position_size: [0.05, 0.20] # 포지션 크기 범위
-    optimization_metric: "sharpe_ratio"  # 최적화 지표
+  # 테스트 설정
+  initial_capital: 100000000    # 1억원
+  commission: 0.0025           # 0.25%
+  slippage: 0.001             # 0.1%
+  
+  # 결과 저장
+  save_results: true
+  output_format: ["json", "csv", "html"]
 
-# ===============================================================================
-# ⚙️ 시스템 운영 설정
-# ===============================================================================
-operations:
-  # 스케줄링
-  scheduler:
-    daily_tasks:
-      - name: "market_data_update"
-        time: "06:00"
-        timezone: "Asia/Seoul"
-      - name: "strategy_execution"
-        time: "09:00"
-        timezone: "US/Eastern"
-      - name: "risk_check"
-        time: "15:00"
-        timezone: "Asia/Seoul"
-      - name: "daily_report"
-        time: "18:00"
-        timezone: "Asia/Seoul"
+# ================================================================================================
+# 🔄 자동화 스케줄
+# ================================================================================================
+automation:
+  scheduling:
+    enabled: true
+    timezone: "Asia/Seoul"
     
-    weekly_tasks:
-      - name: "portfolio_rebalancing"
-        day: "sunday"
-        time: "10:00"
-      - name: "performance_analysis"
-        day: "sunday"
-        time: "14:00"
-    
-    monthly_tasks:
-      - name: "strategy_optimization"
-        day: 1
-        time: "12:00"
-      - name: "risk_model_update"
-        day: 15
-        time: "16:00"
+    # 전략별 실행 스케줄 (cron 형식)
+    schedules:
+      us_strategy: "0 10 * * 1,4"      # 월,목 10시
+      japan_strategy: "30 9 * * 1,3"   # 월,수 9시30분  
+      india_strategy: "0 9 * * 2"      # 화 9시
+      crypto_strategy: "0 9 * * 0,4"   # 일,목 9시
   
-  # 모니터링
-  monitoring:
-    health_check_interval: 60     # 시스템 상태 체크 (초)
-    auto_restart: true            # 자동 재시작
-    max_restart_attempts: 3       # 최대 재시작 시도
-    circuit_breaker:
-      error_threshold: 5          # 오류 임계값
-      timeout: 300                # 회로차단기 타임아웃
-  
-  # 보안
-  security:
-    api_rate_limiting: true       # API 속도 제한
-    encrypt_sensitive_data: true  # 민감데이터 암호화
-    audit_logging: true           # 감사 로깅
-    session_timeout: 3600         # 세션 타임아웃 (초)
+  startup:
+    auto_start_monitoring: true
+    load_positions: true
+    check_market_hours: true
+    validate_connections: true
 
-# ===============================================================================
+# ================================================================================================
+# 🗄️ 데이터베이스 설정
+# ================================================================================================
+database:
+  type: "sqlite"              # sqlite, postgresql, mysql
+  
+  sqlite:
+    file_path: "./data/quint_project.db"
+    backup_enabled: true
+    backup_interval: "daily"
+  
+  # PostgreSQL 설정 (고급 사용자용)
+  postgresql:
+    enabled: false
+    host: "localhost"
+    port: 5432
+    database: "quint_project"
+    # 인증 정보는 .env 파일에 설정
+  
+  tables:
+    trades: true
+    positions: true
+    performance: true
+    signals: true
+    market_data: true
+
+# ================================================================================================
+# 🌐 웹 인터페이스 (선택사항)
+# ================================================================================================
+web_interface:
+  enabled: false
+  framework: "streamlit"       # streamlit, flask, fastapi
+  
+  streamlit:
+    port: 8501
+    auto_open: true
+    
+  features:
+    dashboard: true
+    real_time_charts: true
+    position_management: true
+    strategy_comparison: true
+    risk_analytics: true
+
+# ================================================================================================
 # 🔧 개발자 설정
-# ===============================================================================
+# ================================================================================================
 development:
-  # 디버깅
   debug_mode: false
-  verbose_logging: false
-  profile_performance: false
+  profiling: false
+  testing: false
   
-  # 테스팅
-  testing:
-    unit_tests: true
-    integration_tests: true
-    mock_data: true
-    test_coverage_threshold: 80
-  
-  # 버전 관리
-  version_control:
-    auto_backup_configs: true
-    config_history_limit: 10
-    strategy_versioning: true
+  # 개발 도구
+  tools:
+    jupyter_integration: false
+    pytest: false
+    black_formatting: false
+    
+  # 실험적 기능
+  experimental:
+    ai_suggestions: false
+    sentiment_analysis: false
+    news_integration: false
 
-# ===============================================================================
-# 📝 설정 사용 가이드
-# ===============================================================================
+# ================================================================================================
+# 📱 모바일 최적화 (미래 확장)
+# ================================================================================================
+mobile:
+  enabled: false
+  push_notifications: false
+  
+  features:
+    quick_actions: false
+    voice_commands: false
+    biometric_auth: false
+
+# ================================================================================================
+# 🎯 전략별 우선순위
+# ================================================================================================
+strategy_priorities:
+  # 1=최고 우선순위
+  execution_order:
+    us_strategy: 1
+    japan_strategy: 2  
+    crypto_strategy: 3
+    india_strategy: 4
+  
+  # 자원 배분 비율
+  resource_allocation:
+    us_strategy: 0.40      # 40%
+    japan_strategy: 0.25   # 25%
+    crypto_strategy: 0.20  # 20%
+    india_strategy: 0.15   # 15%
+
+# ================================================================================================
+# 🏁 마무리 설정
+# ================================================================================================
+meta:
+  config_version: "1.0.0"
+  created_date: "2024-12-28"
+  last_modified: "2024-12-28"
+  
+  description: |
+    퀸트프로젝트 4대 전략 통합 설정 파일
+    - 🇺🇸 미국주식: 전설적퀸트 V6.3 (월5-7%)
+    - 🇯🇵 일본주식: YEN-HUNTER v2.0 (월14%)
+    - 🇮🇳 인도주식: 전설 5인방 (월5-7%)
+    - 💰 암호화폐: 전설급 5대 시스템 (월5-7%)
+  
+  notes: |
+    1. API 키는 반드시 .env 파일에 저장
+    2. 백테스팅 먼저 실행 후 실거래 적용
+    3. 리스크 관리 설정을 본인 성향에 맞게 조정
+    4. 필요한 전략만 enabled: true로 설정
+    5. 정기적인 성과 리뷰 및 설정 최적화 권장
+  
+  support:
+    documentation: "README.md"
+    examples: "./examples/"
+    troubleshooting: "./docs/troubleshooting.md"
+
+# ================================================================================================
+# 🎊 축하합니다!
+# ================================================================================================
+# 이제 퀸트프로젝트의 모든 전략을 통합 관리할 수 있습니다!
 # 
-# 🔧 환경변수 설정:
-# export IBKR_ACCOUNT_ID="your_account"
-# export TELEGRAM_BOT_TOKEN="your_bot_token"
-# export TELEGRAM_CHAT_ID="your_chat_id"
+# 다음 단계:
+# 1. .env 파일에 API 키 설정
+# 2. 필요한 전략 enabled: true 설정  
+# 3. 백테스팅으로 전략 검증
+# 4. 시뮬레이션 모드로 안정성 확인
+# 5. 실거래 단계적 적용
 # 
-# 🚀 각 전략별 실행:
-# python us_strategy.py --config legendary_unified_settings.yaml
-# python jp_strategy.py --config legendary_unified_settings.yaml
-# python inda_strategy.py --config legendary_unified_settings.yaml
-# python coin_strategy.py --config legendary_unified_settings.yaml
-# 
-# 📊 통합 대시보드:
-# python dashboard.py --config legendary_unified_settings.yaml
-# 
-# ⚠️ 중요사항:
-# 1. 실거래 전 반드시 demo_mode: true로 테스트
-# 2. API 키는 환경변수로 관리
-# 3. 정기적으로 설정 백업
-# 4. 전략별 독립 실행 가능
-# 5. 리스크 한도 준수 필수
-#
-# ===============================================================================
+# 🚀 월 5-7% 목표 달성을 위해 파이팅!
