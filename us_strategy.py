@@ -1207,7 +1207,7 @@ class LegendaryQuantStrategy:
                 logging.error(f"스케줄 오류: {e}")
                 await asyncio.sleep(60)
 
-            async def _execute_tuesday_trading(self):
+async def _execute_tuesday_trading(self):
         try:
             logging.info("🔥 화요일 공격적 진입 시작!")
             
