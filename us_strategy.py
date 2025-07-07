@@ -252,6 +252,9 @@ class StockSelector:
                 'beta': info.get('beta', 1.0) or 1.0,
                 'profit_margins': (info.get('profitMargins', 0) or 0) * 100
             }
+            except Exception as e:
+                   logging.error(f"데이터 수집 실패 {symbol}: {e}")
+                   return {}
             
             # PEG 계산
             if data['pe_ratio'] > 0 and data['eps_growth'] > 0:
