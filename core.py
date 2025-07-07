@@ -144,11 +144,12 @@ class EmergencyErrorMonitor:
     def __init__(self, core_system):
         self.core_system = core_system
         self.error_counts = {}  # 전략별 오류 카운터
-        self.last_emergency_time =     async def _handle_network_reconnect(self):
+        self.last_emergency_time = None    
+async def _handle_network_reconnect(self):
         """네트워크 재연결 처리"""
         disconnect_duration = 0
         if self.last_disconnect_time:
-            disconnect_duration = (datetime.now() - self.last_disconnect_time).seconds
+            disconnect_duration = (datetime.now() - self.last_disconnect_time).seconds        
         
         logger.info(f"✅ 네트워크 연결 복구 (끊김 시간: {disconnect_duration}초)")
         
