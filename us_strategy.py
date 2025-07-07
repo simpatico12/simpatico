@@ -1207,7 +1207,7 @@ class LegendaryQuantStrategy:
                 logging.error(f"스케줄 오류: {e}")
                 await asyncio.sleep(60)
 
-async def _execute_tuesday_trading(self):
+    async def _execute_tuesday_trading(self):
         try:
             logging.info("🔥 화요일 공격적 진입 시작!")
             
@@ -1822,8 +1822,8 @@ async def test_market_condition():
     except Exception as e:
         logging.error(f"시장 상황 테스트 실패: {e}")
         return {'error': str(e)}
-        
- # ========================================================================================
+
+# ========================================================================================
 # 🎯 메인 실행부
 # ========================================================================================
 
@@ -2175,4 +2175,5 @@ if __name__ == "__main__":
         print("\n👋 프로그램이 중단되었습니다.")
     except Exception as e:
         print(f"❌ 실행 오류: {e}")
-        logging.error(f"실행 오류: {e}")           
+        logging.error(f"실행 오류: {e}")        
+            
