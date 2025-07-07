@@ -225,17 +225,18 @@ class StockSelector:
     def _get_backup_nasdaq(self) -> List[str]:
         return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX',
                 'ADBE', 'CRM', 'ORCL', 'INTC', 'AMD', 'QCOM', 'AVGO', 'TXN']
-        async def get_stock_data(self, symbol: str) -> Dict:
-            try:
-                stock = yf.Ticker(symbol)
-                info = stock.info
-                hist = stock.history(period="1y")
-            
-                if hist.empty:
-                    return {}
-            
-                    current_price = float(hist['Close'].iloc[-1])
-            
+
+    async def get_stock_data(self, symbol: str) -> Dict:
+        try:
+            stock = yf.Ticker(symbol)
+            info = stock.info
+            hist = stock.history(period="1y")
+        
+            if hist.empty:
+                return {}
+        
+            current_price = float(hist['Close'].iloc[-1])
+        
             # 기본 데이터
             data = {
                 'symbol': symbol,
@@ -252,9 +253,6 @@ class StockSelector:
                 'beta': info.get('beta', 1.0) or 1.0,
                 'profit_margins': (info.get('profitMargins', 0) or 0) * 100
             }
-            except Exception as e:
-                   logging.error(f"데이터 수집 실패 {symbol}: {e}")
-                   return {}
             
             # PEG 계산
             if data['pe_ratio'] > 0 and data['eps_growth'] > 0:
@@ -448,6 +446,7 @@ class StrategyAnalyzer:
         }
         
         return adjusted, scores
+
 # ========================================================================================
 # 🏦 IBKR 연동 시스템
 # ========================================================================================
@@ -703,8 +702,9 @@ class StopTakeManager:
     
     def stop_monitoring(self):
         self.monitoring = False
-        logging.info("⏹️ 모니터링 중지") 
-async def _monitor_all_positions(self):
+        logging.info("⏹️ 모니터링 중지")
+
+    async def _monitor_all_positions(self):
         for symbol, position in list(self.positions.items()):
             try:
                 current_price = await self.ibkr.get_current_price(symbol)
@@ -1075,7 +1075,7 @@ class LegendaryQuantStrategy:
                 stop_loss=0.0, reasoning=f"오류: {e}", timestamp=datetime.now()
             )
 
-        async def scan_all_stocks(self) -> List[StockSignal]:
+    async def scan_all_stocks(self) -> List[StockSignal]:
         if not self.enabled:
             return []
         
@@ -1206,8 +1206,8 @@ class LegendaryQuantStrategy:
             except Exception as e:
                 logging.error(f"스케줄 오류: {e}")
                 await asyncio.sleep(60)
-    
-    async def _execute_tuesday_trading(self):
+
+            async def _execute_tuesday_trading(self):
         try:
             logging.info("🔥 화요일 공격적 진입 시작!")
             
@@ -1338,8 +1338,9 @@ class LegendaryQuantStrategy:
             
         except Exception as e:
             logging.error(f"시장 분석 실패: {e}")
-            return {'safe_to_trade': False, 'status': 'error', 'reason': f'분석 실패: {e}', 'aggressiveness': 0.5} 
-async def _thursday_position_review(self, weekly_performance: Dict) -> Dict:
+            return {'safe_to_trade': False, 'status': 'error', 'reason': f'분석 실패: {e}', 'aggressiveness': 0.5}
+
+    async def _thursday_position_review(self, weekly_performance: Dict) -> Dict:
         try:
             actions_taken = {'profit_taken': 0, 'stop_losses': 0, 'held_positions': 0}
             
@@ -1451,8 +1452,7 @@ async def _thursday_position_review(self, weekly_performance: Dict) -> Dict:
             logging.error(f"목요일 선별적 진입 실패: {e}")
             return 0
     
-    async def _enter_position_safely(self, symbol: str, investment: float
-        async def _enter_position_safely(self, symbol: str, investment: float, mode: str, entry_day: str) -> bool:
+    async def _enter_position_safely(self, symbol: str, investment: float, mode: str, entry_day: str) -> bool:
         try:
             # 현재가 조회
             current_price = await self.ibkr.get_current_price(symbol)
@@ -1756,7 +1756,8 @@ async def get_system_status():
     except Exception as e:
         logging.error(f"상태 조회 실패: {e}")
         return {'error': str(e)}
-        async def run_auto_trading():
+
+async def run_auto_trading():
     strategy = LegendaryQuantStrategy()
     
     try:
@@ -1821,8 +1822,8 @@ async def test_market_condition():
     except Exception as e:
         logging.error(f"시장 상황 테스트 실패: {e}")
         return {'error': str(e)}
-
-# ========================================================================================
+        
+ # ========================================================================================
 # 🎯 메인 실행부
 # ========================================================================================
 
@@ -2174,4 +2175,4 @@ if __name__ == "__main__":
         print("\n👋 프로그램이 중단되었습니다.")
     except Exception as e:
         print(f"❌ 실행 오류: {e}")
-        logging.error(f"실행 오류: {e}")
+        logging.error(f"실행 오류: {e}")           
