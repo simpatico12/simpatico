@@ -1257,34 +1257,34 @@ async def _execute_tuesday_trading(self):
         except Exception as e:
             logging.error(f"화요일 매매 실패: {e}")
     
-  async def _execute_thursday_trading(self):
-      try:
-        logging.info("📋 목요일 포지션 정리 시작!")
-        
-        # 시장 상황 및 주간 성과 분석
-        market_condition = await self._analyze_market_condition()
-        weekly_performance = await self._analyze_weekly_performance()
-        
-        # 기존 포지션 리뷰
-        actions_taken = await self._thursday_position_review(weekly_performance)
-        
-        # 선별적 신규 진입
-        if (weekly_performance['weekly_return'] >= 0 and market_condition['safe_to_trade'] and
-            market_condition.get('aggressiveness', 1.0) > 0.8):
-            new_entries = await self._thursday_selective_entry()
-            actions_taken['new_entries'] = new_entries
-        
-        # 결과 알림
-        await self.stop_take._send_notification(
-            f"📋 목요일 포지션 정리 완료!\n"
-            f"💰 이익실현: {actions_taken.get('profit_taken', 0)}개\n"
-            f"🛑 손절청산: {actions_taken.get('stop_losses', 0)}개\n"
-            f"📊 신규진입: {actions_taken.get('new_entries', 0)}개\n"
-            f"📈 주간수익률: {weekly_performance['weekly_return']:+.2f}%"
-        )
-        
-    except Exception as e:
-        logging.error(f"목요일 매매 실패: {e}")
+    async def _execute_thursday_trading(self):
+        try:
+            logging.info("📋 목요일 포지션 정리 시작!")
+            
+            # 시장 상황 및 주간 성과 분석
+            market_condition = await self._analyze_market_condition()
+            weekly_performance = await self._analyze_weekly_performance()
+            
+            # 기존 포지션 리뷰
+            actions_taken = await self._thursday_position_review(weekly_performance)
+            
+            # 선별적 신규 진입
+            if (weekly_performance['weekly_return'] >= 0 and market_condition['safe_to_trade'] and
+                market_condition.get('aggressiveness', 1.0) > 0.8):
+                new_entries = await self._thursday_selective_entry()
+                actions_taken['new_entries'] = new_entries
+            
+            # 결과 알림
+            await self.stop_take._send_notification(
+                f"📋 목요일 포지션 정리 완료!\n"
+                f"💰 이익실현: {actions_taken.get('profit_taken', 0)}개\n"
+                f"🛑 손절청산: {actions_taken.get('stop_losses', 0)}개\n"
+                f"📊 신규진입: {actions_taken.get('new_entries', 0)}개\n"
+                f"📈 주간수익률: {weekly_performance['weekly_return']:+.2f}%"
+            )
+            
+        except Exception as e:
+            logging.error(f"목요일 매매 실패: {e}")
     
     async def _analyze_market_condition(self) -> Dict:
         try:
