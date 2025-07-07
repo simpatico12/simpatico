@@ -225,7 +225,6 @@ class StockSelector:
     def _get_backup_nasdaq(self) -> List[str]:
         return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX',
                 'ADBE', 'CRM', 'ORCL', 'INTC', 'AMD', 'QCOM', 'AVGO', 'TXN']
-
         async def get_stock_data(self, symbol: str) -> Dict:
         try:
             stock = yf.Ticker(symbol)
