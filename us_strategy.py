@@ -227,9 +227,9 @@ class StockSelector:
                 'ADBE', 'CRM', 'ORCL', 'INTC', 'AMD', 'QCOM', 'AVGO', 'TXN']
         async def get_stock_data(self, symbol: str) -> Dict:
             try:
-            stock = yf.Ticker(symbol)
-            info = stock.info
-            hist = stock.history(period="1y")
+                stock = yf.Ticker(symbol)
+                info = stock.info
+                hist = stock.history(period="1y")
             
             if hist.empty:
                 return {}
