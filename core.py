@@ -162,14 +162,14 @@ async def _handle_network_reconnect(self):
         )
     
     async def _handle_critical_network_failure(self):
-        """치명적 네트워크 장애 처리"""
-        if not self.emergency_sell:
-            logger.warning("⚠️ 네트워크 장애 감지 (응급매도 비활성화)")
-            return
+            """치명적 네트워크 장애 처리"""
+            if not self.emergency_sell:
+               logger.warning("⚠️ 네트워크 장애 감지 (응급매도 비활성화)")
+               return
         
-        logger.critical("🚨 치명적 네트워크 장애 - 응급 전량 매도 실행!")
+            logger.critical("🚨 치명적 네트워크 장애 - 응급 전량 매도 실행!")
         
-        try:
+            try:
             # 유예 시간 체크
             if self.last_disconnect_time:
                 disconnect_duration = (datetime.now() - self.last_disconnect_time).seconds
@@ -177,8 +177,8 @@ async def _handle_network_reconnect(self):
                     logger.info(f"⏳ 유예 시간 대기 중: {self.grace_period - disconnect_duration}초 남음")
                     return
             
-            # 응급 전량 매도 실행
-            await self.core_system.emergency_sell_all("NETWORK_FAILURE")
+# 응급 전량 매도 실행
+await self.core_system.emergency_sell_all("NETWORK_FAILURE")
             
         except Exception as e:
             logger.error(f"응급 매도 실행 실패: {e}")
