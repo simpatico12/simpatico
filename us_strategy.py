@@ -1257,8 +1257,8 @@ async def _execute_tuesday_trading(self):
         except Exception as e:
             logging.error(f"화요일 매매 실패: {e}")
     
-   async def _execute_thursday_trading(self):
-    try:
+  async def _execute_thursday_trading(self):
+      try:
         logging.info("📋 목요일 포지션 정리 시작!")
         
         # 시장 상황 및 주간 성과 분석
