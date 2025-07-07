@@ -231,10 +231,10 @@ class StockSelector:
                 info = stock.info
                 hist = stock.history(period="1y")
             
-            if hist.empty:
+                if hist.empty:
                 return {}
             
-            current_price = float(hist['Close'].iloc[-1])
+                current_price = float(hist['Close'].iloc[-1])
             
             # 기본 데이터
             data = {
