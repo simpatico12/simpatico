@@ -2175,5 +2175,4 @@ if __name__ == "__main__":
         print("\n👋 프로그램이 중단되었습니다.")
     except Exception as e:
         print(f"❌ 실행 오류: {e}")
-        logging.error(f"실행 오류: {e}")        
-            
+        logging.error(f"실행 오류: {e}")
