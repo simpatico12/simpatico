@@ -2322,3 +2322,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ 실행 오류: {e}")
         sys.exit(1)
+                
