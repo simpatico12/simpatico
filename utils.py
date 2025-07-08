@@ -736,6 +736,25 @@ def log_execution_time(func):
             
             raise
     
+    @wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        start_time = time.time()
+        try:
+            result = func(*args, **kwargs)
+            execution_time = time.time() - start_time
+            
+            logger = logging.getLogger(func.__name__)
+            logger.info(f"⏱️ {func.__name__} 실행 완료: {execution_time:.2f}초")
+            
+            return result
+        except Exception as e:
+            execution_time = time.time() - start_time
+            
+            logger = logging.getLogger(func.__name__)
+            logger.error(f"❌ {func.__name__} 실행 실패: {execution_time:.2f}초, 오류: {e}")
+            
+            raise
+    
     return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
 
 # ============================================================================
@@ -871,7 +890,26 @@ class SecurityUtils:
         
         # 기본적인 패턴 검사
         import re
-        pattern = r'^[A-Za-z0-9\-_]+$'
+        pattern = r'^[A-Za-z0-9\-_]+
+            
+            return result
+        except Exception as e:
+            execution_time = time.time() - start_time
+            
+            logger = logging.getLogger(func.__name__)
+            logger.error(f"❌ {func.__name__} 실행 실패: {execution_time:.2f}초, 오류: {e}")
+            
+            raise
+    
+    @wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        start_time = time.time()
+        try:
+            result = func(*args, **kwargs)
+            execution_time = time.time() - start_time
+            
+            logger = logging.getLogger(func.__name__)
+            logger.info(f"⏱️ {func.__name__} 실행 완료: {execution_time:.2f}초")
         return bool(re.match(pattern, api_key))
 
 # ============================================================================
