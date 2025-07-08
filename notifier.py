@@ -1,258 +1,152 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🏆 퀸트프로젝트 통합 알림 시스템 (notifier.py)
+🔔 퀸트프로젝트 통합 알림 시스템 (notifier.py)
 =================================================
-텔레그램 + 이메일 + 슬랙 + 디스코드 + SMS 통합 알림
+🏆 텔레그램 + 이메일 + SMS + 디스코드 + 슬랙 통합 알림
 
 ✨ 핵심 기능:
-- 다중 채널 알림 (텔레그램, 이메일, 슬랙, 디스코드, SMS)
-- 알림 레벨별 자동 라우팅 (INFO, WARNING, CRITICAL)
-- 중복 알림 방지 시스템
-- 실패 시 대안 채널 자동 전환
-- 알림 통계 및 성공률 추적
+- 다중 채널 통합 알림 시스템
+- 우선순위별 알림 라우팅
 - 템플릿 기반 메시지 포맷팅
-- 첨부파일 지원 (이미지, 문서)
+- 알림 히스토리 관리
+- 실패 시 백업 채널 자동 전환
+- 스팸 방지 및 중복 제거
+- 개인화된 알림 설정
+- 알림 성능 모니터링
 
 Author: 퀸트마스터팀
-Version: 1.0.0
+Version: 1.1.0 (멀티채널 + 스마트 라우팅)
 """
 
 import asyncio
-import aiohttp
-import smtplib
 import logging
 import os
 import json
 import time
+import smtplib
 import hashlib
 from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple, Any, Union
+from dataclasses import dataclass, field
+from pathlib import Path
 from email.mime.text import MimeText
 from email.mime.multipart import MimeMultipart
 from email.mime.image import MimeImage
-from email.mime.base import MimeBase
-from email import encoders
-from pathlib import Path
-from typing import Dict, List, Optional, Union, Any
-from dataclasses import dataclass, field
-from enum import Enum
+from dotenv import load_dotenv
+import aiohttp
 import sqlite3
 import requests
-from dotenv import load_dotenv
-
-# 환경변수 로드
-load_dotenv()
-
-# 로깅 설정
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(name)s | %(levelname)s | %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('notifier.log', encoding='utf-8')
-    ]
-)
-logger = logging.getLogger(__name__)
+from collections import defaultdict, deque
 
 # ============================================================================
-# 📱 알림 레벨 및 데이터 클래스
+# 🎯 알림 설정 관리자
 # ============================================================================
+class NotifierConfig:
+    """알림 시스템 설정 관리"""
+    
+    def __init__(self):
+        load_dotenv()
+        
+        # 텔레그램 설정
+        self.TELEGRAM_ENABLED = os.getenv('TELEGRAM_ENABLED', 'false').lower() == 'true'
+        self.TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
+        self.TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
+        self.TELEGRAM_BACKUP_CHAT_ID = os.getenv('TELEGRAM_BACKUP_CHAT_ID', '')
+        
+        # 이메일 설정
+        self.EMAIL_ENABLED = os.getenv('EMAIL_ENABLED', 'false').lower() == 'true'
+        self.EMAIL_SMTP_SERVER = os.getenv('EMAIL_SMTP_SERVER', 'smtp.gmail.com')
+        self.EMAIL_SMTP_PORT = int(os.getenv('EMAIL_SMTP_PORT', 587))
+        self.EMAIL_USERNAME = os.getenv('EMAIL_USERNAME', '')
+        self.EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD', '')
+        self.EMAIL_TO_ADDRESS = os.getenv('EMAIL_TO_ADDRESS', '')
+        self.EMAIL_FROM_NAME = os.getenv('EMAIL_FROM_NAME', '퀸트프로젝트')
+        
+        # 디스코드 설정
+        self.DISCORD_ENABLED = os.getenv('DISCORD_ENABLED', 'false').lower() == 'true'
+        self.DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL', '')
+        
+        # 슬랙 설정
+        self.SLACK_ENABLED = os.getenv('SLACK_ENABLED', 'false').lower() == 'true'
+        self.SLACK_WEBHOOK_URL = os.getenv('SLACK_WEBHOOK_URL', '')
+        self.SLACK_TOKEN = os.getenv('SLACK_TOKEN', '')
+        self.SLACK_CHANNEL = os.getenv('SLACK_CHANNEL', '#quant-alerts')
+        
+        # SMS 설정 (Twilio)
+        self.SMS_ENABLED = os.getenv('SMS_ENABLED', 'false').lower() == 'true'
+        self.TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID', '')
+        self.TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN', '')
+        self.TWILIO_FROM_NUMBER = os.getenv('TWILIO_FROM_NUMBER', '')
+        self.SMS_TO_NUMBER = os.getenv('SMS_TO_NUMBER', '')
+        
+        # 카카오톡 설정
+        self.KAKAO_ENABLED = os.getenv('KAKAO_ENABLED', 'false').lower() == 'true'
+        self.KAKAO_REST_API_KEY = os.getenv('KAKAO_REST_API_KEY', '')
+        self.KAKAO_ACCESS_TOKEN = os.getenv('KAKAO_ACCESS_TOKEN', '')
+        
+        # 알림 제어 설정
+        self.NOTIFICATION_COOLDOWN = int(os.getenv('NOTIFICATION_COOLDOWN', 60))  # 중복 방지 시간
+        self.MAX_NOTIFICATIONS_PER_HOUR = int(os.getenv('MAX_NOTIFICATIONS_PER_HOUR', 50))
+        self.EMERGENCY_BYPASS = os.getenv('EMERGENCY_BYPASS', 'true').lower() == 'true'
+        
+        # 우선순위별 채널 설정
+        self.PRIORITY_CHANNELS = {
+            'emergency': ['telegram', 'sms', 'email'],
+            'warning': ['telegram', 'discord'],
+            'info': ['telegram'],
+            'success': ['telegram'],
+            'debug': ['discord']
+        }
+        
+        # 데이터베이스
+        self.DB_PATH = os.getenv('NOTIFIER_DB_PATH', './data/notifications.db')
 
-class NotificationLevel(Enum):
-    """알림 레벨"""
-    DEBUG = "debug"
-    INFO = "info"
-    WARNING = "warning"
-    CRITICAL = "critical"
-    EMERGENCY = "emergency"
-
-class NotificationChannel(Enum):
-    """알림 채널"""
-    TELEGRAM = "telegram"
-    EMAIL = "email"
-    SLACK = "slack"
-    DISCORD = "discord"
-    SMS = "sms"
-    WEBHOOK = "webhook"
-
-@dataclass
-class NotificationConfig:
-    """알림 설정"""
-    # 텔레그램
-    telegram_enabled: bool = False
-    telegram_bot_token: str = ""
-    telegram_chat_id: str = ""
-    
-    # 이메일
-    email_enabled: bool = False
-    email_smtp_server: str = "smtp.gmail.com"
-    email_smtp_port: int = 587
-    email_username: str = ""
-    email_password: str = ""
-    email_to: List[str] = field(default_factory=list)
-    
-    # 슬랙
-    slack_enabled: bool = False
-    slack_webhook_url: str = ""
-    slack_channel: str = ""
-    slack_bot_token: str = ""
-    
-    # 디스코드
-    discord_enabled: bool = False
-    discord_webhook_url: str = ""
-    
-    # SMS (Twilio)
-    sms_enabled: bool = False
-    sms_account_sid: str = ""
-    sms_auth_token: str = ""
-    sms_from_number: str = ""
-    sms_to_numbers: List[str] = field(default_factory=list)
-    
-    # 일반 웹훅
-    webhook_enabled: bool = False
-    webhook_urls: List[str] = field(default_factory=list)
-    
-    # 레벨별 채널 설정
-    level_channels: Dict[str, List[str]] = field(default_factory=dict)
-    
-    # 중복 방지 설정
-    duplicate_prevention: bool = True
-    duplicate_window_minutes: int = 5
-    
-    # 재시도 설정
-    max_retries: int = 3
-    retry_delay_seconds: int = 5
-
+# ============================================================================
+# 📨 알림 메시지 데이터 클래스
+# ============================================================================
 @dataclass
 class NotificationMessage:
-    """알림 메시지"""
+    """알림 메시지 구조"""
     title: str
-    message: str
-    level: NotificationLevel = NotificationLevel.INFO
-    channels: Optional[List[NotificationChannel]] = None
-    attachments: Optional[List[str]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    content: str
+    priority: str = 'info'  # emergency, warning, info, success, debug
+    category: str = 'general'  # trading, system, portfolio, error
     timestamp: datetime = field(default_factory=datetime.now)
-    message_id: Optional[str] = None
-
-@dataclass
-class NotificationResult:
-    """알림 결과"""
-    channel: NotificationChannel
-    success: bool
-    message: str
-    timestamp: datetime
+    attachments: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    channels: List[str] = field(default_factory=list)  # 특정 채널 지정
     retry_count: int = 0
-    response_data: Optional[Dict] = None
+    hash_id: str = field(init=False)
+    
+    def __post_init__(self):
+        # 메시지 해시 생성 (중복 방지용)
+        message_data = f"{self.title}_{self.content}_{self.category}"
+        self.hash_id = hashlib.md5(message_data.encode()).hexdigest()
 
 # ============================================================================
-# 🔧 알림 설정 관리자
+# 📊 알림 히스토리 관리자
 # ============================================================================
-
-class NotificationConfigManager:
-    """알림 설정 관리"""
+class NotificationHistory:
+    """알림 기록 및 통계 관리"""
     
-    def __init__(self, config_file: str = "notification_config.json"):
-        self.config_file = config_file
-        self.config = self._load_config()
-    
-    def _load_config(self) -> NotificationConfig:
-        """설정 파일 로드"""
-        try:
-            # 파일에서 로드
-            if Path(self.config_file).exists():
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    return NotificationConfig(**data)
-            
-            # 환경변수에서 로드
-            return self._load_from_env()
-            
-        except Exception as e:
-            logger.error(f"설정 로드 실패: {e}")
-            return NotificationConfig()
-    
-    def _load_from_env(self) -> NotificationConfig:
-        """환경변수에서 설정 로드"""
-        config = NotificationConfig(
-            # 텔레그램
-            telegram_enabled=os.getenv('TELEGRAM_ENABLED', 'false').lower() == 'true',
-            telegram_bot_token=os.getenv('TELEGRAM_BOT_TOKEN', ''),
-            telegram_chat_id=os.getenv('TELEGRAM_CHAT_ID', ''),
-            
-            # 이메일
-            email_enabled=os.getenv('EMAIL_ENABLED', 'false').lower() == 'true',
-            email_smtp_server=os.getenv('EMAIL_SMTP_SERVER', 'smtp.gmail.com'),
-            email_smtp_port=int(os.getenv('EMAIL_SMTP_PORT', '587')),
-            email_username=os.getenv('EMAIL_USERNAME', ''),
-            email_password=os.getenv('EMAIL_PASSWORD', ''),
-            email_to=os.getenv('EMAIL_TO', '').split(',') if os.getenv('EMAIL_TO') else [],
-            
-            # 슬랙
-            slack_enabled=os.getenv('SLACK_ENABLED', 'false').lower() == 'true',
-            slack_webhook_url=os.getenv('SLACK_WEBHOOK_URL', ''),
-            slack_channel=os.getenv('SLACK_CHANNEL', '#general'),
-            slack_bot_token=os.getenv('SLACK_BOT_TOKEN', ''),
-            
-            # 디스코드
-            discord_enabled=os.getenv('DISCORD_ENABLED', 'false').lower() == 'true',
-            discord_webhook_url=os.getenv('DISCORD_WEBHOOK_URL', ''),
-            
-            # SMS
-            sms_enabled=os.getenv('SMS_ENABLED', 'false').lower() == 'true',
-            sms_account_sid=os.getenv('SMS_ACCOUNT_SID', ''),
-            sms_auth_token=os.getenv('SMS_AUTH_TOKEN', ''),
-            sms_from_number=os.getenv('SMS_FROM_NUMBER', ''),
-            sms_to_numbers=os.getenv('SMS_TO_NUMBERS', '').split(',') if os.getenv('SMS_TO_NUMBERS') else [],
-            
-            # 웹훅
-            webhook_enabled=os.getenv('WEBHOOK_ENABLED', 'false').lower() == 'true',
-            webhook_urls=os.getenv('WEBHOOK_URLS', '').split(',') if os.getenv('WEBHOOK_URLS') else [],
-            
-            # 레벨별 채널 설정
-            level_channels={
-                'debug': ['telegram'],
-                'info': ['telegram', 'slack'],
-                'warning': ['telegram', 'email', 'slack'],
-                'critical': ['telegram', 'email', 'slack', 'discord'],
-                'emergency': ['telegram', 'email', 'slack', 'discord', 'sms']
-            }
-        )
-        
-        # 설정 파일 저장
-        self.save_config(config)
-        return config
-    
-    def save_config(self, config: NotificationConfig):
-        """설정 파일 저장"""
-        try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(config.__dict__, f, indent=2, ensure_ascii=False, default=str)
-            logger.info(f"✅ 설정 저장: {self.config_file}")
-        except Exception as e:
-            logger.error(f"설정 저장 실패: {e}")
-    
-    def update_config(self, **kwargs):
-        """설정 업데이트"""
-        for key, value in kwargs.items():
-            if hasattr(self.config, key):
-                setattr(self.config, key, value)
-        self.save_config(self.config)
-
-# ============================================================================
-# 📊 알림 통계 관리자
-# ============================================================================
-
-class NotificationStatsManager:
-    """알림 통계 관리"""
-    
-    def __init__(self, db_path: str = "notification_stats.db"):
-        self.db_path = db_path
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.db_path = config.DB_PATH
         self._init_database()
+        
+        # 메모리 캐시
+        self.recent_notifications = deque(maxlen=1000)
+        self.hourly_counts = defaultdict(int)
+        self.failed_notifications = deque(maxlen=100)
+        
+        self.logger = logging.getLogger('NotificationHistory')
     
     def _init_database(self):
         """데이터베이스 초기화"""
         try:
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
@@ -260,1084 +154,1199 @@ class NotificationStatsManager:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS notification_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    message_id TEXT,
+                    hash_id TEXT,
                     title TEXT,
-                    level TEXT,
-                    channel TEXT,
-                    success BOOLEAN,
-                    error_message TEXT,
-                    retry_count INTEGER DEFAULT 0,
+                    content TEXT,
+                    priority TEXT,
+                    category TEXT,
+                    channels TEXT,
+                    status TEXT,
                     timestamp DATETIME,
-                    response_time_ms INTEGER
+                    delivery_time REAL,
+                    error_message TEXT
                 )
             ''')
             
-            # 중복 방지 테이블
+            # 채널별 성능 테이블
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS duplicate_prevention (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    message_hash TEXT UNIQUE,
-                    first_sent DATETIME,
-                    count INTEGER DEFAULT 1
-                )
-            ''')
-            
-            # 채널별 통계 테이블
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS channel_stats (
+                CREATE TABLE IF NOT EXISTS channel_performance (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     channel TEXT,
                     date DATE,
-                    total_sent INTEGER DEFAULT 0,
-                    successful_sent INTEGER DEFAULT 0,
-                    failed_sent INTEGER DEFAULT 0,
-                    avg_response_time_ms REAL DEFAULT 0,
-                    UNIQUE(channel, date)
+                    sent_count INTEGER,
+                    success_count INTEGER,
+                    avg_delivery_time REAL,
+                    error_count INTEGER
+                )
+            ''')
+            
+            # 설정 테이블
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS notification_settings (
+                    user_id TEXT PRIMARY KEY,
+                    preferences TEXT,
+                    created_at DATETIME,
+                    updated_at DATETIME
                 )
             ''')
             
             conn.commit()
             conn.close()
-            logger.info("✅ 알림 통계 DB 초기화 완료")
             
         except Exception as e:
-            logger.error(f"통계 DB 초기화 실패: {e}")
+            self.logger.error(f"데이터베이스 초기화 실패: {e}")
     
-    def log_notification(self, message: NotificationMessage, result: NotificationResult, response_time_ms: int):
-        """알림 로그 기록"""
+    def record_notification(self, message: NotificationMessage, channels: List[str], 
+                           status: str, delivery_time: float = 0, error_msg: str = ''):
+        """알림 기록"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
             cursor.execute('''
                 INSERT INTO notification_logs 
-                (message_id, title, level, channel, success, error_message, retry_count, timestamp, response_time_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (hash_id, title, content, priority, category, channels, status, 
+                 timestamp, delivery_time, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                message.message_id, message.title, message.level.value,
-                result.channel.value, result.success, result.message,
-                result.retry_count, result.timestamp.isoformat(), response_time_ms
-            ))
-            
-            # 일일 통계 업데이트
-            today = datetime.now().date()
-            cursor.execute('''
-                INSERT OR IGNORE INTO channel_stats (channel, date) VALUES (?, ?)
-            ''', (result.channel.value, today))
-            
-            cursor.execute('''
-                UPDATE channel_stats SET 
-                    total_sent = total_sent + 1,
-                    successful_sent = successful_sent + ?,
-                    failed_sent = failed_sent + ?,
-                    avg_response_time_ms = (avg_response_time_ms * (total_sent - 1) + ?) / total_sent
-                WHERE channel = ? AND date = ?
-            ''', (
-                1 if result.success else 0,
-                0 if result.success else 1,
-                response_time_ms,
-                result.channel.value, today
+                message.hash_id, message.title, message.content[:500], 
+                message.priority, message.category, ','.join(channels),
+                status, message.timestamp.isoformat(), delivery_time, error_msg
             ))
             
             conn.commit()
             conn.close()
             
+            # 메모리 캐시 업데이트
+            self.recent_notifications.append({
+                'hash_id': message.hash_id,
+                'timestamp': message.timestamp,
+                'status': status
+            })
+            
         except Exception as e:
-            logger.error(f"알림 로그 기록 실패: {e}")
+            self.logger.error(f"알림 기록 실패: {e}")
     
-    def check_duplicate(self, message: NotificationMessage, window_minutes: int = 5) -> bool:
-        """중복 메시지 체크"""
-        try:
-            # 메시지 해시 생성
-            message_content = f"{message.title}:{message.message}:{message.level.value}"
-            message_hash = hashlib.md5(message_content.encode()).hexdigest()
-            
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 최근 중복 체크
-            cutoff_time = datetime.now() - timedelta(minutes=window_minutes)
-            cursor.execute('''
-                SELECT count, first_sent FROM duplicate_prevention 
-                WHERE message_hash = ? AND first_sent > ?
-            ''', (message_hash, cutoff_time.isoformat()))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                # 중복 발견 - 카운트 증가
-                cursor.execute('''
-                    UPDATE duplicate_prevention SET count = count + 1 
-                    WHERE message_hash = ?
-                ''', (message_hash,))
-                conn.commit()
-                conn.close()
+    def is_duplicate(self, message: NotificationMessage, window_minutes: int = 5) -> bool:
+        """중복 알림 체크"""
+        cutoff_time = datetime.now() - timedelta(minutes=window_minutes)
+        
+        # 메모리 캐시에서 빠른 체크
+        for recent in self.recent_notifications:
+            if (recent['hash_id'] == message.hash_id and 
+                recent['timestamp'] > cutoff_time and
+                recent['status'] == 'success'):
                 return True
-            else:
-                # 새 메시지 - 기록
-                cursor.execute('''
-                    INSERT OR REPLACE INTO duplicate_prevention (message_hash, first_sent, count)
-                    VALUES (?, ?, 1)
-                ''', (message_hash, datetime.now().isoformat()))
-                conn.commit()
-                conn.close()
-                return False
-                
-        except Exception as e:
-            logger.error(f"중복 체크 실패: {e}")
-            return False
+        
+        return False
     
-    def get_stats(self, days: int = 7) -> Dict[str, Any]:
-        """통계 조회"""
+    def check_rate_limit(self) -> bool:
+        """시간당 알림 제한 체크"""
+        current_hour = datetime.now().hour
+        current_count = self.hourly_counts[current_hour]
+        
+        return current_count < self.config.MAX_NOTIFICATIONS_PER_HOUR
+    
+    def increment_hourly_count(self):
+        """시간당 카운트 증가"""
+        current_hour = datetime.now().hour
+        self.hourly_counts[current_hour] += 1
+        
+        # 이전 시간 데이터 정리
+        for hour in list(self.hourly_counts.keys()):
+            if hour != current_hour:
+                del self.hourly_counts[hour]
+    
+    def get_statistics(self, days: int = 7) -> Dict[str, Any]:
+        """알림 통계 조회"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            cutoff_date = datetime.now().date() - timedelta(days=days)
+            start_date = (datetime.now() - timedelta(days=days)).date()
+            
+            # 기간별 통계
+            cursor.execute('''
+                SELECT priority, COUNT(*) as count, 
+                       AVG(delivery_time) as avg_time,
+                       SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count
+                FROM notification_logs 
+                WHERE date(timestamp) >= ?
+                GROUP BY priority
+            ''', (start_date.isoformat(),))
+            
+            priority_stats = {}
+            for row in cursor.fetchall():
+                priority, count, avg_time, success_count = row
+                success_rate = (success_count / count * 100) if count > 0 else 0
+                
+                priority_stats[priority] = {
+                    'count': count,
+                    'avg_delivery_time': avg_time or 0,
+                    'success_rate': success_rate
+                }
             
             # 채널별 통계
             cursor.execute('''
-                SELECT channel, 
-                       SUM(total_sent) as total,
-                       SUM(successful_sent) as success,
-                       SUM(failed_sent) as failed,
-                       AVG(avg_response_time_ms) as avg_response
-                FROM channel_stats 
-                WHERE date > ?
-                GROUP BY channel
-            ''', (cutoff_date,))
+                SELECT channels, COUNT(*) as count,
+                       AVG(delivery_time) as avg_time,
+                       SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count
+                FROM notification_logs 
+                WHERE date(timestamp) >= ?
+                GROUP BY channels
+            ''', (start_date.isoformat(),))
             
             channel_stats = {}
             for row in cursor.fetchall():
-                channel_stats[row[0]] = {
-                    'total_sent': row[1],
-                    'successful_sent': row[2],
-                    'failed_sent': row[3],
-                    'success_rate': (row[2] / row[1] * 100) if row[1] > 0 else 0,
-                    'avg_response_time_ms': row[4] or 0
+                channels, count, avg_time, success_count = row
+                success_rate = (success_count / count * 100) if count > 0 else 0
+                
+                channel_stats[channels] = {
+                    'count': count,
+                    'avg_delivery_time': avg_time or 0,
+                    'success_rate': success_rate
                 }
-            
-            # 레벨별 통계
-            cursor.execute('''
-                SELECT level, COUNT(*) as count
-                FROM notification_logs 
-                WHERE date(timestamp) > ?
-                GROUP BY level
-            ''', (cutoff_date,))
-            
-            level_stats = {row[0]: row[1] for row in cursor.fetchall()}
             
             conn.close()
             
             return {
                 'period_days': days,
+                'priority_stats': priority_stats,
                 'channel_stats': channel_stats,
-                'level_stats': level_stats,
-                'total_notifications': sum(level_stats.values()),
-                'generated_at': datetime.now().isoformat()
+                'total_recent': len(self.recent_notifications)
             }
             
         except Exception as e:
-            logger.error(f"통계 조회 실패: {e}")
+            self.logger.error(f"통계 조회 실패: {e}")
             return {}
 
 # ============================================================================
-# 📤 개별 채널 핸들러
+# 📡 텔레그램 채널
 # ============================================================================
-
-class TelegramHandler:
-    """텔레그램 알림 핸들러"""
+class TelegramChannel:
+    """텔레그램 알림 채널"""
     
-    def __init__(self, bot_token: str, chat_id: str):
-        self.bot_token = bot_token
-        self.chat_id = chat_id
-        self.base_url = f"https://api.telegram.org/bot{bot_token}"
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.session = None
+        self.logger = logging.getLogger('TelegramChannel')
     
-    async def send_message(self, message: NotificationMessage) -> NotificationResult:
+    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
         """텔레그램 메시지 전송"""
-        start_time = time.time()
+        if not self.config.TELEGRAM_ENABLED or not self.config.TELEGRAM_BOT_TOKEN:
+            return False, "텔레그램 설정 없음"
         
         try:
             # 메시지 포맷팅
-            level_emoji = {
-                NotificationLevel.DEBUG: '🔍',
-                NotificationLevel.INFO: '💡',
-                NotificationLevel.WARNING: '⚠️',
-                NotificationLevel.CRITICAL: '🚨',
-                NotificationLevel.EMERGENCY: '🆘'
-            }
+            formatted_message = await self._format_message(message)
             
-            emoji = level_emoji.get(message.level, '📢')
-            formatted_message = f"{emoji} <b>{message.title}</b>\n\n{message.message}\n\n⏰ {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            # 우선순위별 알림음 설정
+            disable_notification = message.priority not in ['emergency', 'warning']
+            
+            # 메인 채널로 전송
+            success = await self._send_to_chat(
+                self.config.TELEGRAM_CHAT_ID, 
+                formatted_message, 
+                disable_notification
+            )
+            
+            # 응급상황시 백업 채널도 사용
+            if message.priority == 'emergency' and self.config.TELEGRAM_BACKUP_CHAT_ID:
+                await self._send_to_chat(
+                    self.config.TELEGRAM_BACKUP_CHAT_ID,
+                    f"🚨 백업 알림\n\n{formatted_message}",
+                    False
+                )
+            
+            return success, "전송 완료" if success else "전송 실패"
+            
+        except Exception as e:
+            error_msg = f"텔레그램 전송 오류: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
+    async def _create_slack_message(self, message: NotificationMessage) -> Dict[str, Any]:
+        """슬랙 메시지 생성"""
+        # 우선순위별 색상
+        priority_colors = {
+            'emergency': 'danger',
+            'warning': 'warning',
+            'info': 'good',
+            'success': 'good',
+            'debug': '#808080'
+        }
+        
+        color = priority_colors.get(message.priority, 'good')
+        
+        slack_message = {
+            "channel": self.config.SLACK_CHANNEL,
+            "username": "퀸트프로젝트",
+            "icon_emoji": ":chart_with_upwards_trend:",
+            "attachments": [{
+                "color": color,
+                "title": f"🏆 {message.title}",
+                "text": message.content,
+                "footer": f"우선순위: {message.priority.upper()} | 카테고리: {message.category}",
+                "ts": int(message.timestamp.timestamp())
+            }]
+        }
+        
+        # 메타데이터를 필드로 추가
+        if message.metadata:
+            slack_message["attachments"][0]["fields"] = []
+            for key, value in message.metadata.items():
+                slack_message["attachments"][0]["fields"].append({
+                    "title": key,
+                    "value": str(value),
+                    "short": True
+                })
+        
+        return slack_message
+    
+    async def _send_webhook(self, slack_message: Dict[str, Any]) -> bool:
+        """웹훅으로 메시지 전송"""
+        try:
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            
+            async with self.session.post(
+                self.config.SLACK_WEBHOOK_URL, 
+                json=slack_message, 
+                timeout=10
+            ) as response:
+                return response.status == 200
+                
+        except Exception as e:
+            self.logger.error(f"슬랙 웹훅 전송 실패: {e}")
+            return False
+    
+    async def close(self):
+        """세션 종료"""
+        if self.session:
+            await self.session.close()
+
+# ============================================================================
+# 📱 SMS 채널 (Twilio)
+# ============================================================================
+class SMSChannel:
+    """SMS 알림 채널"""
+    
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.logger = logging.getLogger('SMSChannel')
+    
+    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
+        """SMS 메시지 전송"""
+        if not self.config.SMS_ENABLED or not self.config.TWILIO_ACCOUNT_SID:
+            return False, "SMS 설정 없음"
+        
+        try:
+            # SMS용 짧은 메시지 생성
+            sms_text = await self._create_sms_text(message)
+            
+            # Twilio API로 전송
+            success = await self._send_twilio_sms(sms_text)
+            
+            return success, "전송 완료" if success else "전송 실패"
+            
+        except Exception as e:
+            error_msg = f"SMS 전송 오류: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
+    async def _create_sms_text(self, message: NotificationMessage) -> str:
+        """SMS용 텍스트 생성 (160자 제한)"""
+        priority_emojis = {
+            'emergency': '🚨',
+            'warning': '⚠️',
+            'info': 'ℹ️',
+            'success': '✅',
+            'debug': '🔧'
+        }
+        
+        emoji = priority_emojis.get(message.priority, '📊')
+        
+        # 짧은 메시지 구성
+        sms_text = f"{emoji} {message.title[:30]}"
+        
+        # 내용 요약 (100자 이내)
+        content_summary = message.content[:100]
+        if len(message.content) > 100:
+            content_summary += "..."
+        
+        sms_text += f"\n{content_summary}"
+        
+        # 시간 추가
+        time_str = message.timestamp.strftime('%H:%M')
+        sms_text += f"\n{time_str}"
+        
+        return sms_text
+    
+    async def _send_twilio_sms(self, text: str) -> bool:
+        """Twilio API로 SMS 전송"""
+        try:
+            # Twilio 라이브러리가 없으면 HTTP 요청으로 대체
+            try:
+                from twilio.rest import Client
+                
+                client = Client(self.config.TWILIO_ACCOUNT_SID, self.config.TWILIO_AUTH_TOKEN)
+                
+                # asyncio에서 동기 코드 실행
+                loop = asyncio.get_event_loop()
+                message = await loop.run_in_executor(
+                    None, 
+                    lambda: client.messages.create(
+                        body=text,
+                        from_=self.config.TWILIO_FROM_NUMBER,
+                        to=self.config.SMS_TO_NUMBER
+                    )
+                )
+                
+                return message.sid is not None
+                
+            except ImportError:
+                # HTTP 요청으로 직접 전송
+                return await self._send_twilio_http(text)
+                
+        except Exception as e:
+            self.logger.error(f"Twilio SMS 전송 실패: {e}")
+            return False
+    
+    async def _send_twilio_http(self, text: str) -> bool:
+        """HTTP 요청으로 Twilio SMS 전송"""
+        try:
+            import base64
+            
+            url = f"https://api.twilio.com/2010-04-01/Accounts/{self.config.TWILIO_ACCOUNT_SID}/Messages.json"
+            
+            # 인증 헤더
+            credentials = f"{self.config.TWILIO_ACCOUNT_SID}:{self.config.TWILIO_AUTH_TOKEN}"
+            encoded_credentials = base64.b64encode(credentials.encode()).decode()
+            
+            headers = {
+                'Authorization': f'Basic {encoded_credentials}',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
             
             data = {
-                'chat_id': self.chat_id,
-                'text': formatted_message,
-                'parse_mode': 'HTML',
-                'disable_web_page_preview': True
+                'From': self.config.TWILIO_FROM_NUMBER,
+                'To': self.config.SMS_TO_NUMBER,
+                'Body': text
             }
             
             async with aiohttp.ClientSession() as session:
-                async with session.post(f"{self.base_url}/sendMessage", json=data, timeout=30) as response:
-                    response_data = await response.json()
-                    
-                    if response.status == 200 and response_data.get('ok'):
-                        return NotificationResult(
-                            channel=NotificationChannel.TELEGRAM,
-                            success=True,
-                            message="전송 성공",
-                            timestamp=datetime.now(),
-                            response_data=response_data
-                        )
-                    else:
-                        return NotificationResult(
-                            channel=NotificationChannel.TELEGRAM,
-                            success=False,
-                            message=f"API 오류: {response_data.get('description', 'Unknown error')}",
-                            timestamp=datetime.now(),
-                            response_data=response_data
-                        )
-            
-        except Exception as e:
-            return NotificationResult(
-                channel=NotificationChannel.TELEGRAM,
-                success=False,
-                message=f"전송 실패: {str(e)}",
-                timestamp=datetime.now()
-            )
-
-class EmailHandler:
-    """이메일 알림 핸들러"""
-    
-    def __init__(self, smtp_server: str, smtp_port: int, username: str, password: str, to_addresses: List[str]):
-        self.smtp_server = smtp_server
-        self.smtp_port = smtp_port
-        self.username = username
-        self.password = password
-        self.to_addresses = to_addresses
-    
-    async def send_message(self, message: NotificationMessage) -> NotificationResult:
-        """이메일 메시지 전송"""
-        try:
-            # 메시지 구성
-            msg = MimeMultipart()
-            msg['From'] = self.username
-            msg['To'] = ', '.join(self.to_addresses)
-            msg['Subject'] = f"[{message.level.value.upper()}] {message.title}"
-            
-            # 본문 작성
-            body = f"""
-{message.title}
-
-{message.message}
-
----
-알림 레벨: {message.level.value.upper()}
-발생 시간: {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
-시스템: 퀸트프로젝트 알림 시스템
-"""
-            
-            msg.attach(MimeText(body, 'plain', 'utf-8'))
-            
-            # 첨부파일 처리
-            if message.attachments:
-                for attachment_path in message.attachments:
-                    await self._add_attachment(msg, attachment_path)
-            
-            # 비동기 전송
-            await asyncio.get_event_loop().run_in_executor(None, self._send_email_sync, msg)
-            
-            return NotificationResult(
-                channel=NotificationChannel.EMAIL,
-                success=True,
-                message="이메일 전송 성공",
-                timestamp=datetime.now()
-            )
-            
-        except Exception as e:
-            return NotificationResult(
-                channel=NotificationChannel.EMAIL,
-                success=False,
-                message=f"이메일 전송 실패: {str(e)}",
-                timestamp=datetime.now()
-            )
-    
-    def _send_email_sync(self, msg):
-        """동기 이메일 전송"""
-        server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-        server.starttls()
-        server.login(self.username, self.password)
-        server.send_message(msg)
-        server.quit()
-    
-    async def _add_attachment(self, msg, file_path: str):
-        """첨부파일 추가"""
-        try:
-            file_path = Path(file_path)
-            if not file_path.exists():
-                return
-            
-            with open(file_path, 'rb') as f:
-                if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.gif']:
-                    # 이미지 첨부
-                    img_data = f.read()
-                    image = MimeImage(img_data)
-                    image.add_header('Content-Disposition', f'attachment; filename={file_path.name}')
-                    msg.attach(image)
-                else:
-                    # 일반 파일 첨부
-                    part = MimeBase('application', 'octet-stream')
-                    part.set_payload(f.read())
-                    encoders.encode_base64(part)
-                    part.add_header('Content-Disposition', f'attachment; filename={file_path.name}')
-                    msg.attach(part)
+                async with session.post(url, headers=headers, data=data, timeout=10) as response:
+                    return response.status == 201
                     
         except Exception as e:
-            logger.error(f"첨부파일 추가 실패 {file_path}: {e}")
+            self.logger.error(f"Twilio HTTP 전송 실패: {e}")
+            return False
 
-class SlackHandler:
-    """슬랙 알림 핸들러"""
+# ============================================================================
+# 💬 카카오톡 채널
+# ============================================================================
+class KakaoChannel:
+    """카카오톡 알림 채널"""
     
-    def __init__(self, webhook_url: str, channel: str = "#general"):
-        self.webhook_url = webhook_url
-        self.channel = channel
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.session = None
+        self.logger = logging.getLogger('KakaoChannel')
     
-    async def send_message(self, message: NotificationMessage) -> NotificationResult:
-        """슬랙 메시지 전송"""
+    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
+        """카카오톡 메시지 전송"""
+        if not self.config.KAKAO_ENABLED or not self.config.KAKAO_ACCESS_TOKEN:
+            return False, "카카오톡 설정 없음"
+        
         try:
-            # 레벨별 색상
-            level_colors = {
-                NotificationLevel.DEBUG: "#36a64f",     # 녹색
-                NotificationLevel.INFO: "#36a64f",      # 녹색
-                NotificationLevel.WARNING: "#ff9500",   # 주황색
-                NotificationLevel.CRITICAL: "#ff0000",  # 빨간색
-                NotificationLevel.EMERGENCY: "#8B0000"  # 진한 빨간색
-            }
+            # 카카오톡 메시지 생성
+            kakao_message = await self._create_kakao_message(message)
             
-            color = level_colors.get(message.level, "#36a64f")
+            # 카카오톡 API로 전송
+            success = await self._send_kakao_api(kakao_message)
             
-            payload = {
-                "channel": self.channel,
-                "username": "QuintProject Bot",
-                "icon_emoji": ":chart_with_upwards_trend:",
-                "attachments": [
-                    {
-                        "color": color,
-                        "title": f"[{message.level.value.upper()}] {message.title}",
-                        "text": message.message,
-                        "footer": "퀸트프로젝트 알림 시스템",
-                        "ts": int(message.timestamp.timestamp())
-                    }
-                ]
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(self.webhook_url, json=payload, timeout=30) as response:
-                    if response.status == 200:
-                        return NotificationResult(
-                            channel=NotificationChannel.SLACK,
-                            success=True,
-                            message="슬랙 전송 성공",
-                            timestamp=datetime.now()
-                        )
-                    else:
-                        error_text = await response.text()
-                        return NotificationResult(
-                            channel=NotificationChannel.SLACK,
-                            success=False,
-                            message=f"슬랙 전송 실패: {error_text}",
-                            timestamp=datetime.now()
-                        )
+            return success, "전송 완료" if success else "전송 실패"
             
         except Exception as e:
-            return NotificationResult(
-                channel=NotificationChannel.SLACK,
-                success=False,
-                message=f"슬랙 전송 오류: {str(e)}",
-                timestamp=datetime.now()
-            )
+            error_msg = f"카카오톡 전송 오류: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
+    async def _create_kakao_message(self, message: NotificationMessage) -> Dict[str, Any]:
+        """카카오톡 메시지 생성"""
+        priority_emojis = {
+            'emergency': '🚨',
+            'warning': '⚠️',
+            'info': 'ℹ️',
+            'success': '✅',
+            'debug': '🔧'
+        }
+        
+        emoji = priority_emojis.get(message.priority, '📊')
+        
+        # 텍스트 메시지 구성
+        text = f"{emoji} 퀸트프로젝트 알림\n\n"
+        text += f"📋 {message.title}\n\n"
+        text += f"{message.content}\n\n"
+        text += f"🕐 {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        kakao_message = {
+            "object_type": "text",
+            "text": text,
+            "link": {
+                "web_url": "https://github.com/your-repo",
+                "mobile_web_url": "https://github.com/your-repo"
+            }
+        }
+        
+        return kakao_message
+    
+    async def _send_kakao_api(self, kakao_message: Dict[str, Any]) -> bool:
+        """카카오톡 API로 메시지 전송"""
+        try:
+            url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
+            
+            headers = {
+                'Authorization': f'Bearer {self.config.KAKAO_ACCESS_TOKEN}',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+            
+            data = {
+                'template_object': json.dumps(kakao_message, ensure_ascii=False)
+            }
+            
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            
+            async with self.session.post(url, headers=headers, data=data, timeout=10) as response:
+                return response.status == 200
+                
+        except Exception as e:
+            self.logger.error(f"카카오톡 API 전송 실패: {e}")
+            return False
+    
+    async def close(self):
+        """세션 종료"""
+        if self.session:
+            await self.session.close()
 
-class DiscordHandler:
-    """디스코드 알림 핸들러"""
+# ============================================================================
+# 🎯 메시지 템플릿 관리자
+# ============================================================================
+class MessageTemplateManager:
+    """메시지 템플릿 관리"""
     
-    def __init__(self, webhook_url: str):
-        self.webhook_url = webhook_url
-    
-    async def send_message(self, message: NotificationMessage) -> NotificationResult:
-        """디스코드 메시지 전송"""
-        try:
-            # 레벨별 색상 (10진수)
-            level_colors = {
-                NotificationLevel.DEBUG: 3066993,      # 녹색
-                NotificationLevel.INFO: 3066993,       # 녹색
-                NotificationLevel.WARNING: 16753920,   # 주황색
-                NotificationLevel.CRITICAL: 16711680,  # 빨간색
-                NotificationLevel.EMERGENCY: 9109504   # 진한 빨간색
+    def __init__(self):
+        self.templates = {
+            'trading_signal': {
+                'title': '🎯 거래 신호',
+                'format': '{strategy} 전략에서 {action} 신호가 발생했습니다.\n\n종목: {symbol}\n가격: {price}\n수량: {quantity}'
+            },
+            'portfolio_alert': {
+                'title': '💼 포트폴리오 알림',
+                'format': '포트폴리오 {alert_type}이 발생했습니다.\n\n현재 손익: {pnl}\n총 가치: {total_value}\n위험도: {risk_level}'
+            },
+            'system_error': {
+                'title': '❌ 시스템 오류',
+                'format': '{component}에서 오류가 발생했습니다.\n\n오류 내용: {error_message}\n발생 시간: {timestamp}'
+            },
+            'network_status': {
+                'title': '🌐 네트워크 상태',
+                'format': '네트워크 연결 상태가 {status}로 변경되었습니다.\n\n상세 정보: {details}'
+            },
+            'performance_report': {
+                'title': '📈 성과 보고서',
+                'format': '{period} 성과 요약\n\n총 수익률: {return_rate}\n거래 횟수: {trade_count}\n승률: {win_rate}'
             }
-            
-            color = level_colors.get(message.level, 3066993)
-            
-            payload = {
-                "username": "QuintProject Bot",
-                "avatar_url": "https://i.imgur.com/4M34hi2.png",
-                "embeds": [
-                    {
-                        "title": f"[{message.level.value.upper()}] {message.title}",
-                        "description": message.message,
-                        "color": color,
-                        "footer": {
-                            "text": "퀸트프로젝트 알림 시스템"
-                        },
-                        "timestamp": message.timestamp.isoformat()
-                    }
-                ]
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(self.webhook_url, json=payload, timeout=30) as response:
-                    if response.status == 204:  # Discord는 204 No Content 반환
-                        return NotificationResult(
-                            channel=NotificationChannel.DISCORD,
-                            success=True,
-                            message="디스코드 전송 성공",
-                            timestamp=datetime.now()
-                        )
-                    else:
-                        error_text = await response.text()
-                        return NotificationResult(
-                            channel=NotificationChannel.DISCORD,
-                            success=False,
-                            message=f"디스코드 전송 실패: {error_text}",
-                            timestamp=datetime.now()
-                        )
-            
-        except Exception as e:
-            return NotificationResult(
-                channel=NotificationChannel.DISCORD,
-                success=False,
-                message=f"디스코드 전송 오류: {str(e)}",
-                timestamp=datetime.now()
-            )
-
-class SMSHandler:
-    """SMS 알림 핸들러 (Twilio)"""
+        }
     
-    def __init__(self, account_sid: str, auth_token: str, from_number: str, to_numbers: List[str]):
-        self.account_sid = account_sid
-        self.auth_token = auth_token
-        self.from_number = from_number
-        self.to_numbers = to_numbers
-    
-    async def send_message(self, message: NotificationMessage) -> NotificationResult:
-        """SMS 메시지 전송"""
-        try:
-            # SMS는 짧게 요약
-            sms_text = f"[{message.level.value.upper()}] {message.title}\n{message.message[:100]}{'...' if len(message.message) > 100 else ''}"
-            
-            success_count = 0
-            errors = []
-            
-            for to_number in self.to_numbers:
-                try:
-                    await self._send_single_sms(to_number, sms_text)
-                    success_count += 1
-                except Exception as e:
-                    errors.append(f"{to_number}: {str(e)}")
-            
-            if success_count > 0:
-                return NotificationResult(
-                    channel=NotificationChannel.SMS,
-                    success=True,
-                    message=f"SMS 전송 성공: {success_count}/{len(self.to_numbers)}",
-                    timestamp=datetime.now()
-                )
-            else:
-                return NotificationResult(
-                    channel=NotificationChannel.SMS,
-                    success=False,
-                    message=f"SMS 전송 실패: {'; '.join(errors)}",
-                    timestamp=datetime.now()
-                )
-            
-        except Exception as e:
-            return NotificationResult(
-                channel=NotificationChannel.SMS,
-                success=False,
-                message=f"SMS 전송 오류: {str(e)}",
-                timestamp=datetime.now()
-            )
-    
-    async def _send_single_sms(self, to_number: str, message_text: str):
-        """개별 SMS 전송"""
-        try:
-            from twilio.rest import Client
-            
-            client = Client(self.account_sid, self.auth_token)
-            
-            # 비동기로 Twilio API 호출
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: client.messages.create(
-                    body=message_text,
-                    from_=self.from_number,
-                    to=to_number
-                )
-            )
-            
-        except Exception as e:
-            raise Exception(f"Twilio SMS 전송 실패: {str(e)}")
-
-class WebhookHandler:
-    """일반 웹훅 알림 핸들러"""
-    
-    def __init__(self, webhook_urls: List[str]):
-        self.webhook_urls = webhook_urls
-    
-    async def send_message(self, message: NotificationMessage) -> NotificationResult:
-        """웹훅 메시지 전송"""
-        try:
-            payload = {
-                "title": message.title,
-                "message": message.message,
-                "level": message.level.value,
-                "timestamp": message.timestamp.isoformat(),
-                "metadata": message.metadata or {}
-            }
-            
-            success_count = 0
-            errors = []
-            
-            for webhook_url in self.webhook_urls:
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(webhook_url, json=payload, timeout=30) as response:
-                            if response.status == 200:
-                                success_count += 1
-                            else:
-                                errors.append(f"{webhook_url}: HTTP {response.status}")
-                except Exception as e:
-                    errors.append(f"{webhook_url}: {str(e)}")
-            
-            if success_count > 0:
-                return NotificationResult(
-                    channel=NotificationChannel.WEBHOOK,
-                    success=True,
-                    message=f"웹훅 전송 성공: {success_count}/{len(self.webhook_urls)}",
-                    timestamp=datetime.now()
-                )
-            else:
-                return NotificationResult(
-                    channel=NotificationChannel.WEBHOOK,
-                    success=False,
-                    message=f"웹훅 전송 실패: {'; '.join(errors)}",
-                    timestamp=datetime.now()
-                )
-            
-        except Exception as e:
-            return NotificationResult(
-                channel=NotificationChannel.WEBHOOK,
-                success=False,
-                message=f"웹훅 전송 오류: {str(e)}",
-                timestamp=datetime.now()
-            )
+    def create_message_from_template(self, template_name: str, **kwargs) -> NotificationMessage:
+        """템플릿으로 메시지 생성"""
+        if template_name not in self.templates:
+            raise ValueError(f"템플릿 '{template_name}'을 찾을 수 없습니다")
+        
+        template = self.templates[template_name]
+        
+        # 템플릿 포맷팅
+        title = template['title']
+        content = template['format'].format(**kwargs)
+        
+        # 우선순위 자동 결정
+        priority = 'info'
+        if 'error' in template_name or 'alert' in template_name:
+            priority = 'warning'
+        elif 'emergency' in kwargs.get('alert_type', ''):
+            priority = 'emergency'
+        elif 'signal' in template_name:
+            priority = 'success'
+        
+        # 카테고리 자동 결정
+        category = 'general'
+        if 'trading' in template_name:
+            category = 'trading'
+        elif 'portfolio' in template_name:
+            category = 'portfolio'
+        elif 'system' in template_name or 'network' in template_name:
+            category = 'system'
+        elif 'error' in template_name:
+            category = 'error'
+        
+        return NotificationMessage(
+            title=title,
+            content=content,
+            priority=priority,
+            category=category,
+            metadata=kwargs
+        )
 
 # ============================================================================
 # 🏆 통합 알림 관리자
 # ============================================================================
-
-class QuintNotificationManager:
-    """퀸트프로젝트 통합 알림 관리자"""
+class UnifiedNotificationManager:
+    """통합 알림 관리 시스템"""
     
-    def __init__(self, config_file: str = "notification_config.json"):
-        self.config_manager = NotificationConfigManager(config_file)
-        self.stats_manager = NotificationStatsManager()
-        self.handlers = {}
-        self._init_handlers()
+    def __init__(self, config: NotifierConfig = None):
+        self.config = config or NotifierConfig()
         
-        logger.info("🏆 퀸트프로젝트 통합 알림 시스템 초기화 완료")
+        # 로깅 설정
+        self.logger = logging.getLogger('UnifiedNotificationManager')
+        
+        # 컴포넌트 초기화
+        self.history = NotificationHistory(self.config)
+        self.template_manager = MessageTemplateManager()
+        
+        # 채널 인스턴스
+        self.channels = {
+            'telegram': TelegramChannel(self.config),
+            'email': EmailChannel(self.config),
+            'discord': DiscordChannel(self.config),
+            'slack': SlackChannel(self.config),
+            'sms': SMSChannel(self.config),
+            'kakao': KakaoChannel(self.config)
+        }
+        
+        # 활성화된 채널 확인
+        self.active_channels = self._get_active_channels()
+        
+        self.logger.info(f"✅ 통합 알림 시스템 초기화 완료 (활성 채널: {', '.join(self.active_channels)})")
     
-    def _init_handlers(self):
-        """핸들러 초기화"""
-        config = self.config_manager.config
+    def _get_active_channels(self) -> List[str]:
+        """활성화된 채널 목록"""
+        active = []
         
-        # 텔레그램
-        if config.telegram_enabled and config.telegram_bot_token and config.telegram_chat_id:
-            self.handlers[NotificationChannel.TELEGRAM] = TelegramHandler(
-                config.telegram_bot_token, config.telegram_chat_id
-            )
-            logger.info("✅ 텔레그램 핸들러 초기화")
+        if self.config.TELEGRAM_ENABLED and self.config.TELEGRAM_BOT_TOKEN:
+            active.append('telegram')
+        if self.config.EMAIL_ENABLED and self.config.EMAIL_USERNAME:
+            active.append('email')
+        if self.config.DISCORD_ENABLED and self.config.DISCORD_WEBHOOK_URL:
+            active.append('discord')
+        if self.config.SLACK_ENABLED and self.config.SLACK_WEBHOOK_URL:
+            active.append('slack')
+        if self.config.SMS_ENABLED and self.config.TWILIO_ACCOUNT_SID:
+            active.append('sms')
+        if self.config.KAKAO_ENABLED and self.config.KAKAO_ACCESS_TOKEN:
+            active.append('kakao')
         
-        # 이메일
-        if config.email_enabled and config.email_username and config.email_password and config.email_to:
-            self.handlers[NotificationChannel.EMAIL] = EmailHandler(
-                config.email_smtp_server, config.email_smtp_port,
-                config.email_username, config.email_password, config.email_to
-            )
-            logger.info(f"✅ 이메일 핸들러 초기화 ({len(config.email_to)}개 주소)")
-        
-        # 슬랙
-        if config.slack_enabled and config.slack_webhook_url:
-            self.handlers[NotificationChannel.SLACK] = SlackHandler(
-                config.slack_webhook_url, config.slack_channel
-            )
-            logger.info("✅ 슬랙 핸들러 초기화")
-        
-        # 디스코드
-        if config.discord_enabled and config.discord_webhook_url:
-            self.handlers[NotificationChannel.DISCORD] = DiscordHandler(
-                config.discord_webhook_url
-            )
-            logger.info("✅ 디스코드 핸들러 초기화")
-        
-        # SMS
-        if config.sms_enabled and config.sms_account_sid and config.sms_auth_token:
-            self.handlers[NotificationChannel.SMS] = SMSHandler(
-                config.sms_account_sid, config.sms_auth_token,
-                config.sms_from_number, config.sms_to_numbers
-            )
-            logger.info(f"✅ SMS 핸들러 초기화 ({len(config.sms_to_numbers)}개 번호)")
-        
-        # 웹훅
-        if config.webhook_enabled and config.webhook_urls:
-            self.handlers[NotificationChannel.WEBHOOK] = WebhookHandler(
-                config.webhook_urls
-            )
-            logger.info(f"✅ 웹훅 핸들러 초기화 ({len(config.webhook_urls)}개 URL)")
-        
-        logger.info(f"🎯 활성화된 채널: {list(self.handlers.keys())}")
+        return active
     
-    async def send_notification(self, title: str, message: str, 
-                              level: NotificationLevel = NotificationLevel.INFO,
-                              channels: Optional[List[NotificationChannel]] = None,
-                              attachments: Optional[List[str]] = None,
-                              metadata: Optional[Dict[str, Any]] = None) -> Dict[NotificationChannel, NotificationResult]:
+    async def send_notification(self, message: Union[NotificationMessage, str], 
+                              priority: str = 'info', category: str = 'general',
+                              title: str = '알림', metadata: Dict[str, Any] = None,
+                              channels: List[str] = None) -> Dict[str, bool]:
         """통합 알림 전송"""
         
-        # 메시지 객체 생성
-        notification = NotificationMessage(
-            title=title,
-            message=message,
-            level=level,
-            channels=channels,
-            attachments=attachments,
-            metadata=metadata,
-            message_id=self._generate_message_id(title, message, level)
-        )
+        # 문자열이면 NotificationMessage로 변환
+        if isinstance(message, str):
+            message = NotificationMessage(
+                title=title,
+                content=message,
+                priority=priority,
+                category=category,
+                metadata=metadata or {}
+            )
         
         # 중복 체크
-        if self.config_manager.config.duplicate_prevention:
-            if self.stats_manager.check_duplicate(notification, 
-                                                 self.config_manager.config.duplicate_window_minutes):
-                logger.info(f"⚠️ 중복 알림 감지, 스킵: {title}")
-                return {}
+        if self.history.is_duplicate(message):
+            self.logger.debug(f"중복 알림 무시: {message.hash_id}")
+            return {}
         
-        # 채널 결정
-        target_channels = self._determine_channels(notification)
+        # 속도 제한 체크 (응급상황 제외)
+        if message.priority != 'emergency' and not self.history.check_rate_limit():
+            self.logger.warning("시간당 알림 제한 초과")
+            return {}
         
-        # 알림 전송
+        # 전송할 채널 결정
+        target_channels = channels or message.channels or self.config.PRIORITY_CHANNELS.get(message.priority, ['telegram'])
+        target_channels = [ch for ch in target_channels if ch in self.active_channels]
+        
+        if not target_channels:
+            self.logger.warning("전송 가능한 채널이 없습니다")
+            return {}
+        
+        # 채널별 전송
         results = {}
-        for channel in target_channels:
-            if channel in self.handlers:
-                result = await self._send_with_retry(notification, channel)
-                results[channel] = result
+        start_time = time.time()
+        
+        for channel_name in target_channels:
+            try:
+                channel = self.channels[channel_name]
+                success, error_msg = await channel.send_message(message)
+                results[channel_name] = success
                 
-                # 통계 기록
-                response_time = int((result.timestamp - notification.timestamp).total_seconds() * 1000)
-                self.stats_manager.log_notification(notification, result, response_time)
+                if not success:
+                    self.logger.error(f"{channel_name} 전송 실패: {error_msg}")
+                
+            except Exception as e:
+                results[channel_name] = False
+                self.logger.error(f"{channel_name} 전송 예외: {e}")
         
-        # 결과 로깅
-        success_count = sum(1 for r in results.values() if r.success)
-        total_count = len(results)
+        # 전송 결과 기록
+        delivery_time = time.time() - start_time
+        success_count = sum(results.values())
         
-        if success_count == total_count:
-            logger.info(f"✅ 알림 전송 완료: {title} ({success_count}/{total_count} 성공)")
-        elif success_count > 0:
-            logger.warning(f"⚠️ 부분 전송 완료: {title} ({success_count}/{total_count} 성공)")
+        if success_count > 0:
+            self.history.record_notification(
+                message, target_channels, 'success', delivery_time
+            )
+            self.history.increment_hourly_count()
         else:
-            logger.error(f"❌ 알림 전송 실패: {title} (모든 채널 실패)")
+            self.history.record_notification(
+                message, target_channels, 'failed', delivery_time, 
+                f"모든 채널 실패: {results}"
+            )
+        
+        self.logger.info(f"알림 전송 완료: {success_count}/{len(target_channels)} 성공")
+        return results
+    
+    async def send_template_notification(self, template_name: str, **kwargs) -> Dict[str, bool]:
+        """템플릿 기반 알림 전송"""
+        try:
+            message = self.template_manager.create_message_from_template(template_name, **kwargs)
+            return await self.send_notification(message)
+        except Exception as e:
+            self.logger.error(f"템플릿 알림 전송 실패: {e}")
+            return {}
+    
+    async def send_emergency_notification(self, title: str, content: str, 
+                                        metadata: Dict[str, Any] = None) -> Dict[str, bool]:
+        """응급 알림 전송 (모든 채널)"""
+        message = NotificationMessage(
+            title=title,
+            content=content,
+            priority='emergency',
+            category='system',
+            metadata=metadata or {},
+            channels=list(self.active_channels)  # 모든 활성 채널
+        )
+        
+        return await self.send_notification(message)
+    
+    async def test_all_channels(self) -> Dict[str, bool]:
+        """모든 채널 테스트"""
+        test_message = NotificationMessage(
+            title="🧪 알림 시스템 테스트",
+            content="이것은 퀸트프로젝트 알림 시스템의 테스트 메시지입니다.",
+            priority='debug',
+            category='system'
+        )
+        
+        results = {}
+        for channel_name in self.active_channels:
+            try:
+                channel = self.channels[channel_name]
+                success, error_msg = await channel.send_message(test_message)
+                results[channel_name] = success
+                
+                if success:
+                    self.logger.info(f"✅ {channel_name} 테스트 성공")
+                else:
+                    self.logger.error(f"❌ {channel_name} 테스트 실패: {error_msg}")
+                    
+            except Exception as e:
+                results[channel_name] = False
+                self.logger.error(f"❌ {channel_name} 테스트 예외: {e}")
         
         return results
     
-    def _generate_message_id(self, title: str, message: str, level: NotificationLevel) -> str:
-        """메시지 ID 생성"""
-        content = f"{title}:{message}:{level.value}:{datetime.now().isoformat()}"
-        return hashlib.sha256(content.encode()).hexdigest()[:16]
-    
-    def _determine_channels(self, notification: NotificationMessage) -> List[NotificationChannel]:
-        """대상 채널 결정"""
-        # 명시적 채널 지정이 있으면 사용
-        if notification.channels:
-            return [ch for ch in notification.channels if ch in self.handlers]
-        
-        # 레벨별 기본 채널 사용
-        level_channels = self.config_manager.config.level_channels.get(notification.level.value, [])
-        channels = []
-        
-        for channel_name in level_channels:
-            try:
-                channel = NotificationChannel(channel_name)
-                if channel in self.handlers:
-                    channels.append(channel)
-            except ValueError:
-                continue
-        
-        return channels
-    
-    async def _send_with_retry(self, notification: NotificationMessage, 
-                              channel: NotificationChannel) -> NotificationResult:
-        """재시도 로직이 포함된 전송"""
-        handler = self.handlers[channel]
-        max_retries = self.config_manager.config.max_retries
-        retry_delay = self.config_manager.config.retry_delay_seconds
-        
-        for attempt in range(max_retries + 1):
-            try:
-                result = await handler.send_message(notification)
-                result.retry_count = attempt
-                
-                if result.success:
-                    return result
-                
-                # 실패 시 재시도 (마지막 시도가 아닌 경우)
-                if attempt < max_retries:
-                    logger.warning(f"🔄 {channel.value} 재시도 {attempt + 1}/{max_retries}: {result.message}")
-                    await asyncio.sleep(retry_delay)
-                else:
-                    logger.error(f"❌ {channel.value} 최종 실패: {result.message}")
-                    return result
-                
-            except Exception as e:
-                if attempt < max_retries:
-                    logger.warning(f"🔄 {channel.value} 예외 재시도 {attempt + 1}/{max_retries}: {str(e)}")
-                    await asyncio.sleep(retry_delay)
-                else:
-                    return NotificationResult(
-                        channel=channel,
-                        success=False,
-                        message=f"최종 실패: {str(e)}",
-                        timestamp=datetime.now(),
-                        retry_count=attempt
-                    )
-        
-        # 이론적으로 도달하지 않음
-        return NotificationResult(
-            channel=channel,
-            success=False,
-            message="알 수 없는 오류",
-            timestamp=datetime.now(),
-            retry_count=max_retries
-        )
-    
-    # ========================================================================
-    # 🎯 편의 메서드들
-    # ========================================================================
-    
-    async def send_info(self, title: str, message: str, **kwargs):
-        """정보 알림 전송"""
-        return await self.send_notification(title, message, NotificationLevel.INFO, **kwargs)
-    
-    async def send_warning(self, title: str, message: str, **kwargs):
-        """경고 알림 전송"""
-        return await self.send_notification(title, message, NotificationLevel.WARNING, **kwargs)
-    
-    async def send_critical(self, title: str, message: str, **kwargs):
-        """중요 알림 전송"""
-        return await self.send_notification(title, message, NotificationLevel.CRITICAL, **kwargs)
-    
-    async def send_emergency(self, title: str, message: str, **kwargs):
-        """긴급 알림 전송"""
-        return await self.send_notification(title, message, NotificationLevel.EMERGENCY, **kwargs)
-    
-    async def send_trade_alert(self, symbol: str, action: str, price: float, quantity: float, 
-                              strategy: str, profit_loss: Optional[float] = None):
-        """거래 알림 전송"""
-        emoji = "📈" if action.upper() == "BUY" else "📉"
-        
-        message = f"""
-{emoji} 거래 실행
-
-종목: {symbol}
-액션: {action.upper()}
-가격: {price:,.2f}
-수량: {quantity:,.2f}
-전략: {strategy}
-"""
-        
-        if profit_loss is not None:
-            pnl_emoji = "💰" if profit_loss > 0 else "💸"
-            message += f"{pnl_emoji} 손익: {profit_loss:+,.2f}\n"
-        
-        message += f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        
-        return await self.send_info(f"거래 실행: {symbol}", message)
-    
-    async def send_portfolio_summary(self, total_value: float, total_pnl: float, 
-                                   total_return_pct: float, positions_count: int):
-        """포트폴리오 요약 알림"""
-        pnl_emoji = "📈" if total_pnl >= 0 else "📉"
-        
-        message = f"""
-💼 포트폴리오 현황
-
-총 가치: ${total_value:,.2f}
-{pnl_emoji} 손익: ${total_pnl:+,.2f} ({total_return_pct:+.2f}%)
-포지션 수: {positions_count}개
-
-업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        
-        level = NotificationLevel.INFO if total_pnl >= 0 else NotificationLevel.WARNING
-        return await self.send_notification("포트폴리오 요약", message, level)
-    
-    async def send_system_alert(self, system_name: str, status: str, details: str = ""):
-        """시스템 상태 알림"""
-        if status.upper() == "UP":
-            emoji = "✅"
-            level = NotificationLevel.INFO
-        elif status.upper() == "WARNING":
-            emoji = "⚠️"
-            level = NotificationLevel.WARNING
-        else:
-            emoji = "🚨"
-            level = NotificationLevel.CRITICAL
-        
-        message = f"""
-{emoji} 시스템 상태 변경
-
-시스템: {system_name}
-상태: {status.upper()}
-"""
-        
-        if details:
-            message += f"상세: {details}\n"
-        
-        message += f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        
-        return await self.send_notification(f"시스템 알림: {system_name}", message, level)
-    
-    # ========================================================================
-    # 📊 관리 및 유틸리티 메서드
-    # ========================================================================
-    
-    def get_stats(self, days: int = 7) -> Dict[str, Any]:
+    def get_statistics(self, days: int = 7) -> Dict[str, Any]:
         """알림 통계 조회"""
-        return self.stats_manager.get_stats(days)
+        return self.history.get_statistics(days)
     
-    def get_config(self) -> NotificationConfig:
-        """현재 설정 조회"""
-        return self.config_manager.config
-    
-    def update_config(self, **kwargs):
-        """설정 업데이트"""
-        self.config_manager.update_config(**kwargs)
-        self._init_handlers()  # 핸들러 재초기화
-        logger.info("⚙️ 설정 업데이트 및 핸들러 재초기화 완료")
-    
-    def test_channels(self) -> Dict[NotificationChannel, bool]:
-        """채널 연결 테스트"""
-        async def _test_all():
-            test_message = NotificationMessage(
-                title="알림 시스템 테스트",
-                message="이것은 알림 시스템 연결 테스트 메시지입니다.",
-                level=NotificationLevel.DEBUG
-            )
-            
-            results = {}
-            for channel, handler in self.handlers.items():
-                try:
-                    result = await handler.send_message(test_message)
-                    results[channel] = result.success
-                except Exception as e:
-                    logger.error(f"채널 테스트 실패 {channel}: {e}")
-                    results[channel] = False
-            
-            return results
+    async def close(self):
+        """리소스 정리"""
+        for channel in self.channels.values():
+            if hasattr(channel, 'close'):
+                await channel.close()
         
-        return asyncio.run(_test_all())
-    
-    def get_active_channels(self) -> List[NotificationChannel]:
-        """활성화된 채널 목록"""
-        return list(self.handlers.keys())
-    
-    def is_channel_active(self, channel: NotificationChannel) -> bool:
-        """특정 채널 활성화 여부"""
-        return channel in self.handlers
+        self.logger.info("✅ 알림 시스템 종료 완료")
 
 # ============================================================================
-# 🧪 테스트 및 예제 함수들
+# 🎮 편의 함수들
 # ============================================================================
+# 전역 알림 관리자 인스턴스
+_global_notifier = None
 
-async def test_notification_system():
-    """알림 시스템 테스트"""
-    print("🧪 퀸트프로젝트 알림 시스템 테스트 시작")
-    
-    # 알림 관리자 초기화
-    notifier = QuintNotificationManager()
-    
-    # 채널 테스트
-    print("\n📡 채널 연결 테스트")
-    test_results = notifier.test_channels()
-    for channel, success in test_results.items():
-        status = "✅ 성공" if success else "❌ 실패"
-        print(f"  {channel.value}: {status}")
-    
-    # 다양한 레벨 테스트
-    print("\n📢 알림 레벨 테스트")
-    
-    await notifier.send_info("정보 알림 테스트", "이것은 일반 정보 알림입니다.")
-    await asyncio.sleep(1)
-    
-    await notifier.send_warning("경고 알림 테스트", "주의가 필요한 상황입니다.")
-    await asyncio.sleep(1)
-    
-    await notifier.send_critical("중요 알림 테스트", "즉시 확인이 필요한 상황입니다.")
-    await asyncio.sleep(1)
-    
-    # 거래 알림 테스트
-    print("\n💰 거래 알림 테스트")
-    await notifier.send_trade_alert("AAPL", "BUY", 150.25, 100, "미국전략", 1250.50)
-    await asyncio.sleep(1)
-    
-    # 포트폴리오 요약 테스트
-    print("\n📊 포트폴리오 요약 테스트")
-    await notifier.send_portfolio_summary(100000, 5000, 5.0, 15)
-    await asyncio.sleep(1)
-    
-    # 시스템 알림 테스트
-    print("\n🖥️ 시스템 알림 테스트")
-    await notifier.send_system_alert("거래시스템", "UP", "모든 시스템이 정상 작동 중입니다.")
-    
-    # 통계 출력
-    print("\n📈 알림 통계")
-    stats = notifier.get_stats(1)  # 최근 1일
-    print(f"총 알림 수: {stats.get('total_notifications', 0)}")
-    
-    for channel, data in stats.get('channel_stats', {}).items():
-        print(f"  {channel}: {data['successful_sent']}/{data['total_sent']} 성공 ({data['success_rate']:.1f}%)")
-    
-    print("\n✅ 알림 시스템 테스트 완료")
+def get_notifier() -> UnifiedNotificationManager:
+    """전역 알림 관리자 인스턴스 반환"""
+    global _global_notifier
+    if _global_notifier is None:
+        _global_notifier = UnifiedNotificationManager()
+    return _global_notifier
 
-async def example_usage():
-    """사용 예제"""
-    print("📚 퀸트프로젝트 알림 시스템 사용 예제")
-    
-    # 1. 기본 초기화
-    notifier = QuintNotificationManager()
-    
-    # 2. 간단한 정보 알림
-    await notifier.send_info("시스템 시작", "퀸트프로젝트가 성공적으로 시작되었습니다.")
-    
-    # 3. 특정 채널만 사용
-    await notifier.send_warning(
-        "네트워크 지연", 
-        "네트워크 응답이 느려지고 있습니다.",
-        channels=[NotificationChannel.TELEGRAM, NotificationChannel.SLACK]
+async def send_quick_notification(message: str, priority: str = 'info', 
+                                title: str = '퀸트프로젝트 알림') -> Dict[str, bool]:
+    """빠른 알림 전송"""
+    notifier = get_notifier()
+    return await notifier.send_notification(message, priority=priority, title=title)
+
+async def send_trading_signal(strategy: str, action: str, symbol: str, 
+                            price: float, quantity: int) -> Dict[str, bool]:
+    """거래 신호 알림"""
+    notifier = get_notifier()
+    return await notifier.send_template_notification(
+        'trading_signal',
+        strategy=strategy,
+        action=action,
+        symbol=symbol,
+        price=price,
+        quantity=quantity
     )
-    
-    # 4. 메타데이터와 함께
-    await notifier.send_critical(
-        "포지션 위험",
-        "일부 포지션에서 큰 손실이 발생했습니다.",
-        metadata={
-            "strategy": "미국전략",
-            "symbol": "TSLA",
-            "loss_amount": -5000
-        }
-    )
-    
-    # 5. 거래 관련 편의 메서드
-    await notifier.send_trade_alert("BTC", "SELL", 45000, 0.1, "암호화폐전략", 500)
-    
-    # 6. 설정 동적 변경
-    notifier.update_config(
-        telegram_enabled=True,
-        telegram_bot_token="새토큰",
-        duplicate_window_minutes=10
-    )
-    
-    print("✅ 사용 예제 완료")
 
-def create_default_config():
-    """기본 설정 파일 생성"""
-    config = {
-        "telegram_enabled": False,
-        "telegram_bot_token": "",
-        "telegram_chat_id": "",
-        "email_enabled": False,
-        "email_smtp_server": "smtp.gmail.com",
-        "email_smtp_port": 587,
-        "email_username": "",
-        "email_password": "",
-        "email_to": [],
-        "slack_enabled": False,
-        "slack_webhook_url": "",
-        "slack_channel": "#general",
-        "discord_enabled": False,
-        "discord_webhook_url": "",
-        "sms_enabled": False,
-        "sms_account_sid": "",
-        "sms_auth_token": "",
-        "sms_from_number": "",
-        "sms_to_numbers": [],
-        "webhook_enabled": False,
-        "webhook_urls": [],
-        "level_channels": {
-            "debug": ["telegram"],
-            "info": ["telegram", "slack"],
-            "warning": ["telegram", "email", "slack"],
-            "critical": ["telegram", "email", "slack", "discord"],
-            "emergency": ["telegram", "email", "slack", "discord", "sms"]
-        },
-        "duplicate_prevention": True,
-        "duplicate_window_minutes": 5,
-        "max_retries": 3,
-        "retry_delay_seconds": 5
-    }
-    
-    with open("notification_config.json", "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
-    
-    print("✅ 기본 설정 파일 생성: notification_config.json")
-    print("📝 설정을 수정한 후 알림 시스템을 사용하세요.")
+async def send_portfolio_alert(alert_type: str, pnl: float, total_value: float, 
+                             risk_level: str) -> Dict[str, bool]:
+    """포트폴리오 알림"""
+    notifier = get_notifier()
+    return await notifier.send_template_notification(
+        'portfolio_alert',
+        alert_type=alert_type,
+        pnl=pnl,
+        total_value=total_value,
+        risk_level=risk_level
+    )
+
+async def send_system_error(component: str, error_message: str) -> Dict[str, bool]:
+    """시스템 오류 알림"""
+    notifier = get_notifier()
+    return await notifier.send_template_notification(
+        'system_error',
+        component=component,
+        error_message=error_message,
+        timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    )
+
+async def send_emergency_alert(title: str, content: str) -> Dict[str, bool]:
+    """응급 알림"""
+    notifier = get_notifier()
+    return await notifier.send_emergency_notification(title, content)
 
 # ============================================================================
-# 🎮 CLI 인터페이스
+# 🏁 메인 실행부 (테스트용)
 # ============================================================================
-
 async def main():
-    """메인 함수"""
-    import sys
+    """메인 테스트 함수"""
+    print("🔔" + "="*70)
+    print("🔔 퀸트프로젝트 통합 알림 시스템 v1.1.0")
+    print("🔔" + "="*70)
+    print("✨ 다중 채널 통합 알림")
+    print("✨ 우선순위별 라우팅")
+    print("✨ 템플릿 기반 메시지")
+    print("✨ 알림 히스토리 관리")
+    print("✨ 스팸 방지 시스템")
+    print("✨ 성능 모니터링")
+    print("🔔" + "="*70)
     
-    if len(sys.argv) > 1:
-        command = sys.argv[1].lower()
+    # 알림 관리자 생성
+    notifier = UnifiedNotificationManager()
+    
+    try:
+        # 채널 테스트
+        print("\n🧪 채널 테스트 시작...")
+        test_results = await notifier.test_all_channels()
         
-        if command == "test":
-            await test_notification_system()
-        elif command == "example":
-            await example_usage()
-        elif command == "config":
-            create_default_config()
-        elif command == "stats":
-            notifier = QuintNotificationManager()
-            stats = notifier.get_stats(7)
-            print(json.dumps(stats, indent=2, ensure_ascii=False, default=str))
-        else:
-            print(f"❌ 알 수 없는 명령어: {command}")
-    else:
-        print("""
-🏆 퀸트프로젝트 통합 알림 시스템
-
-사용법:
-  python notifier.py test      # 알림 시스템 테스트
-  python notifier.py example   # 사용 예제 실행
-  python notifier.py config    # 기본 설정 파일 생성
-  python notifier.py stats     # 알림 통계 조회
-
-라이브러리로 사용:
-  from notifier import QuintNotificationManager
-  notifier = QuintNotificationManager()
-  await notifier.send_info("제목", "메시지")
-""")
+        for channel, success in test_results.items():
+            status = "✅ 성공" if success else "❌ 실패"
+            print(f"  {channel}: {status}")
+        
+        # 다양한 알림 테스트
+        print("\n📨 알림 테스트 시작...")
+        
+        # 일반 알림
+        await send_quick_notification("시스템이 정상적으로 시작되었습니다.", 'success')
+        
+        # 거래 신호 알림
+        await send_trading_signal('미국전략', 'BUY', 'AAPL', 150.25, 100)
+        
+        # 포트폴리오 알림
+        await send_portfolio_alert('수익 달성', 1500000, 50000000, '낮음')
+        
+        # 통계 조회
+        print("\n📊 알림 통계:")
+        stats = notifier.get_statistics(7)
+        print(json.dumps(stats, indent=2, ensure_ascii=False))
+        
+    except KeyboardInterrupt:
+        print("\n👋 사용자 중단")
+    except Exception as e:
+        print(f"\n❌ 오류 발생: {e}")
+    finally:
+        await notifier.close()
+        print("\n✅ 알림 시스템 종료")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 알림 시스템 테스트 종료")
+        import sys
+        sys.exit(0)
+    
+    async def _send_to_chat(self, chat_id: str, message: str, disable_notification: bool) -> bool:
+        """특정 채팅방으로 메시지 전송"""
+        try:
+            url = f"https://api.telegram.org/bot{self.config.TELEGRAM_BOT_TOKEN}/sendMessage"
+            
+            data = {
+                'chat_id': chat_id,
+                'text': message,
+                'disable_notification': disable_notification,
+                'parse_mode': 'HTML'
+            }
+            
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            
+            async with self.session.post(url, json=data, timeout=10) as response:
+                if response.status == 200:
+                    return True
+                else:
+                    self.logger.error(f"텔레그램 API 오류: {response.status}")
+                    return False
+                    
+        except Exception as e:
+            self.logger.error(f"텔레그램 전송 실패: {e}")
+            return False
+    
+    async def _format_message(self, message: NotificationMessage) -> str:
+        """텔레그램용 메시지 포맷팅"""
+        # 우선순위별 이모지
+        priority_emojis = {
+            'emergency': '🚨',
+            'warning': '⚠️',
+            'info': 'ℹ️',
+            'success': '✅',
+            'debug': '🔧'
+        }
+        
+        # 카테고리별 이모지
+        category_emojis = {
+            'trading': '📈',
+            'system': '🖥️',
+            'portfolio': '💼',
+            'error': '❌',
+            'general': '📊'
+        }
+        
+        emoji = priority_emojis.get(message.priority, '📊')
+        cat_emoji = category_emojis.get(message.category, '📊')
+        
+        formatted = f"{emoji} <b>퀸트프로젝트 알림</b> {cat_emoji}\n\n"
+        formatted += f"📋 <b>{message.title}</b>\n\n"
+        formatted += f"{message.content}\n\n"
+        
+        # 메타데이터 추가
+        if message.metadata:
+            formatted += "📄 <b>추가 정보:</b>\n"
+            for key, value in message.metadata.items():
+                formatted += f"  • {key}: {value}\n"
+            formatted += "\n"
+        
+        # 타임스탬프
+        formatted += f"🕐 {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        return formatted
+    
+    async def close(self):
+        """세션 종료"""
+        if self.session:
+            await self.session.close()
+
+# ============================================================================
+# 📧 이메일 채널
+# ============================================================================
+class EmailChannel:
+    """이메일 알림 채널"""
+    
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.logger = logging.getLogger('EmailChannel')
+    
+    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
+        """이메일 메시지 전송"""
+        if not self.config.EMAIL_ENABLED or not self.config.EMAIL_USERNAME:
+            return False, "이메일 설정 없음"
+        
+        try:
+            # 메시지 생성
+            msg = await self._create_email(message)
+            
+            # SMTP 전송
+            success = await self._send_smtp(msg)
+            
+            return success, "전송 완료" if success else "전송 실패"
+            
+        except Exception as e:
+            error_msg = f"이메일 전송 오류: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
+    async def _create_email(self, message: NotificationMessage) -> MimeMultipart:
+        """이메일 메시지 생성"""
+        msg = MimeMultipart('alternative')
+        
+        # 제목 설정
+        priority_prefix = {
+            'emergency': '[🚨 응급]',
+            'warning': '[⚠️ 경고]',
+            'info': '[ℹ️ 정보]',
+            'success': '[✅ 성공]',
+            'debug': '[🔧 디버그]'
+        }
+        
+        subject_prefix = priority_prefix.get(message.priority, '[📊]')
+        msg['Subject'] = f"{subject_prefix} {message.title}"
+        msg['From'] = f"{self.config.EMAIL_FROM_NAME} <{self.config.EMAIL_USERNAME}>"
+        msg['To'] = self.config.EMAIL_TO_ADDRESS
+        
+        # HTML 본문 생성
+        html_body = await self._create_html_body(message)
+        msg.attach(MimeText(html_body, 'html', 'utf-8'))
+        
+        # 텍스트 본문 생성
+        text_body = await self._create_text_body(message)
+        msg.attach(MimeText(text_body, 'plain', 'utf-8'))
+        
+        return msg
+    
+    async def _create_html_body(self, message: NotificationMessage) -> str:
+        """HTML 이메일 본문 생성"""
+        # 우선순위별 색상
+        priority_colors = {
+            'emergency': '#dc3545',
+            'warning': '#ffc107',
+            'info': '#17a2b8',
+            'success': '#28a745',
+            'debug': '#6c757d'
+        }
+        
+        color = priority_colors.get(message.priority, '#17a2b8')
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; }}
+                .container {{ max-width: 600px; margin: 0 auto; }}
+                .header {{ background-color: {color}; color: white; padding: 20px; text-align: center; }}
+                .content {{ background-color: #f8f9fa; padding: 20px; }}
+                .metadata {{ background-color: #e9ecef; padding: 15px; margin-top: 15px; }}
+                .footer {{ text-align: center; padding: 10px; color: #6c757d; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🏆 퀸트프로젝트 알림</h1>
+                    <h2>{message.title}</h2>
+                </div>
+                <div class="content">
+                    <p>{message.content.replace(chr(10), '<br>')}</p>
+        """
+        
+        # 메타데이터 추가
+        if message.metadata:
+            html += '<div class="metadata"><h3>추가 정보</h3><ul>'
+            for key, value in message.metadata.items():
+                html += f'<li><strong>{key}:</strong> {value}</li>'
+            html += '</ul></div>'
+        
+        html += f"""
+                </div>
+                <div class="footer">
+                    <p>발송시간: {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                    <p>우선순위: {message.priority.upper()} | 카테고리: {message.category}</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html
+    
+    async def _create_text_body(self, message: NotificationMessage) -> str:
+        """텍스트 이메일 본문 생성"""
+        text = f"🏆 퀸트프로젝트 알림\n\n"
+        text += f"제목: {message.title}\n\n"
+        text += f"{message.content}\n\n"
+        
+        if message.metadata:
+            text += "추가 정보:\n"
+            for key, value in message.metadata.items():
+                text += f"  - {key}: {value}\n"
+            text += "\n"
+        
+        text += f"발송시간: {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        text += f"우선순위: {message.priority.upper()} | 카테고리: {message.category}\n"
+        
+        return text
+    
+    async def _send_smtp(self, msg: MimeMultipart) -> bool:
+        """SMTP로 이메일 전송"""
+        try:
+            # asyncio에서 동기 코드 실행
+            loop = asyncio.get_event_loop()
+            success = await loop.run_in_executor(None, self._smtp_send_sync, msg)
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"SMTP 전송 실패: {e}")
+            return False
+    
+    def _smtp_send_sync(self, msg: MimeMultipart) -> bool:
+        """동기 SMTP 전송"""
+        try:
+            server = smtplib.SMTP(self.config.EMAIL_SMTP_SERVER, self.config.EMAIL_SMTP_PORT)
+            server.starttls()
+            server.login(self.config.EMAIL_USERNAME, self.config.EMAIL_PASSWORD)
+            
+            text = msg.as_string()
+            server.sendmail(self.config.EMAIL_USERNAME, self.config.EMAIL_TO_ADDRESS, text)
+            server.quit()
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"SMTP 동기 전송 실패: {e}")
+            return False
+
+# ============================================================================
+# 🎮 디스코드 채널
+# ============================================================================
+class DiscordChannel:
+    """디스코드 알림 채널"""
+    
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.session = None
+        self.logger = logging.getLogger('DiscordChannel')
+    
+    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
+        """디스코드 메시지 전송"""
+        if not self.config.DISCORD_ENABLED or not self.config.DISCORD_WEBHOOK_URL:
+            return False, "디스코드 설정 없음"
+        
+        try:
+            # 임베드 메시지 생성
+            embed = await self._create_embed(message)
+            
+            # 웹훅으로 전송
+            success = await self._send_webhook(embed)
+            
+            return success, "전송 완료" if success else "전송 실패"
+            
+        except Exception as e:
+            error_msg = f"디스코드 전송 오류: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
+    async def _create_embed(self, message: NotificationMessage) -> Dict[str, Any]:
+        """디스코드 임베드 메시지 생성"""
+        # 우선순위별 색상
+        priority_colors = {
+            'emergency': 0xff0000,  # 빨강
+            'warning': 0xffa500,    # 주황
+            'info': 0x0099ff,       # 파랑
+            'success': 0x00ff00,    # 초록
+            'debug': 0x808080       # 회색
+        }
+        
+        color = priority_colors.get(message.priority, 0x0099ff)
+        
+        embed = {
+            "title": f"🏆 {message.title}",
+            "description": message.content,
+            "color": color,
+            "timestamp": message.timestamp.isoformat(),
+            "footer": {
+                "text": f"우선순위: {message.priority.upper()} | 카테고리: {message.category}"
+            }
+        }
+        
+        # 메타데이터를 필드로 추가
+        if message.metadata:
+            embed["fields"] = []
+            for key, value in message.metadata.items():
+                embed["fields"].append({
+                    "name": key,
+                    "value": str(value),
+                    "inline": True
+                })
+        
+        return embed
+    
+    async def _send_webhook(self, embed: Dict[str, Any]) -> bool:
+        """웹훅으로 메시지 전송"""
+        try:
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            
+            data = {
+                "username": "퀸트프로젝트",
+                "embeds": [embed]
+            }
+            
+            async with self.session.post(
+                self.config.DISCORD_WEBHOOK_URL, 
+                json=data, 
+                timeout=10
+            ) as response:
+                return response.status == 204
+                
+        except Exception as e:
+            self.logger.error(f"디스코드 웹훅 전송 실패: {e}")
+            return False
+    
+    async def close(self):
+        """세션 종료"""
+        if self.session:
+            await self.session.close()
+
+# ============================================================================
+# 📱 슬랙 채널
+# ============================================================================
+class SlackChannel:
+    """슬랙 알림 채널"""
+    
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.session = None
+        self.logger = logging.getLogger('SlackChannel')
+    
+    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
+        """슬랙 메시지 전송"""
+        if not self.config.SLACK_ENABLED or not self.config.SLACK_WEBHOOK_URL:
+            return False, "슬랙 설정 없음"
+        
+        try:
+            # 슬랙 메시지 생성
+            slack_message = await self._create_slack_message(message)
+            
+            # 웹훅으로 전송
+            success = await self._send_webhook(slack_message)
+            
+            return success, "전송 완료" if success else "전송 실패"
+            
+        except Exception as e:
+            error_msg = f"슬랙 전송 오류: {e}"
+            self.logger.error(error_msg)
