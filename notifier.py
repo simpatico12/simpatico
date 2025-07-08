@@ -365,6 +365,358 @@ class TelegramChannel:
             self.logger.error(error_msg)
             return False, error_msg
     
+    async def _send_to_chat(self, chat_id: str, message: str, disable_notification: bool) -> bool:
+        """특정 채팅방으로 메시지 전송"""
+        try:
+            url = f"https://api.telegram.org/bot{self.config.TELEGRAM_BOT_TOKEN}/sendMessage"
+            
+            data = {
+                'chat_id': chat_id,
+                'text': message,
+                'disable_notification': disable_notification,
+                'parse_mode': 'HTML'
+            }
+            
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            
+            async with self.session.post(url, json=data, timeout=10) as response:
+                if response.status == 200:
+                    return True
+                else:
+                    self.logger.error(f"텔레그램 API 오류: {response.status}")
+                    return False
+                    
+        except Exception as e:
+            self.logger.error(f"텔레그램 전송 실패: {e}")
+            return False
+    
+    async def _format_message(self, message: NotificationMessage) -> str:
+        """텔레그램용 메시지 포맷팅"""
+        # 우선순위별 이모지
+        priority_emojis = {
+            'emergency': '🚨',
+            'warning': '⚠️',
+            'info': 'ℹ️',
+            'success': '✅',
+            'debug': '🔧'
+        }
+        
+        # 카테고리별 이모지
+        category_emojis = {
+            'trading': '📈',
+            'system': '🖥️',
+            'portfolio': '💼',
+            'error': '❌',
+            'general': '📊'
+        }
+        
+        emoji = priority_emojis.get(message.priority, '📊')
+        cat_emoji = category_emojis.get(message.category, '📊')
+        
+        formatted = f"{emoji} <b>퀸트프로젝트 알림</b> {cat_emoji}\n\n"
+        formatted += f"📋 <b>{message.title}</b>\n\n"
+        formatted += f"{message.content}\n\n"
+        
+        # 메타데이터 추가
+        if message.metadata:
+            formatted += "📄 <b>추가 정보:</b>\n"
+            for key, value in message.metadata.items():
+                formatted += f"  • {key}: {value}\n"
+            formatted += "\n"
+        
+        # 타임스탬프
+        formatted += f"🕐 {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        return formatted
+    
+    async def close(self):
+        """세션 종료"""
+        if self.session:
+            await self.session.close()
+
+# ============================================================================
+# 📧 이메일 채널
+# ============================================================================
+class EmailChannel:
+    """이메일 알림 채널"""
+    
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.logger = logging.getLogger('EmailChannel')
+    
+    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
+        """이메일 메시지 전송"""
+        if not self.config.EMAIL_ENABLED or not self.config.EMAIL_USERNAME:
+            return False, "이메일 설정 없음"
+        
+        try:
+            # 메시지 생성
+            msg = await self._create_email(message)
+            
+            # SMTP 전송
+            success = await self._send_smtp(msg)
+            
+            return success, "전송 완료" if success else "전송 실패"
+            
+        except Exception as e:
+            error_msg = f"이메일 전송 오류: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
+    async def _create_email(self, message: NotificationMessage) -> MimeMultipart:
+        """이메일 메시지 생성"""
+        msg = MimeMultipart('alternative')
+        
+        # 제목 설정
+        priority_prefix = {
+            'emergency': '[🚨 응급]',
+            'warning': '[⚠️ 경고]',
+            'info': '[ℹ️ 정보]',
+            'success': '[✅ 성공]',
+            'debug': '[🔧 디버그]'
+        }
+        
+        subject_prefix = priority_prefix.get(message.priority, '[📊]')
+        msg['Subject'] = f"{subject_prefix} {message.title}"
+        msg['From'] = f"{self.config.EMAIL_FROM_NAME} <{self.config.EMAIL_USERNAME}>"
+        msg['To'] = self.config.EMAIL_TO_ADDRESS
+        
+        # HTML 본문 생성
+        html_body = await self._create_html_body(message)
+        msg.attach(MimeText(html_body, 'html', 'utf-8'))
+        
+        # 텍스트 본문 생성
+        text_body = await self._create_text_body(message)
+        msg.attach(MimeText(text_body, 'plain', 'utf-8'))
+        
+        return msg
+    
+    async def _create_html_body(self, message: NotificationMessage) -> str:
+        """HTML 이메일 본문 생성"""
+        # 우선순위별 색상
+        priority_colors = {
+            'emergency': '#dc3545',
+            'warning': '#ffc107',
+            'info': '#17a2b8',
+            'success': '#28a745',
+            'debug': '#6c757d'
+        }
+        
+        color = priority_colors.get(message.priority, '#17a2b8')
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; }}
+                .container {{ max-width: 600px; margin: 0 auto; }}
+                .header {{ background-color: {color}; color: white; padding: 20px; text-align: center; }}
+                .content {{ background-color: #f8f9fa; padding: 20px; }}
+                .metadata {{ background-color: #e9ecef; padding: 15px; margin-top: 15px; }}
+                .footer {{ text-align: center; padding: 10px; color: #6c757d; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>🏆 퀸트프로젝트 알림</h1>
+                    <h2>{message.title}</h2>
+                </div>
+                <div class="content">
+                    <p>{message.content.replace(chr(10), '<br>')}</p>
+        """
+        
+        # 메타데이터 추가
+        if message.metadata:
+            html += '<div class="metadata"><h3>추가 정보</h3><ul>'
+            for key, value in message.metadata.items():
+                html += f'<li><strong>{key}:</strong> {value}</li>'
+            html += '</ul></div>'
+        
+        html += f"""
+                </div>
+                <div class="footer">
+                    <p>발송시간: {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                    <p>우선순위: {message.priority.upper()} | 카테고리: {message.category}</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return html
+    
+    async def _create_text_body(self, message: NotificationMessage) -> str:
+        """텍스트 이메일 본문 생성"""
+        text = f"🏆 퀸트프로젝트 알림\n\n"
+        text += f"제목: {message.title}\n\n"
+        text += f"{message.content}\n\n"
+        
+        if message.metadata:
+            text += "추가 정보:\n"
+            for key, value in message.metadata.items():
+                text += f"  - {key}: {value}\n"
+            text += "\n"
+        
+        text += f"발송시간: {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        text += f"우선순위: {message.priority.upper()} | 카테고리: {message.category}\n"
+        
+        return text
+    
+    async def _send_smtp(self, msg: MimeMultipart) -> bool:
+        """SMTP로 이메일 전송"""
+        try:
+            # asyncio에서 동기 코드 실행
+            loop = asyncio.get_event_loop()
+            success = await loop.run_in_executor(None, self._smtp_send_sync, msg)
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"SMTP 전송 실패: {e}")
+            return False
+    
+    def _smtp_send_sync(self, msg: MimeMultipart) -> bool:
+        """동기 SMTP 전송"""
+        try:
+            server = smtplib.SMTP(self.config.EMAIL_SMTP_SERVER, self.config.EMAIL_SMTP_PORT)
+            server.starttls()
+            server.login(self.config.EMAIL_USERNAME, self.config.EMAIL_PASSWORD)
+            
+            text = msg.as_string()
+            server.sendmail(self.config.EMAIL_USERNAME, self.config.EMAIL_TO_ADDRESS, text)
+            server.quit()
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"SMTP 동기 전송 실패: {e}")
+            return False
+
+# ============================================================================
+# 🎮 디스코드 채널
+# ============================================================================
+class DiscordChannel:
+    """디스코드 알림 채널"""
+    
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.session = None
+        self.logger = logging.getLogger('DiscordChannel')
+    
+    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
+        """디스코드 메시지 전송"""
+        if not self.config.DISCORD_ENABLED or not self.config.DISCORD_WEBHOOK_URL:
+            return False, "디스코드 설정 없음"
+        
+        try:
+            # 임베드 메시지 생성
+            embed = await self._create_embed(message)
+            
+            # 웹훅으로 전송
+            success = await self._send_webhook(embed)
+            
+            return success, "전송 완료" if success else "전송 실패"
+            
+        except Exception as e:
+            error_msg = f"디스코드 전송 오류: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
+    async def _create_embed(self, message: NotificationMessage) -> Dict[str, Any]:
+        """디스코드 임베드 메시지 생성"""
+        # 우선순위별 색상
+        priority_colors = {
+            'emergency': 0xff0000,  # 빨강
+            'warning': 0xffa500,    # 주황
+            'info': 0x0099ff,       # 파랑
+            'success': 0x00ff00,    # 초록
+            'debug': 0x808080       # 회색
+        }
+        
+        color = priority_colors.get(message.priority, 0x0099ff)
+        
+        embed = {
+            "title": f"🏆 {message.title}",
+            "description": message.content,
+            "color": color,
+            "timestamp": message.timestamp.isoformat(),
+            "footer": {
+                "text": f"우선순위: {message.priority.upper()} | 카테고리: {message.category}"
+            }
+        }
+        
+        # 메타데이터를 필드로 추가
+        if message.metadata:
+            embed["fields"] = []
+            for key, value in message.metadata.items():
+                embed["fields"].append({
+                    "name": key,
+                    "value": str(value),
+                    "inline": True
+                })
+        
+        return embed
+    
+    async def _send_webhook(self, embed: Dict[str, Any]) -> bool:
+        """웹훅으로 메시지 전송"""
+        try:
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            
+            data = {
+                "username": "퀸트프로젝트",
+                "embeds": [embed]
+            }
+            
+            async with self.session.post(
+                self.config.DISCORD_WEBHOOK_URL, 
+                json=data, 
+                timeout=10
+            ) as response:
+                return response.status == 204
+                
+        except Exception as e:
+            self.logger.error(f"디스코드 웹훅 전송 실패: {e}")
+            return False
+    
+    async def close(self):
+        """세션 종료"""
+        if self.session:
+            await self.session.close()
+
+# ============================================================================
+# 📱 슬랙 채널
+# ============================================================================
+class SlackChannel:
+    """슬랙 알림 채널"""
+    
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.session = None
+        self.logger = logging.getLogger('SlackChannel')
+    
+    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
+        """슬랙 메시지 전송"""
+        if not self.config.SLACK_ENABLED or not self.config.SLACK_WEBHOOK_URL:
+            return False, "슬랙 설정 없음"
+        
+        try:
+            # 슬랙 메시지 생성
+            slack_message = await self._create_slack_message(message)
+            
+            # 웹훅으로 전송
+            success = await self._send_webhook(slack_message)
+            
+            return success, "전송 완료" if success else "전송 실패"
+            
+        except Exception as e:
+            error_msg = f"슬랙 전송 오류: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
     async def _create_slack_message(self, message: NotificationMessage) -> Dict[str, Any]:
         """슬랙 메시지 생성"""
         # 우선순위별 색상
@@ -999,354 +1351,3 @@ if __name__ == "__main__":
         print("\n👋 알림 시스템 테스트 종료")
         import sys
         sys.exit(0)
-    
-    async def _send_to_chat(self, chat_id: str, message: str, disable_notification: bool) -> bool:
-        """특정 채팅방으로 메시지 전송"""
-        try:
-            url = f"https://api.telegram.org/bot{self.config.TELEGRAM_BOT_TOKEN}/sendMessage"
-            
-            data = {
-                'chat_id': chat_id,
-                'text': message,
-                'disable_notification': disable_notification,
-                'parse_mode': 'HTML'
-            }
-            
-            if not self.session:
-                self.session = aiohttp.ClientSession()
-            
-            async with self.session.post(url, json=data, timeout=10) as response:
-                if response.status == 200:
-                    return True
-                else:
-                    self.logger.error(f"텔레그램 API 오류: {response.status}")
-                    return False
-                    
-        except Exception as e:
-            self.logger.error(f"텔레그램 전송 실패: {e}")
-            return False
-    
-    async def _format_message(self, message: NotificationMessage) -> str:
-        """텔레그램용 메시지 포맷팅"""
-        # 우선순위별 이모지
-        priority_emojis = {
-            'emergency': '🚨',
-            'warning': '⚠️',
-            'info': 'ℹ️',
-            'success': '✅',
-            'debug': '🔧'
-        }
-        
-        # 카테고리별 이모지
-        category_emojis = {
-            'trading': '📈',
-            'system': '🖥️',
-            'portfolio': '💼',
-            'error': '❌',
-            'general': '📊'
-        }
-        
-        emoji = priority_emojis.get(message.priority, '📊')
-        cat_emoji = category_emojis.get(message.category, '📊')
-        
-        formatted = f"{emoji} <b>퀸트프로젝트 알림</b> {cat_emoji}\n\n"
-        formatted += f"📋 <b>{message.title}</b>\n\n"
-        formatted += f"{message.content}\n\n"
-        
-        # 메타데이터 추가
-        if message.metadata:
-            formatted += "📄 <b>추가 정보:</b>\n"
-            for key, value in message.metadata.items():
-                formatted += f"  • {key}: {value}\n"
-            formatted += "\n"
-        
-        # 타임스탬프
-        formatted += f"🕐 {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
-        
-        return formatted
-    
-    async def close(self):
-        """세션 종료"""
-        if self.session:
-            await self.session.close()
-
-# ============================================================================
-# 📧 이메일 채널
-# ============================================================================
-class EmailChannel:
-    """이메일 알림 채널"""
-    
-    def __init__(self, config: NotifierConfig):
-        self.config = config
-        self.logger = logging.getLogger('EmailChannel')
-    
-    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
-        """이메일 메시지 전송"""
-        if not self.config.EMAIL_ENABLED or not self.config.EMAIL_USERNAME:
-            return False, "이메일 설정 없음"
-        
-        try:
-            # 메시지 생성
-            msg = await self._create_email(message)
-            
-            # SMTP 전송
-            success = await self._send_smtp(msg)
-            
-            return success, "전송 완료" if success else "전송 실패"
-            
-        except Exception as e:
-            error_msg = f"이메일 전송 오류: {e}"
-            self.logger.error(error_msg)
-            return False, error_msg
-    
-    async def _create_email(self, message: NotificationMessage) -> MimeMultipart:
-        """이메일 메시지 생성"""
-        msg = MimeMultipart('alternative')
-        
-        # 제목 설정
-        priority_prefix = {
-            'emergency': '[🚨 응급]',
-            'warning': '[⚠️ 경고]',
-            'info': '[ℹ️ 정보]',
-            'success': '[✅ 성공]',
-            'debug': '[🔧 디버그]'
-        }
-        
-        subject_prefix = priority_prefix.get(message.priority, '[📊]')
-        msg['Subject'] = f"{subject_prefix} {message.title}"
-        msg['From'] = f"{self.config.EMAIL_FROM_NAME} <{self.config.EMAIL_USERNAME}>"
-        msg['To'] = self.config.EMAIL_TO_ADDRESS
-        
-        # HTML 본문 생성
-        html_body = await self._create_html_body(message)
-        msg.attach(MimeText(html_body, 'html', 'utf-8'))
-        
-        # 텍스트 본문 생성
-        text_body = await self._create_text_body(message)
-        msg.attach(MimeText(text_body, 'plain', 'utf-8'))
-        
-        return msg
-    
-    async def _create_html_body(self, message: NotificationMessage) -> str:
-        """HTML 이메일 본문 생성"""
-        # 우선순위별 색상
-        priority_colors = {
-            'emergency': '#dc3545',
-            'warning': '#ffc107',
-            'info': '#17a2b8',
-            'success': '#28a745',
-            'debug': '#6c757d'
-        }
-        
-        color = priority_colors.get(message.priority, '#17a2b8')
-        
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; }}
-                .container {{ max-width: 600px; margin: 0 auto; }}
-                .header {{ background-color: {color}; color: white; padding: 20px; text-align: center; }}
-                .content {{ background-color: #f8f9fa; padding: 20px; }}
-                .metadata {{ background-color: #e9ecef; padding: 15px; margin-top: 15px; }}
-                .footer {{ text-align: center; padding: 10px; color: #6c757d; font-size: 12px; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>🏆 퀸트프로젝트 알림</h1>
-                    <h2>{message.title}</h2>
-                </div>
-                <div class="content">
-                    <p>{message.content.replace(chr(10), '<br>')}</p>
-        """
-        
-        # 메타데이터 추가
-        if message.metadata:
-            html += '<div class="metadata"><h3>추가 정보</h3><ul>'
-            for key, value in message.metadata.items():
-                html += f'<li><strong>{key}:</strong> {value}</li>'
-            html += '</ul></div>'
-        
-        html += f"""
-                </div>
-                <div class="footer">
-                    <p>발송시간: {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}</p>
-                    <p>우선순위: {message.priority.upper()} | 카테고리: {message.category}</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        return html
-    
-    async def _create_text_body(self, message: NotificationMessage) -> str:
-        """텍스트 이메일 본문 생성"""
-        text = f"🏆 퀸트프로젝트 알림\n\n"
-        text += f"제목: {message.title}\n\n"
-        text += f"{message.content}\n\n"
-        
-        if message.metadata:
-            text += "추가 정보:\n"
-            for key, value in message.metadata.items():
-                text += f"  - {key}: {value}\n"
-            text += "\n"
-        
-        text += f"발송시간: {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        text += f"우선순위: {message.priority.upper()} | 카테고리: {message.category}\n"
-        
-        return text
-    
-    async def _send_smtp(self, msg: MimeMultipart) -> bool:
-        """SMTP로 이메일 전송"""
-        try:
-            # asyncio에서 동기 코드 실행
-            loop = asyncio.get_event_loop()
-            success = await loop.run_in_executor(None, self._smtp_send_sync, msg)
-            return success
-            
-        except Exception as e:
-            self.logger.error(f"SMTP 전송 실패: {e}")
-            return False
-    
-    def _smtp_send_sync(self, msg: MimeMultipart) -> bool:
-        """동기 SMTP 전송"""
-        try:
-            server = smtplib.SMTP(self.config.EMAIL_SMTP_SERVER, self.config.EMAIL_SMTP_PORT)
-            server.starttls()
-            server.login(self.config.EMAIL_USERNAME, self.config.EMAIL_PASSWORD)
-            
-            text = msg.as_string()
-            server.sendmail(self.config.EMAIL_USERNAME, self.config.EMAIL_TO_ADDRESS, text)
-            server.quit()
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"SMTP 동기 전송 실패: {e}")
-            return False
-
-# ============================================================================
-# 🎮 디스코드 채널
-# ============================================================================
-class DiscordChannel:
-    """디스코드 알림 채널"""
-    
-    def __init__(self, config: NotifierConfig):
-        self.config = config
-        self.session = None
-        self.logger = logging.getLogger('DiscordChannel')
-    
-    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
-        """디스코드 메시지 전송"""
-        if not self.config.DISCORD_ENABLED or not self.config.DISCORD_WEBHOOK_URL:
-            return False, "디스코드 설정 없음"
-        
-        try:
-            # 임베드 메시지 생성
-            embed = await self._create_embed(message)
-            
-            # 웹훅으로 전송
-            success = await self._send_webhook(embed)
-            
-            return success, "전송 완료" if success else "전송 실패"
-            
-        except Exception as e:
-            error_msg = f"디스코드 전송 오류: {e}"
-            self.logger.error(error_msg)
-            return False, error_msg
-    
-    async def _create_embed(self, message: NotificationMessage) -> Dict[str, Any]:
-        """디스코드 임베드 메시지 생성"""
-        # 우선순위별 색상
-        priority_colors = {
-            'emergency': 0xff0000,  # 빨강
-            'warning': 0xffa500,    # 주황
-            'info': 0x0099ff,       # 파랑
-            'success': 0x00ff00,    # 초록
-            'debug': 0x808080       # 회색
-        }
-        
-        color = priority_colors.get(message.priority, 0x0099ff)
-        
-        embed = {
-            "title": f"🏆 {message.title}",
-            "description": message.content,
-            "color": color,
-            "timestamp": message.timestamp.isoformat(),
-            "footer": {
-                "text": f"우선순위: {message.priority.upper()} | 카테고리: {message.category}"
-            }
-        }
-        
-        # 메타데이터를 필드로 추가
-        if message.metadata:
-            embed["fields"] = []
-            for key, value in message.metadata.items():
-                embed["fields"].append({
-                    "name": key,
-                    "value": str(value),
-                    "inline": True
-                })
-        
-        return embed
-    
-    async def _send_webhook(self, embed: Dict[str, Any]) -> bool:
-        """웹훅으로 메시지 전송"""
-        try:
-            if not self.session:
-                self.session = aiohttp.ClientSession()
-            
-            data = {
-                "username": "퀸트프로젝트",
-                "embeds": [embed]
-            }
-            
-            async with self.session.post(
-                self.config.DISCORD_WEBHOOK_URL, 
-                json=data, 
-                timeout=10
-            ) as response:
-                return response.status == 204
-                
-        except Exception as e:
-            self.logger.error(f"디스코드 웹훅 전송 실패: {e}")
-            return False
-    
-    async def close(self):
-        """세션 종료"""
-        if self.session:
-            await self.session.close()
-
-# ============================================================================
-# 📱 슬랙 채널
-# ============================================================================
-class SlackChannel:
-    """슬랙 알림 채널"""
-    
-    def __init__(self, config: NotifierConfig):
-        self.config = config
-        self.session = None
-        self.logger = logging.getLogger('SlackChannel')
-    
-    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
-        """슬랙 메시지 전송"""
-        if not self.config.SLACK_ENABLED or not self.config.SLACK_WEBHOOK_URL:
-            return False, "슬랙 설정 없음"
-        
-        try:
-            # 슬랙 메시지 생성
-            slack_message = await self._create_slack_message(message)
-            
-            # 웹훅으로 전송
-            success = await self._send_webhook(slack_message)
-            
-            return success, "전송 완료" if success else "전송 실패"
-            
-        except Exception as e:
-            error_msg = f"슬랙 전송 오류: {e}"
-            self.logger.error(error_msg)
