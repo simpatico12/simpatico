@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-🏆 YEN-HUNTER v2.0 HYBRID: 화목 하이브리드 전략
+🏆 YEN-HUNTER v2.0 HYBRID with OpenAI: 화목 하이브리드 전략 + AI 분석
 ===============================================================================
-🎯 핵심: 엔화 + 화목 집중 + 3차 익절
-⚡ 원칙: 핵심 성능 + 관리 용이성  
+🎯 핵심: 엔화 + 화목 집중 + 3차 익절 + AI 분석
+⚡ 원칙: 핵심 성능 + 관리 용이성 + AI 인사이트
 🚀 목표: 월 14% (화 2.5% + 목 1.5%) × 4주
 
 화목 하이브리드:
@@ -14,6 +14,7 @@ Option 2 구성:
 - 기술지표: 6개 핵심 (RSI, MACD, 볼린저, 스토캐스틱, ATR, 거래량)
 - 종목헌팅: 3개 지수 전체 (닛케이225 + TOPIX + JPX400)
 - 월간관리: 핵심 목표 관리 시스템
+- AI 분석: OpenAI GPT 시장 분석 및 인사이트
 """
 
 import asyncio
@@ -30,6 +31,14 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+
+# OpenAI 연동
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    print("⚠️ OpenAI 시뮬레이션 모드 (pip install openai)")
 
 # IBKR 연동
 try:
@@ -72,8 +81,316 @@ class Config:
     IBKR_PORT = 7497
     IBKR_CLIENT_ID = 1
     
+    # OpenAI
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+    OPENAI_MODEL = "gpt-4-turbo-preview"
+    
     # 데이터
     DATA_DIR = Path("yen_hunter_data")
+
+# ============================================================================
+# 🤖 OpenAI 분석기
+# ============================================================================
+class AIAnalyzer:
+    def __init__(self):
+        self.available = OPENAI_AVAILABLE and Config.OPENAI_API_KEY
+        if self.available:
+            openai.api_key = Config.OPENAI_API_KEY
+        else:
+            print("⚠️ OpenAI API 키 없음 - 시뮬레이션 모드")
+    
+    async def analyze_market_sentiment(self, symbols: List[str], yen_rate: float) -> Dict:
+        """시장 심리 분석"""
+        if not self.available:
+            return self._mock_sentiment_analysis(symbols, yen_rate)
+        
+        try:
+            prompt = f"""
+            일본 주식 시장 전문가로서 다음 정보를 분석해주세요:
+
+            📊 현재 상황:
+            - 엔/달러 환율: {yen_rate:.2f}
+            - 분석 종목: {', '.join(symbols[:10])}
+            - 날짜: {datetime.now().strftime('%Y-%m-%d')}
+
+            📈 분석 요청:
+            1. 현재 엔화 강세/약세가 일본 주식에 미치는 영향
+            2. 화요일/목요일 단기 매매 관점에서의 시장 전망
+            3. 선별된 종목들의 섹터별 매력도
+            4. 위험 요소 및 주의사항
+
+            🎯 화목 하이브리드 전략 맞춤 분석으로 간결하고 실용적인 인사이트를 제공해주세요.
+            """
+            
+            response = openai.ChatCompletion.create(
+                model=Config.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "당신은 일본 주식 시장 전문가입니다. 기술적 분석과 펀더멘털 분석을 결합하여 실용적인 투자 인사이트를 제공합니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.7
+            )
+            
+            analysis = response.choices[0].message.content
+            
+            return {
+                'sentiment': self._extract_sentiment(analysis),
+                'analysis': analysis,
+                'confidence': self._calculate_ai_confidence(analysis),
+                'recommendations': self._extract_recommendations(analysis)
+            }
+            
+        except Exception as e:
+            print(f"⚠️ AI 분석 실패: {e}")
+            return self._mock_sentiment_analysis(symbols, yen_rate)
+    
+    async def analyze_individual_stock(self, symbol: str, technical_data: Dict, market_data: Dict) -> Dict:
+        """개별 종목 AI 분석"""
+        if not self.available:
+            return self._mock_individual_analysis(symbol, technical_data)
+        
+        try:
+            prompt = f"""
+            {symbol} 종목 분석 요청:
+
+            📊 기술적 지표:
+            - RSI: {technical_data.get('rsi', 0):.1f}
+            - MACD: {technical_data.get('macd_signal', 'N/A')}
+            - 볼린저밴드: {technical_data.get('bb_signal', 'N/A')}
+            - 스토캐스틱: {technical_data.get('stoch_signal', 'N/A')}
+            - 현재가: {technical_data.get('price', 0):,.0f}엔
+
+            📈 시장 환경:
+            - 엔/달러: {market_data.get('yen_rate', 0):.2f}
+            - 거래일: {market_data.get('day_type', 'N/A')}
+
+            🎯 질문:
+            1. 현재 기술적 패턴의 강도는?
+            2. 화목 하이브리드 전략에서 이 종목의 매력도는?
+            3. 예상 목표가와 손절가 적정성은?
+            4. 단기 (1-5일) 전망은?
+
+            간결하고 실용적인 분석을 제공해주세요.
+            """
+            
+            response = openai.ChatCompletion.create(
+                model=Config.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "당신은 일본 주식 기술적 분석 전문가입니다. 화목 하이브리드 단기 매매 전략에 최적화된 분석을 제공합니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=800,
+                temperature=0.6
+            )
+            
+            analysis = response.choices[0].message.content
+            
+            return {
+                'analysis': analysis,
+                'ai_score': self._calculate_ai_stock_score(analysis),
+                'risk_level': self._extract_risk_level(analysis),
+                'time_horizon': self._extract_time_horizon(analysis)
+            }
+            
+        except Exception as e:
+            print(f"⚠️ AI 종목 분석 실패: {e}")
+            return self._mock_individual_analysis(symbol, technical_data)
+    
+    async def generate_trading_strategy(self, signals: List, market_conditions: Dict) -> Dict:
+        """거래 전략 생성"""
+        if not self.available:
+            return self._mock_strategy_generation(signals, market_conditions)
+        
+        try:
+            buy_signals = [s for s in signals if s.action == 'BUY']
+            top_signals = sorted(buy_signals, key=lambda x: x.confidence, reverse=True)[:5]
+            
+            signal_summary = []
+            for signal in top_signals:
+                signal_summary.append(f"{signal.symbol}: {signal.confidence:.1%} ({signal.reason})")
+            
+            prompt = f"""
+            화목 하이브리드 전략 실행 계획 수립:
+
+            📊 현재 시장 상황:
+            - 엔/달러: {market_conditions.get('yen_rate', 0):.2f}
+            - 거래일: {market_conditions.get('day_type', 'N/A')}
+            - 월간 진행률: {market_conditions.get('monthly_progress', 0):.1f}%
+
+            🎯 매수 후보:
+            {chr(10).join(signal_summary)}
+
+            📋 전략 수립 요청:
+            1. 오늘의 포지션 구성 우선순위
+            2. 리스크 관리 전략
+            3. 포지션 사이징 권고
+            4. 주의사항 및 시나리오 대응
+
+            화목 하이브리드 전략(화요일 메인스윙, 목요일 보완단기)에 맞춘 구체적인 실행 계획을 제시해주세요.
+            """
+            
+            response = openai.ChatCompletion.create(
+                model=Config.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "당신은 일본 주식 화목 하이브리드 전략 전문가입니다. 실용적이고 구체적인 거래 실행 계획을 제공합니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1200,
+                temperature=0.5
+            )
+            
+            strategy = response.choices[0].message.content
+            
+            return {
+                'strategy': strategy,
+                'priority_ranking': self._extract_priority_ranking(strategy, top_signals),
+                'risk_adjustment': self._extract_risk_adjustment(strategy),
+                'execution_plan': self._extract_execution_plan(strategy)
+            }
+            
+        except Exception as e:
+            print(f"⚠️ AI 전략 생성 실패: {e}")
+            return self._mock_strategy_generation(signals, market_conditions)
+    
+    def _mock_sentiment_analysis(self, symbols: List[str], yen_rate: float) -> Dict:
+        """시뮬레이션 심리 분석"""
+        if yen_rate < 105:
+            sentiment = "BULLISH"
+            analysis = f"엔화 강세({yen_rate:.1f})로 내수주 상승 기대. 수출주는 단기 조정 가능."
+        elif yen_rate > 110:
+            sentiment = "BULLISH"
+            analysis = f"엔화 약세({yen_rate:.1f})로 수출주 호조 예상. 내수주는 혼조세."
+        else:
+            sentiment = "NEUTRAL"
+            analysis = f"엔화 중립({yen_rate:.1f})에서 개별 종목 매력도로 승부."
+        
+        return {
+            'sentiment': sentiment,
+            'analysis': analysis,
+            'confidence': 0.7,
+            'recommendations': ['기술적 분석 중시', '분할 매수 권고']
+        }
+    
+    def _mock_individual_analysis(self, symbol: str, technical_data: Dict) -> Dict:
+        """시뮬레이션 개별 분석"""
+        rsi = technical_data.get('rsi', 50)
+        
+        if rsi < 30:
+            ai_score = 0.8
+            analysis = f"{symbol} 과매도 구간에서 반등 기대. 단기 매력도 높음."
+        elif rsi > 70:
+            ai_score = 0.3
+            analysis = f"{symbol} 과매수 구간. 단기 조정 가능성 주의."
+        else:
+            ai_score = 0.6
+            analysis = f"{symbol} 중립 구간. 추가 신호 확인 필요."
+        
+        return {
+            'analysis': analysis,
+            'ai_score': ai_score,
+            'risk_level': 'MEDIUM',
+            'time_horizon': '1-3일'
+        }
+    
+    def _mock_strategy_generation(self, signals: List, market_conditions: Dict) -> Dict:
+        """시뮬레이션 전략 생성"""
+        buy_count = len([s for s in signals if s.action == 'BUY'])
+        
+        return {
+            'strategy': f"총 {buy_count}개 매수 후보 중 상위 2-3개 선별 진입 권고",
+            'priority_ranking': list(range(min(3, buy_count))),
+            'risk_adjustment': 'NORMAL',
+            'execution_plan': '분할 매수 + 3차 익절 전략'
+        }
+    
+    def _extract_sentiment(self, analysis: str) -> str:
+        """감정 추출"""
+        if any(word in analysis.lower() for word in ['긍정', '상승', '호조', 'bullish', '매력']):
+            return "BULLISH"
+        elif any(word in analysis.lower() for word in ['부정', '하락', '조정', 'bearish', '주의']):
+            return "BEARISH"
+        else:
+            return "NEUTRAL"
+    
+    def _calculate_ai_confidence(self, analysis: str) -> float:
+        """AI 신뢰도 계산"""
+        confidence_words = ['확신', '강력', '명확', '확실', '강하게']
+        uncertainty_words = ['불확실', '주의', '혼조', '애매', '불분명']
+        
+        confidence_score = sum(1 for word in confidence_words if word in analysis)
+        uncertainty_score = sum(1 for word in uncertainty_words if word in analysis)
+        
+        base_confidence = 0.6
+        return min(0.95, max(0.3, base_confidence + (confidence_score - uncertainty_score) * 0.1))
+    
+    def _extract_recommendations(self, analysis: str) -> List[str]:
+        """추천사항 추출"""
+        recommendations = []
+        
+        if '분할' in analysis:
+            recommendations.append('분할 매수 권고')
+        if '손절' in analysis:
+            recommendations.append('엄격한 손절 준수')
+        if '단기' in analysis:
+            recommendations.append('단기 관점 유지')
+        if '주의' in analysis:
+            recommendations.append('신중한 포지션 관리')
+        
+        return recommendations if recommendations else ['기본 전략 유지']
+    
+    def _calculate_ai_stock_score(self, analysis: str) -> float:
+        """AI 종목 점수"""
+        positive_words = ['매력', '기회', '상승', '호조', '긍정', '추천']
+        negative_words = ['위험', '하락', '조정', '부정', '주의', '회피']
+        
+        positive_score = sum(1 for word in positive_words if word in analysis)
+        negative_score = sum(1 for word in negative_words if word in analysis)
+        
+        base_score = 0.5
+        return min(0.95, max(0.1, base_score + (positive_score - negative_score) * 0.15))
+    
+    def _extract_risk_level(self, analysis: str) -> str:
+        """위험도 추출"""
+        if any(word in analysis for word in ['고위험', '매우 위험', '극도로']):
+            return "HIGH"
+        elif any(word in analysis for word in ['저위험', '안전', '안정']):
+            return "LOW"
+        else:
+            return "MEDIUM"
+    
+    def _extract_time_horizon(self, analysis: str) -> str:
+        """시간 지평 추출"""
+        if any(word in analysis for word in ['당일', '오늘', '즉시']):
+            return "당일"
+        elif any(word in analysis for word in ['1-2일', '단기', '며칠']):
+            return "1-2일"
+        elif any(word in analysis for word in ['3-5일', '중기', '일주일']):
+            return "3-5일"
+        else:
+            return "1-3일"
+    
+    def _extract_priority_ranking(self, strategy: str, signals: List) -> List[int]:
+        """우선순위 추출"""
+        return list(range(min(3, len(signals))))
+    
+    def _extract_risk_adjustment(self, strategy: str) -> str:
+        """위험 조정 추출"""
+        if '보수' in strategy or '신중' in strategy:
+            return "CONSERVATIVE"
+        elif '공격' in strategy or '적극' in strategy:
+            return "AGGRESSIVE"
+        else:
+            return "NORMAL"
+    
+    def _extract_execution_plan(self, strategy: str) -> str:
+        """실행 계획 추출"""
+        if '분할' in strategy:
+            return "분할 매수 전략"
+        elif '일괄' in strategy:
+            return "일괄 매수 전략"
+        else:
+            return "단계별 매수 전략"
 
 # ============================================================================
 # 📊 핵심 기술지표 6개 (Option 2)
@@ -854,7 +1171,7 @@ class JapanMonthlyManager:
         }
 
 # ============================================================================
-# 🎯 화목 신호 생성기 (6개 지표)
+# 🎯 화목 신호 생성기 (6개 지표 + AI)
 # ============================================================================
 @dataclass
 class Signal:
@@ -876,6 +1193,8 @@ class Signal:
     take_profit3: float
     max_hold_days: int
     position_size: int
+    ai_analysis: str = ""
+    ai_score: float = 0.0
     timestamp: datetime = field(default_factory=datetime.now)
 
 @dataclass 
@@ -901,6 +1220,7 @@ class SignalGenerator:
         self.current_usd_jpy = 107.5
         self.indicators = Indicators()
         self.target_manager = JapanMonthlyManager()
+        self.ai_analyzer = AIAnalyzer()
     
     async def update_yen(self):
         try:
@@ -957,6 +1277,7 @@ class SignalGenerator:
         take_profit2 = price * (1 + base_p2 * multiplier)
         take_profit3 = price * (1 + base_p3 * multiplier)
         
+        return stop_loss, take_profit1, take_profit2, take_profit3, base_days
     
     def calculate_hybrid_score(self, symbol: str, rsi: float, macd_signal: str, macd_details: Dict,
                               bb_signal: str, bb_details: Dict, stoch_signal: str, stoch_details: Dict,
@@ -1103,7 +1424,7 @@ class SignalGenerator:
         return " | ".join(reasons[:5])
     
     async def generate_signal(self, symbol: str) -> Signal:
-        """화목 하이브리드 신호 생성"""
+        """화목 하이브리드 신호 생성 (AI 분석 포함)"""
         try:
             await self.update_yen()
             
@@ -1140,6 +1461,27 @@ class SignalGenerator:
                 stoch_signal, stoch_details, atr_value, volume_analysis, trend, day_type
             )
             
+            # AI 분석 추가
+            technical_data = {
+                'rsi': rsi,
+                'macd_signal': macd_signal,
+                'bb_signal': bb_signal,
+                'stoch_signal': stoch_signal,
+                'price': current_price
+            }
+            
+            market_data = {
+                'yen_rate': self.current_usd_jpy,
+                'day_type': day_type
+            }
+            
+            ai_result = await self.ai_analyzer.analyze_individual_stock(symbol, technical_data, market_data)
+            ai_analysis = ai_result.get('analysis', '')
+            ai_score = ai_result.get('ai_score', 0.5)
+            
+            # AI 점수를 기술적 점수와 결합 (가중평균)
+            combined_score = total_score * 0.7 + ai_score * 0.3
+            
             # 월간 목표 고려
             intensity = self.target_manager.get_trading_intensity()
             
@@ -1158,12 +1500,12 @@ class SignalGenerator:
                 elif intensity == "CONSERVATIVE":
                     threshold *= 1.15
                 
-                if total_score >= threshold:
+                if combined_score >= threshold:
                     action = "BUY"
-                    confidence = min(total_score, 0.95)
+                    confidence = min(combined_score, 0.95)
                 else:
                     action = "HOLD"
-                    confidence = total_score
+                    confidence = combined_score
             
             # 리스크 계산
             if action == "BUY":
@@ -1192,14 +1534,16 @@ class SignalGenerator:
                 macd_signal=macd_signal, bb_signal=bb_signal, stoch_signal=stoch_signal,
                 atr=atr_value, volume_signal=volume_analysis.get('price_volume_signal', 'NEUTRAL'),
                 stop_loss=stop_loss, take_profit1=tp1, take_profit2=tp2, take_profit3=tp3,
-                max_hold_days=max_days, position_size=position_size
+                max_hold_days=max_days, position_size=position_size,
+                ai_analysis=ai_analysis, ai_score=ai_score
             )
             
         except Exception as e:
             return Signal(symbol, "HOLD", 0.0, 0.0, f"실패:{e}", self.current_usd_jpy, 50.0,
                         "NEUTRAL", "MIDDLE_ZONE", "NEUTRAL", 0, "NEUTRAL",
                         0, 0, 0, 0, 0, 0)
- # ============================================================================
+
+# ============================================================================
 # 🛡️ 포지션 매니저 (3차 익절)
 # ============================================================================
 class PositionManager:
@@ -1487,7 +1831,7 @@ class IBKRConnector:
         print("🔌 IBKR 연결 해제")
 
 # ============================================================================
-# 🏆 YEN-HUNTER v2.0 메인
+# 🏆 YEN-HUNTER v2.0 메인 (with AI)
 # ============================================================================
 class YenHunter:
     def __init__(self):
@@ -1495,9 +1839,10 @@ class YenHunter:
         self.signal_gen = SignalGenerator()
         self.position_mgr = PositionManager()
         self.ibkr = IBKRConnector()
+        self.ai_analyzer = AIAnalyzer()
         
-        print("🏆 YEN-HUNTER v2.0 HYBRID 초기화!")
-        print("📅 화목 하이브리드 | 🎯 월 14% | 💰 6개 지표 | 🔗 IBKR")
+        print("🏆 YEN-HUNTER v2.0 HYBRID with AI 초기화!")
+        print("📅 화목 하이브리드 | 🎯 월 14% | 💰 6개 지표 | 🤖 AI 분석 | 🔗 IBKR")
         
         # 현황
         status = self.position_mgr.target_manager.get_status()
@@ -1520,13 +1865,32 @@ class YenHunter:
         legends = await self.hunter.select_legends(symbols)
         print(f"🏆 {len(legends)}개 전설급 선별")
         
-        # 6개 지표 신호 생성
+        # AI 시장 분석
+        print("🤖 AI 시장 분석 중...")
+        market_sentiment = await self.ai_analyzer.analyze_market_sentiment(
+            [stock['symbol'] for stock in legends],
+            self.signal_gen.current_usd_jpy
+        )
+        print(f"🧠 AI 시장 심리: {market_sentiment['sentiment']} (신뢰도: {market_sentiment['confidence']:.1%})")
+        
+        # 6개 지표 + AI 신호 생성
         signals = []
         for i, stock in enumerate(legends, 1):
             print(f"⚡ 분석 {i}/{len(legends)} - {stock['symbol']}")
             signal = await self.signal_gen.generate_signal(stock['symbol'])
             signals.append(signal)
             await asyncio.sleep(0.05)
+        
+        # AI 전략 수립
+        if signals:
+            market_conditions = {
+                'yen_rate': self.signal_gen.current_usd_jpy,
+                'day_type': day_type,
+                'monthly_progress': self.position_mgr.target_manager.get_status()['target_progress']
+            }
+            
+            ai_strategy = await self.ai_analyzer.generate_trading_strategy(signals, market_conditions)
+            print(f"🎯 AI 전략: {ai_strategy['risk_adjustment']} 모드")
         
         elapsed = time.time() - start_time
         buy_count = len([s for s in signals if s.action == 'BUY'])
@@ -1535,14 +1899,14 @@ class YenHunter:
         return signals
     
     async def run_trading_session(self):
-        """화목 거래 세션"""
+        """화목 거래 세션 (AI 강화)"""
         today = datetime.now()
         if not self.should_trade_today():
             print("😴 오늘은 비거래일")
             return
         
         day_name = "화요일" if today.weekday() == 1 else "목요일"
-        print(f"\n🏯 {day_name} 거래 세션 시작")
+        print(f"\n🏯 {day_name} 거래 세션 시작 (AI 강화)")
         
         # 1. 포지션 체크
         actions = await self.position_mgr.check_positions()
@@ -1551,18 +1915,21 @@ class YenHunter:
                 emoji = "🛑" if 'STOP' in action['action'] else "💰" if 'PROFIT' in action['action'] else "⏰"
                 print(f"{emoji} {action['symbol']}: {action['reason']}")
         
-        # 2. 새로운 기회
+        # 2. 새로운 기회 (AI 분석 포함)
         signals = await self.hunt_and_analyze()
         buy_signals = [s for s in signals if s.action == 'BUY' and s.symbol not in self.position_mgr.positions]
         
         if buy_signals:
-            buy_signals.sort(key=lambda x: x.confidence, reverse=True)
+            # AI 점수 고려한 정렬
+            buy_signals.sort(key=lambda x: (x.confidence + x.ai_score) / 2, reverse=True)
             max_trades = Config.MAX_TUESDAY_TRADES if today.weekday() == 1 else Config.MAX_THURSDAY_TRADES
             
             executed = 0
             for signal in buy_signals[:max_trades]:
                 if signal.position_size > 0:
-                    print(f"💰 {signal.symbol} 매수: {signal.confidence:.1%}")
+                    print(f"💰 {signal.symbol} 매수: 기술{signal.confidence:.1%} + AI{signal.ai_score:.1%}")
+                    if signal.ai_analysis:
+                        print(f"   🤖 AI: {signal.ai_analysis[:100]}...")
                     
                     # IBKR 주문
                     if self.ibkr.connected:
@@ -1575,7 +1942,7 @@ class YenHunter:
                         self.position_mgr.open_position(signal)
                         executed += 1
             
-            print(f"✅ {day_name} {executed}개 매수 실행")
+            print(f"✅ {day_name} {executed}개 매수 실행 (AI 강화)")
         else:
             print(f"😴 {day_name} 매수 기회 없음")
         
@@ -1629,17 +1996,82 @@ class YenHunter:
         }
 
 # ============================================================================
-# 🎮 편의 함수들
+# 🧪 AI 강화 편의 함수들
 # ============================================================================
 async def hunt_signals() -> List[Signal]:
-    """신호 헌팅"""
+    """신호 헌팅 (AI 포함)"""
     hunter = YenHunter()
     return await hunter.hunt_and_analyze()
 
 async def analyze_single(symbol: str) -> Signal:
-    """단일 분석"""
+    """단일 분석 (AI 포함)"""
     hunter = YenHunter()
     return await hunter.signal_gen.generate_signal(symbol)
+
+async def analyze_single_with_ai(symbol: str) -> Dict:
+    """단일 종목 AI 심화 분석"""
+    hunter = YenHunter()
+    
+    print(f"🤖 {symbol} AI 심화 분석 시작...")
+    
+    # 기본 신호 생성
+    signal = await hunter.signal_gen.generate_signal(symbol)
+    
+    # 추가 AI 분석
+    stock = yf.Ticker(symbol)
+    data = stock.history(period="3mo")
+    
+    if not data.empty:
+        indicators = hunter.signal_gen.indicators
+        
+        technical_data = {
+            'rsi': indicators.rsi(data['Close']),
+            'macd_signal': indicators.macd(data['Close'])[0],
+            'bb_signal': indicators.bollinger_bands(data['Close'])[0],
+            'stoch_signal': indicators.stochastic(data['High'], data['Low'], data['Close'])[0],
+            'price': float(data['Close'].iloc[-1])
+        }
+        
+        market_data = {
+            'yen_rate': signal.yen_rate,
+            'day_type': "TUESDAY" if datetime.now().weekday() == 1 else "THURSDAY"
+        }
+        
+        ai_result = await hunter.ai_analyzer.analyze_individual_stock(symbol, technical_data, market_data)
+        
+        return {
+            'signal': signal,
+            'ai_analysis': ai_result,
+            'combined_score': (signal.confidence + ai_result.get('ai_score', 0)) / 2,
+            'recommendation': 'BUY' if signal.action == 'BUY' and ai_result.get('ai_score', 0) > 0.6 else 'HOLD'
+        }
+    
+    return {'error': '데이터 없음'}
+
+async def get_ai_market_insight() -> Dict:
+    """AI 시장 통찰력"""
+    hunter = YenHunter()
+    
+    print("🧠 AI 시장 통찰력 분석 중...")
+    
+    # 대표 종목들 수집
+    representative_stocks = [
+        '7203.T', '6758.T', '9984.T', '6861.T', '8306.T',
+        '7974.T', '9432.T', '8316.T', '4063.T', '9983.T'
+    ]
+    
+    await hunter.signal_gen.update_yen()
+    
+    market_sentiment = await hunter.ai_analyzer.analyze_market_sentiment(
+        representative_stocks,
+        hunter.signal_gen.current_usd_jpy
+    )
+    
+    print(f"📊 시장 심리: {market_sentiment['sentiment']}")
+    print(f"🤖 AI 분석:\n{market_sentiment['analysis']}")
+    print(f"💡 추천사항: {', '.join(market_sentiment['recommendations'])}")
+    
+    return market_sentiment
 
 async def run_auto_selection() -> List[Dict]:
     """자동선별 실행"""
@@ -1668,7 +2100,7 @@ async def run_auto_selection() -> List[Dict]:
     return legends
 
 async def analyze_auto_selected() -> List[Signal]:
-    """자동선별 종목들 분석"""
+    """자동선별 종목들 분석 (AI 포함)"""
     hunter = YenHunter()
     
     # 자동선별 실행
@@ -1677,8 +2109,11 @@ async def analyze_auto_selected() -> List[Signal]:
     if not hunter.should_trade_today():
         print("😴 오늘은 비거래일이지만 분석은 진행합니다.")
     
-    print("\n🔍 자동선별 종목 신호 분석")
+    print("\n🔍 자동선별 종목 신호 분석 (AI 강화)")
     print("="*50)
+    
+    # AI 시장 분석 먼저
+    market_insight = await get_ai_market_insight()
     
     signals = []
     for i, stock in enumerate(legends, 1):
@@ -1688,9 +2123,13 @@ async def analyze_auto_selected() -> List[Signal]:
         
         # 간단한 결과 출력
         if signal.action == 'BUY':
-            print(f"   ✅ 매수신호! 신뢰도: {signal.confidence:.1%} | {signal.reason}")
+            combined_score = (signal.confidence + signal.ai_score) / 2
+            print(f"   ✅ 매수신호! 기술{signal.confidence:.1%} + AI{signal.ai_score:.1%} = {combined_score:.1%}")
+            print(f"   📊 {signal.reason}")
+            if signal.ai_analysis:
+                print(f"   🤖 {signal.ai_analysis[:80]}...")
         else:
-            print(f"   ⏸️ 대기 (신뢰도: {signal.confidence:.1%})")
+            print(f"   ⏸️ 대기 (기술{signal.confidence:.1%} + AI{signal.ai_score:.1%})")
     
     buy_signals = [s for s in signals if s.action == 'BUY']
     print(f"\n🎯 매수 추천: {len(buy_signals)}개 / {len(signals)}개")
@@ -1698,12 +2137,12 @@ async def analyze_auto_selected() -> List[Signal]:
     return signals
 
 async def run_auto_trading():
-    """자동매매 실행"""
+    """자동매매 실행 (AI 강화)"""
     hunter = YenHunter()
     
     try:
         await hunter.ibkr.connect()
-        print("🚀 화목 자동매매 시작 (Ctrl+C로 종료)")
+        print("🚀 화목 AI 자동매매 시작 (Ctrl+C로 종료)")
         
         while True:
             now = datetime.now()
@@ -1721,35 +2160,42 @@ async def run_auto_trading():
                 await asyncio.sleep(300)
                 
     except KeyboardInterrupt:
-        print("🛑 자동매매 종료")
+        print("🛑 AI 자동매매 종료")
     finally:
         await hunter.ibkr.disconnect()
 
-async def run_full_auto_system():
-    """완전 자동화 시스템 (자동선별 + 자동매매)"""
+async def run_full_ai_system():
+    """완전 AI 자동화 시스템"""
     hunter = YenHunter()
     
     try:
         await hunter.ibkr.connect()
-        print("🤖 완전 자동화 시스템 시작!")
-        print("🔄 자동선별 + 자동매매 + 자동관리")
-        print("="*50)
+        print("🤖 완전 AI 자동화 시스템 시작!")
+        print("🔄 AI 시장분석 + 자동선별 + 자동매매 + 자동관리")
+        print("="*60)
         
         last_selection_day = -1
+        last_market_analysis_hour = -1
         
         while True:
             now = datetime.now()
             
-            # 매일 오전 8시에 자동선별 업데이트 (화목 거래일 전에)
-            if now.hour == 8 and now.minute == 0 and now.day != last_selection_day:
+            # 매시간 AI 시장 분석 (거래시간)
+            if 9 <= now.hour <= 15 and now.minute == 0 and now.hour != last_market_analysis_hour:
+                print(f"\n🧠 {now.hour}시 AI 시장 분석...")
+                await get_ai_market_insight()
+                last_market_analysis_hour = now.hour
+            
+            # 매일 오전 8시에 자동선별 업데이트
+            elif now.hour == 8 and now.minute == 0 and now.day != last_selection_day:
                 if now.weekday() in [0, 2]:  # 월, 수 (화목 거래 전날)
-                    print("\n🔄 자동선별 업데이트 중...")
+                    print("\n🔄 AI 자동선별 업데이트 중...")
                     await run_auto_selection()
                     last_selection_day = now.day
             
-            # 화목 09시에 거래
+            # 화목 09시에 AI 거래
             elif now.weekday() in [1, 3] and now.hour == 9 and now.minute == 0:
-                print(f"\n🏯 {['월','화','수','목','금','토','일'][now.weekday()]}요일 자동거래 시작")
+                print(f"\n🏯 {['월','화','수','목','금','토','일'][now.weekday()]}요일 AI 자동거래 시작")
                 await hunter.run_trading_session()
                 await asyncio.sleep(60)
             
@@ -1762,7 +2208,7 @@ async def run_full_auto_system():
                 await asyncio.sleep(300)
                 
     except KeyboardInterrupt:
-        print("🛑 완전 자동화 시스템 종료")
+        print("🛑 완전 AI 자동화 시스템 종료")
     finally:
         await hunter.ibkr.disconnect()
 
@@ -1772,8 +2218,8 @@ def show_status():
     status = hunter.get_status()
     monthly = hunter.position_mgr.target_manager.get_status()
     
-    print(f"\n📊 YEN-HUNTER v2.0 HYBRID 현황")
-    print("="*50)
+    print(f"\n📊 YEN-HUNTER v2.0 HYBRID with AI 현황")
+    print("="*60)
     print(f"💼 오픈 포지션: {status['open_positions']}개")
     print(f"🎲 완료 거래: {status['closed_trades']}회")
     print(f"📈 평균 수익: {status['avg_pnl']:.1f}%")
@@ -1784,12 +2230,13 @@ def show_status():
     print(f"📊 화요일: {monthly['tuesday_pnl']*100:.2f}% ({monthly['tuesday_trades']}회)")
     print(f"📊 목요일: {monthly['thursday_pnl']*100:.2f}% ({monthly['thursday_trades']}회)")
     print(f"⚡ 거래 모드: {monthly['trading_intensity']}")
+    print(f"🤖 AI 상태: {'활성화' if OPENAI_AVAILABLE and Config.OPENAI_API_KEY else '시뮬레이션'}")
     
     if status['positions']:
         print(f"📋 보유: {', '.join(status['positions'])}")
 
 # ============================================================================
-# 📈 백테스터 (간소화)
+# 📈 백테스터 (AI 강화)
 # ============================================================================
 class HybridBacktester:
     @staticmethod
@@ -1823,7 +2270,7 @@ class HybridBacktester:
                 
                 price = current_data['Close'].iloc[-1]
                 
-                # 화목별 매수 조건
+                # 화목별 매수 조건 (AI 강화 버전)
                 should_buy = False
                 if weekday == 1:  # 화요일
                     if rsi <= 35 and macd_signal == "GOLDEN_CROSS":
@@ -1887,16 +2334,21 @@ async def backtest_hybrid(symbol: str) -> Dict:
     return await HybridBacktester.backtest_symbol(symbol)
 
 # ============================================================================
-# 🧪 테스트 실행
+# 🧪 AI 테스트 실행
 # ============================================================================
 async def main():
-    """YEN-HUNTER v2.0 HYBRID 테스트"""
-    print("🏆 YEN-HUNTER v2.0 HYBRID 테스트!")
-    print("="*60)
+    """YEN-HUNTER v2.0 HYBRID with AI 테스트"""
+    print("🏆 YEN-HUNTER v2.0 HYBRID with AI 테스트!")
+    print("="*70)
     print("📅 화목 하이브리드 전략")
     print("🎯 월 14% 목표 (화 2.5% + 목 1.5%)")
     print("💰 6개 핵심 지표 + 3개 지수 헌팅")
-    print("🔗 IBKR 연동 + 완전 자동화")
+    print("🤖 OpenAI GPT 시장 분석 및 개별 종목 인사이트")
+    print("🔗 IBKR 연동 + 완전 AI 자동화")
+    
+    # AI 상태 확인
+    ai_status = "활성화" if OPENAI_AVAILABLE and Config.OPENAI_API_KEY else "시뮬레이션"
+    print(f"🤖 AI 상태: {ai_status}")
     
     # 현황 출력
     show_status()
@@ -1905,28 +2357,37 @@ async def main():
     hunter = YenHunter()
     if not hunter.should_trade_today():
         print(f"\n😴 오늘은 비거래일 (월,수,금,토,일)")
+        
+        # 비거래일에도 AI 시장 분석 제공
+        print("\n🧠 AI 시장 통찰력 제공...")
+        await get_ai_market_insight()
         return
     
-    # 신호 헌팅
+    # AI 강화 신호 헌팅
     signals = await hunt_signals()
     
     if signals:
         buy_signals = [s for s in signals if s.action == 'BUY']
-        buy_signals.sort(key=lambda x: x.confidence, reverse=True)
+        # AI 점수 포함 정렬
+        buy_signals.sort(key=lambda x: (x.confidence + x.ai_score) / 2, reverse=True)
         
-        print(f"\n🎯 매수 추천 TOP 3:")
+        print(f"\n🎯 AI 강화 매수 추천 TOP 3:")
         for i, signal in enumerate(buy_signals[:3], 1):
             profit1_pct = ((signal.take_profit1 - signal.price) / signal.price * 100)
             profit2_pct = ((signal.take_profit2 - signal.price) / signal.price * 100)
             profit3_pct = ((signal.take_profit3 - signal.price) / signal.price * 100)
             stop_pct = ((signal.price - signal.stop_loss) / signal.price * 100)
+            combined_score = (signal.confidence + signal.ai_score) / 2
             
-            print(f"\n{i}. {signal.symbol} (신뢰도: {signal.confidence:.1%})")
+            print(f"\n{i}. {signal.symbol} (종합 신뢰도: {combined_score:.1%})")
+            print(f"   📊 기술적: {signal.confidence:.1%} | AI: {signal.ai_score:.1%}")
             print(f"   💰 {signal.price:,.0f}엔 | {signal.position_size:,}주")
             print(f"   🛡️ 손절: -{stop_pct:.1f}%")
             print(f"   🎯 익절: +{profit1_pct:.1f}% → +{profit2_pct:.1f}% → +{profit3_pct:.1f}%")
             print(f"   📊 지표: RSI({signal.rsi:.0f}) {signal.macd_signal} {signal.bb_signal} {signal.stoch_signal}")
             print(f"   💡 {signal.reason}")
+            if signal.ai_analysis:
+                print(f"   🤖 AI: {signal.ai_analysis[:100]}...")
         
         # 백테스트
         if buy_signals:
@@ -1938,27 +2399,34 @@ async def main():
                 print(f"   📅 화요일: {backtest_result['tuesday_trades']}회 (평균 {backtest_result['tuesday_avg']:.1f}%)")
                 print(f"   📅 목요일: {backtest_result['thursday_trades']}회 (평균 {backtest_result['thursday_avg']:.1f}%)")
     
-    print("\n✅ YEN-HUNTER v2.0 HYBRID 테스트 완료!")
-    print("\n🚀 핵심 특징 (Option 2):")
+    print("\n✅ YEN-HUNTER v2.0 HYBRID with AI 테스트 완료!")
+    print("\n🚀 핵심 특징 (AI 강화):")
     print("  📊 기술지표: 6개 핵심 (RSI, MACD, 볼린저, 스토캐스틱, ATR, 거래량)")
     print("  🔍 종목헌팅: 3개 지수 통합 (닛케이225 + TOPIX + JPX400)")
+    print("  🤖 AI 분석: OpenAI GPT 시장 심리 + 개별 종목 인사이트")
     print("  📈 월간관리: 핵심 목표 추적 + 적응형 강도 조절")
     print("  💰 3차 익절: 40% → 40% → 20% 분할")
-    print("  🛡️ 동적 손절: ATR + 신뢰도 기반")
+    print("  🛡️ 동적 손절: ATR + 신뢰도 + AI 기반")
     print("  🔗 IBKR 연동: 실제 거래 + 시뮬레이션")
     
-    print("\n💡 사용법:")
+    print(f"\n💡 사용법 (AI 강화):")
     print("  🤖 자동선별: await run_auto_selection()")
-    print("  🔍 선별+분석: await analyze_auto_selected()")
-    print("  🚀 자동매매: await run_auto_trading()")
-    print("  🤖 완전자동: await run_full_auto_system()")
+    print("  🔍 선별+AI분석: await analyze_auto_selected()")
+    print("  🧠 AI 시장통찰: await get_ai_market_insight()")
+    print("  🎯 AI 개별분석: await analyze_single_with_ai('7203.T')")
+    print("  🚀 AI 자동매매: await run_auto_trading()")
+    print("  🤖 완전AI자동: await run_full_ai_system()")
     print("  📊 현황: show_status()")
     print("  🔍 단일분석: await analyze_single('7203.T')")
     print("  📈 백테스트: await backtest_hybrid('7203.T')")
     
-    print(f"\n📁 데이터: {Config.DATA_DIR}")
-    print("🎯 화목 하이브리드로 월 14% 달성!")
+    print(f"\n🔧 설정:")
+    print(f"  📁 데이터: {Config.DATA_DIR}")
+    print(f"  🤖 OpenAI: {ai_status}")
+    print(f"  🔑 API 키: {'설정됨' if Config.OPENAI_API_KEY else '미설정 (환경변수 OPENAI_API_KEY)'}")
+    
+    print("\n🎯 화목 하이브리드 + AI로 월 14% 달성!")
 
 if __name__ == "__main__":
     Config.DATA_DIR.mkdir(exist_ok=True)
-    asyncio.run(main())           
+    asyncio.run(main())
