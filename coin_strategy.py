@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ⚡ LEGENDARY QUANT STRATEGY COMPLETE ⚡
-전설급 5대 시스템 + 완전한 매도 시스템 (월 5-7% 최적화)
+전설급 5대 시스템 + 완전한 매도 시스템 + OpenAI 분석 (월 5-7% 최적화)
 
 🧠 Neural Quality Engine - 가중평균 기반 품질 스코어링
 🌊 Quantum Cycle Matrix - 27개 미시사이클 감지  
@@ -10,14 +10,16 @@
 💎 Diamond Hand Algorithm - 켈리공식 기반 분할매매
 🕸️ Correlation Web Optimizer - 네트워크 포트폴리오
 🎯 Position Manager - 포지션 관리 + 실시간 매도
+🤖 OpenAI Integration - AI 기반 시장 분석
 
 ✨ 월 5-7% 최적화:
 - 0차 익절 추가 (5-7% 구간)
 - 3차 익절 삭제 (무제한 수익)
 - 타이트한 손절 (-5~8%)
 - 월금 매매 시스템
+- OpenAI 시장 분석
 
-Author: 퀀트마스터 | Version: MONTHLY 5-7% OPTIMIZED
+Author: 퀀트마스터 | Version: MONTHLY 5-7% OPTIMIZED + OpenAI
 """
 
 import asyncio
@@ -31,6 +33,8 @@ from dataclasses import dataclass
 import json
 import os
 import time
+import openai
+from openai import OpenAI
 
 # 로깅 설정
 logging.basicConfig(
@@ -40,12 +44,291 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# 🧠 NEURAL QUALITY ENGINE - 가중평균 기반 품질 스코어링
+# 🤖 OPENAI MARKET ANALYZER - AI 기반 시장 분석 엔진
+# ============================================================================
+class OpenAIMarketAnalyzer:
+    """OpenAI 기반 시장 분석 엔진"""
+    
+    def __init__(self, api_key: str = None):
+        """OpenAI 클라이언트 초기화"""
+        self.api_key = api_key or os.getenv('OPENAI_API_KEY')
+        if self.api_key:
+            self.client = OpenAI(api_key=self.api_key)
+            self.enabled = True
+            logger.info("🤖 OpenAI 엔진 초기화 완료")
+        else:
+            self.client = None
+            self.enabled = False
+            logger.warning("⚠️ OpenAI API 키가 없습니다. AI 분석 기능이 비활성화됩니다.")
+    
+    async def analyze_market_sentiment(self, symbol: str, market_data: Dict, cycle_info: Dict) -> Dict:
+        """시장 심리 및 전망 분석"""
+        if not self.enabled:
+            return self._fallback_sentiment()
+        
+        try:
+            # 시장 데이터 정리
+            price = market_data.get('price', 0)
+            volume_krw = market_data.get('volume_krw', 0)
+            ohlcv = market_data.get('ohlcv')
+            
+            # 가격 변동 계산
+            if ohlcv is not None and len(ohlcv) >= 7:
+                price_change_7d = ((ohlcv['close'].iloc[-1] / ohlcv['close'].iloc[-8]) - 1) * 100
+                volume_avg_7d = ohlcv['volume'].tail(7).mean() * price
+            else:
+                price_change_7d = 0
+                volume_avg_7d = volume_krw
+            
+            # AI 분석 요청 프롬프트
+            prompt = f"""
+다음 암호화폐의 시장 데이터를 분석하고 투자 관점에서 평가해주세요:
+
+코인: {symbol}
+현재가격: {price:,.0f}원
+24시간 거래량: {volume_krw:,.0f}원
+7일 가격변동: {price_change_7d:+.1f}%
+7일 평균거래량: {volume_avg_7d:,.0f}원
+현재 시장사이클: {cycle_info.get('cycle', 'unknown')}
+사이클 신뢰도: {cycle_info.get('confidence', 0):.2f}
+
+다음 관점에서 분석해주세요:
+1. 현재 시장 심리 (0-100점)
+2. 단기 전망 (1-2주)
+3. 투자 매력도 (0-100점)
+4. 주요 리스크 요인
+5. 종합 추천도 (0-100점)
+
+JSON 형식으로 답변해주세요:
+{{
+    "market_sentiment": 점수(0-100),
+    "short_term_outlook": "긍정적/중립적/부정적",
+    "investment_attractiveness": 점수(0-100),
+    "risk_factors": ["리스크1", "리스크2"],
+    "overall_recommendation": 점수(0-100),
+    "reasoning": "분석 근거 요약"
+}}
+"""
+            
+            # OpenAI API 호출
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "당신은 전문 암호화폐 분석가입니다. 객관적이고 데이터 기반의 분석을 제공하세요."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=500
+            )
+            
+            # 응답 파싱
+            ai_response = response.choices[0].message.content
+            
+            # JSON 파싱 시도
+            try:
+                ai_analysis = json.loads(ai_response)
+                ai_analysis['ai_confidence'] = 0.8
+                ai_analysis['analysis_type'] = 'openai_gpt'
+                return ai_analysis
+            except json.JSONDecodeError:
+                # JSON 파싱 실패시 텍스트 분석
+                return self._parse_text_response(ai_response)
+            
+        except Exception as e:
+            logger.error(f"OpenAI 분석 실패 {symbol}: {e}")
+            return self._fallback_sentiment()
+    
+    async def analyze_coin_fundamentals(self, symbol: str, quality_data: Dict) -> Dict:
+        """코인 펀더멘털 분석"""
+        if not self.enabled:
+            return self._fallback_fundamentals()
+        
+        try:
+            coin_name = symbol.replace('KRW-', '')
+            
+            prompt = f"""
+{coin_name} 코인의 펀더멘털을 분석해주세요:
+
+현재 품질 점수:
+- 기술력: {quality_data.get('tech_score', 0):.2f}
+- 생태계: {quality_data.get('ecosystem_score', 0):.2f}  
+- 커뮤니티: {quality_data.get('community_score', 0):.2f}
+- 채택도: {quality_data.get('adoption_score', 0):.2f}
+
+다음을 분석해주세요:
+1. 기술적 혁신도 (0-100)
+2. 실용성 및 활용도 (0-100)
+3. 경쟁력 (0-100)
+4. 성장 잠재력 (0-100)
+5. 종합 펀더멘털 점수 (0-100)
+
+JSON 형식으로 답변:
+{{
+    "tech_innovation": 점수,
+    "utility_score": 점수,
+    "competitive_advantage": 점수,
+    "growth_potential": 점수,
+    "fundamental_score": 점수,
+    "key_strengths": ["강점1", "강점2"],
+    "concerns": ["우려1", "우려2"]
+}}
+"""
+            
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "당신은 블록체인 기술 전문가입니다. 객관적인 펀더멘털 분석을 제공하세요."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.2,
+                max_tokens=400
+            )
+            
+            ai_response = response.choices[0].message.content
+            
+            try:
+                fundamental_analysis = json.loads(ai_response)
+                fundamental_analysis['analysis_source'] = 'openai_fundamental'
+                return fundamental_analysis
+            except json.JSONDecodeError:
+                return self._fallback_fundamentals()
+                
+        except Exception as e:
+            logger.error(f"펀더멘털 분석 실패 {symbol}: {e}")
+            return self._fallback_fundamentals()
+    
+    async def generate_trading_strategy(self, symbol: str, analysis_data: Dict) -> Dict:
+        """AI 기반 거래 전략 생성"""
+        if not self.enabled:
+            return self._fallback_strategy()
+        
+        try:
+            prompt = f"""
+{symbol} 코인의 종합 분석 데이터를 바탕으로 거래 전략을 제안해주세요:
+
+분석 데이터:
+- 품질 점수: {analysis_data.get('quality_score', 0):.2f}
+- 시장 심리: {analysis_data.get('market_sentiment', 50)}/100
+- 투자 매력도: {analysis_data.get('investment_attractiveness', 50)}/100
+- 사이클: {analysis_data.get('cycle', 'unknown')}
+- 펀더멘털: {analysis_data.get('fundamental_score', 50)}/100
+
+월 5-7% 수익 목표로 다음을 제안해주세요:
+1. 진입 타이밍 (즉시/대기/분할)
+2. 포지션 크기 (1-15% of portfolio)
+3. 익절 전략 수정사항
+4. 리스크 관리 방안
+5. 홀딩 기간 조정
+
+JSON 형식:
+{{
+    "entry_timing": "immediate/wait/gradual",
+    "position_size_pct": 숫자(1-15),
+    "profit_strategy": "conservative/standard/aggressive",
+    "risk_adjustment": "tight/normal/loose",
+    "holding_period": "short/medium/long",
+    "confidence": 숫자(0-100),
+    "strategy_reasoning": "전략 근거"
+}}
+"""
+            
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "당신은 전문 퀀트 트레이더입니다. 월 5-7% 수익을 목표로 하는 보수적이고 안정적인 전략을 제안하세요."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.4,
+                max_tokens=300
+            )
+            
+            ai_response = response.choices[0].message.content
+            
+            try:
+                strategy = json.loads(ai_response)
+                strategy['generated_by'] = 'openai_strategy'
+                return strategy
+            except json.JSONDecodeError:
+                return self._fallback_strategy()
+                
+        except Exception as e:
+            logger.error(f"전략 생성 실패 {symbol}: {e}")
+            return self._fallback_strategy()
+    
+    def _parse_text_response(self, text: str) -> Dict:
+        """텍스트 응답 파싱"""
+        try:
+            # 기본값으로 중간 점수 설정
+            result = {
+                'market_sentiment': 50,
+                'short_term_outlook': '중립적',
+                'investment_attractiveness': 50,
+                'risk_factors': ['분석 불가'],
+                'overall_recommendation': 50,
+                'reasoning': text[:200],
+                'ai_confidence': 0.5,
+                'analysis_type': 'openai_text'
+            }
+            
+            # 간단한 키워드 기반 점수 조정
+            text_lower = text.lower()
+            if '긍정' in text_lower or 'positive' in text_lower:
+                result['market_sentiment'] += 20
+                result['overall_recommendation'] += 15
+            elif '부정' in text_lower or 'negative' in text_lower:
+                result['market_sentiment'] -= 20
+                result['overall_recommendation'] -= 15
+            
+            return result
+        except:
+            return self._fallback_sentiment()
+    
+    def _fallback_sentiment(self) -> Dict:
+        """기본 심리 분석"""
+        return {
+            'market_sentiment': 50,
+            'short_term_outlook': '중립적',
+            'investment_attractiveness': 50,
+            'risk_factors': ['AI 분석 불가'],
+            'overall_recommendation': 50,
+            'reasoning': 'OpenAI 분석 실패로 기본값 사용',
+            'ai_confidence': 0.3,
+            'analysis_type': 'fallback'
+        }
+    
+    def _fallback_fundamentals(self) -> Dict:
+        """기본 펀더멘털 분석"""
+        return {
+            'tech_innovation': 50,
+            'utility_score': 50,
+            'competitive_advantage': 50,
+            'growth_potential': 50,
+            'fundamental_score': 50,
+            'key_strengths': ['기본 분석'],
+            'concerns': ['AI 분석 불가'],
+            'analysis_source': 'fallback'
+        }
+    
+    def _fallback_strategy(self) -> Dict:
+        """기본 전략"""
+        return {
+            'entry_timing': 'gradual',
+            'position_size_pct': 5,
+            'profit_strategy': 'standard',
+            'risk_adjustment': 'normal',
+            'holding_period': 'medium',
+            'confidence': 50,
+            'strategy_reasoning': 'AI 분석 실패로 기본 전략 사용',
+            'generated_by': 'fallback'
+        }
+
+# ============================================================================
+# 🧠 NEURAL QUALITY ENGINE - 가중평균 기반 품질 스코어링 (OpenAI 통합)
 # ============================================================================
 class NeuralQualityEngine:
-    """가중평균 기반 품질 평가 엔진 (안정성 최우선)"""
+    """가중평균 기반 품질 평가 엔진 (안정성 최우선) + OpenAI 통합"""
     
-    def __init__(self):
+    def __init__(self, openai_analyzer: OpenAIMarketAnalyzer = None):
         # 코인별 품질 점수 (기술력, 생태계, 커뮤니티, 채택도)
         self.coin_scores = {
             'BTC': [0.98, 0.95, 0.90, 0.95], 'ETH': [0.95, 0.98, 0.85, 0.90],
@@ -58,9 +341,10 @@ class NeuralQualityEngine:
         
         # 가중치 (기술력 30%, 생태계 30%, 커뮤니티 20%, 채택도 20%)
         self.weights = [0.30, 0.30, 0.20, 0.20]
+        self.openai_analyzer = openai_analyzer
     
-    def neural_quality_score(self, symbol: str, market_data: Dict) -> Dict:
-        """안전한 가중평균 품질 점수 계산"""
+    async def neural_quality_score(self, symbol: str, market_data: Dict) -> Dict:
+        """안전한 가중평균 품질 점수 계산 + OpenAI 분석"""
         try:
             coin_name = symbol.replace('KRW-', '')
             
@@ -72,10 +356,33 @@ class NeuralQualityEngine:
             
             # 거래량 기반 보너스
             volume_bonus = self._calculate_volume_bonus(market_data.get('volume_24h_krw', 0))
-            final_quality = min(0.98, quality_score + volume_bonus)
+            base_quality = min(0.98, quality_score + volume_bonus)
             
-            # AI 설명 생성
-            explanation = self._generate_explanation(coin_name, scores, final_quality)
+            # OpenAI 펀더멘털 분석 (비동기)
+            ai_fundamental = None
+            if self.openai_analyzer and self.openai_analyzer.enabled:
+                try:
+                    quality_data = {
+                        'tech_score': scores[0],
+                        'ecosystem_score': scores[1],
+                        'community_score': scores[2],
+                        'adoption_score': scores[3]
+                    }
+                    ai_fundamental = await self.openai_analyzer.analyze_coin_fundamentals(symbol, quality_data)
+                except Exception as e:
+                    logger.debug(f"OpenAI 펀더멘털 분석 실패 {symbol}: {e}")
+            
+            # AI 분석이 있으면 가중 평균으로 조정
+            if ai_fundamental and ai_fundamental.get('fundamental_score'):
+                ai_score = ai_fundamental['fundamental_score'] / 100  # 0-1 스케일로 변환
+                # 70% 기본 분석 + 30% AI 분석
+                final_quality = base_quality * 0.7 + ai_score * 0.3
+                ai_explanation = self._generate_ai_explanation(coin_name, scores, final_quality, ai_fundamental)
+                confidence_boost = 0.1  # AI 분석이 있으면 신뢰도 증가
+            else:
+                final_quality = base_quality
+                ai_explanation = self._generate_explanation(coin_name, scores, final_quality)
+                confidence_boost = 0.0
             
             return {
                 'quality_score': final_quality,
@@ -83,8 +390,10 @@ class NeuralQualityEngine:
                 'ecosystem_score': scores[1], 
                 'community_score': scores[2],
                 'adoption_score': scores[3],
-                'ai_explanation': explanation,
-                'confidence': min(0.95, final_quality + 0.05)
+                'ai_explanation': ai_explanation,
+                'confidence': min(0.95, final_quality + 0.05 + confidence_boost),
+                'ai_fundamental': ai_fundamental,
+                'ai_enhanced': ai_fundamental is not None
             }
             
         except Exception as e:
@@ -92,7 +401,8 @@ class NeuralQualityEngine:
             return {
                 'quality_score': 0.5, 'tech_score': 0.5, 'ecosystem_score': 0.5,
                 'community_score': 0.5, 'adoption_score': 0.5,
-                'ai_explanation': '기본등급', 'confidence': 0.5
+                'ai_explanation': '기본등급', 'confidence': 0.5,
+                'ai_fundamental': None, 'ai_enhanced': False
             }
     
     def _calculate_volume_bonus(self, volume_krw: float) -> float:
@@ -107,7 +417,7 @@ class NeuralQualityEngine:
             return 0.0
     
     def _generate_explanation(self, coin: str, scores: List[float], final_score: float) -> str:
-        """설명 생성"""
+        """기본 설명 생성"""
         features = []
         if scores[0] > 0.85: features.append("최고급기술")
         if scores[1] > 0.85: features.append("강력생태계")
@@ -120,6 +430,17 @@ class NeuralQualityEngine:
         else: grade = "C급"
         
         return f"{grade} | " + " | ".join(features) if features else f"{grade} | 기본등급"
+    
+    def _generate_ai_explanation(self, coin: str, scores: List[float], final_score: float, ai_data: Dict) -> str:
+        """AI 강화 설명 생성"""
+        base_explanation = self._generate_explanation(coin, scores, final_score)
+        
+        if ai_data and ai_data.get('key_strengths'):
+            ai_strengths = ai_data['key_strengths'][:2]  # 최대 2개만
+            ai_part = " | AI분석: " + ", ".join(ai_strengths)
+            return base_explanation + ai_part
+        
+        return base_explanation + " | AI분석완료"
 
 # ============================================================================
 # 🌊 QUANTUM CYCLE MATRIX - 27개 미시사이클 감지
@@ -431,17 +752,18 @@ class FractalFilteringPipeline:
             return 0.5
 
 # ============================================================================
-# 💎 DIAMOND HAND ALGORITHM - 켈리공식 기반 분할매매 (월 5-7% 최적화)
+# 💎 DIAMOND HAND ALGORITHM - 켈리공식 기반 분할매매 (월 5-7% 최적화) + OpenAI 통합
 # ============================================================================
 class DiamondHandAlgorithm:
-    """켈리 공식 기반 다이아몬드 핸드 알고리즘 (월 5-7% 최적화)"""
+    """켈리 공식 기반 다이아몬드 핸드 알고리즘 (월 5-7% 최적화) + OpenAI 통합"""
     
-    def __init__(self, portfolio_value: float):
+    def __init__(self, portfolio_value: float, openai_analyzer: OpenAIMarketAnalyzer = None):
         self.portfolio_value = portfolio_value
+        self.openai_analyzer = openai_analyzer
     
-    def calculate_diamond_strategy(self, symbol: str, price: float, confidence: float, 
-                                 cycle: str, quality_score: float) -> Dict:
-        """다이아몬드 핸드 전략 계산 (월 5-7% 최적화)"""
+    async def calculate_diamond_strategy(self, symbol: str, price: float, confidence: float, 
+                                       cycle: str, quality_score: float, ai_data: Dict = None) -> Dict:
+        """다이아몬드 핸드 전략 계산 (월 5-7% 최적화) + AI 조정"""
         try:
             # 켈리 비율 계산 (단순화)
             kelly_fraction = self._kelly_criterion(confidence, quality_score)
@@ -449,8 +771,32 @@ class DiamondHandAlgorithm:
             # 감정 팩터
             emotion_factor = self._emotion_factor(cycle, confidence)
             
-            # 총 투자 금액
-            base_investment = self.portfolio_value * kelly_fraction * emotion_factor
+            # AI 전략 조정 (있는 경우)
+            ai_adjustment = 1.0
+            if self.openai_analyzer and self.openai_analyzer.enabled and ai_data:
+                try:
+                    analysis_data = {
+                        'quality_score': quality_score,
+                        'cycle': cycle,
+                        'market_sentiment': ai_data.get('market_sentiment', 50),
+                        'investment_attractiveness': ai_data.get('investment_attractiveness', 50),
+                        'fundamental_score': ai_data.get('ai_fundamental', {}).get('fundamental_score', 50) if ai_data.get('ai_fundamental') else 50
+                    }
+                    
+                    ai_strategy = await self.openai_analyzer.generate_trading_strategy(symbol, analysis_data)
+                    if ai_strategy:
+                        # AI 포지션 크기 조정
+                        ai_position_pct = ai_strategy.get('position_size_pct', 5) / 100
+                        current_position_pct = kelly_fraction * emotion_factor
+                        # 70% 기존 로직 + 30% AI 제안
+                        ai_adjustment = (current_position_pct * 0.7 + ai_position_pct * 0.3) / current_position_pct
+                        ai_adjustment = max(0.5, min(1.5, ai_adjustment))  # 50%-150% 범위로 제한
+                        
+                except Exception as e:
+                    logger.debug(f"AI 전략 조정 실패 {symbol}: {e}")
+            
+            # 총 투자 금액 (AI 조정 적용)
+            base_investment = self.portfolio_value * kelly_fraction * emotion_factor * ai_adjustment
             total_investment = min(base_investment, self.portfolio_value * 0.15)  # 최대 15%
             
             # 3단계 분할
@@ -498,11 +844,13 @@ class DiamondHandAlgorithm:
                 'total_investment': total_investment,
                 'kelly_fraction': kelly_fraction,
                 'emotion_factor': emotion_factor,
+                'ai_adjustment': ai_adjustment,
                 'stage_amounts': stage_amounts,
                 'entry_prices': entry_prices,
                 'take_profits': take_profits,
                 'stop_loss': stop_loss,
-                'portfolio_weight': (total_investment / self.portfolio_value) * 100
+                'portfolio_weight': (total_investment / self.portfolio_value) * 100,
+                'ai_enhanced': ai_adjustment != 1.0
             }
             
         except Exception as e:
@@ -535,19 +883,19 @@ class DiamondHandAlgorithm:
         base_investment = self.portfolio_value * 0.05
         return {
             'symbol': symbol, 'total_investment': base_investment,
-            'kelly_fraction': 0.05, 'emotion_factor': 1.0,
+            'kelly_fraction': 0.05, 'emotion_factor': 1.0, 'ai_adjustment': 1.0,
             'stage_amounts': [base_investment * 0.5, base_investment * 0.3, base_investment * 0.2],
             'entry_prices': [price, price * 0.95, price * 0.90],
             'take_profits': [price * 1.05, price * 1.15, price * 1.25],
-            'stop_loss': price * 0.92, 'portfolio_weight': 5.0
+            'stop_loss': price * 0.92, 'portfolio_weight': 5.0, 'ai_enhanced': False
         }
 
 # ============================================================================
-# 📊 전설급 메인 시그널 클래스
+# 📊 전설급 메인 시그널 클래스 (OpenAI 통합)
 # ============================================================================
 @dataclass
 class LegendarySignal:
-    """전설급 시그널"""
+    """전설급 시그널 (OpenAI 통합)"""
     symbol: str
     action: str
     confidence: float
@@ -563,12 +911,18 @@ class LegendarySignal:
     kelly_fraction: float
     emotion_factor: float
     total_investment: float
+    ai_adjustment: float
     
     # 실행 계획
     entry_prices: List[float]
     stage_amounts: List[float] 
     take_profits: List[float]
     stop_loss: float
+    
+    # AI 분석 결과
+    ai_market_sentiment: Optional[Dict]
+    ai_fundamental: Optional[Dict]
+    ai_enhanced: bool
     
     # 종합 점수
     legendary_score: float
@@ -1161,21 +1515,25 @@ class RealTimeMonitor:
         logger.info("⏹️ 실시간 모니터링 중지")
 
 # ============================================================================
-# 🏆 LEGENDARY QUANT MASTER - 전설급 통합 시스템 (월 5-7% 완전체)
+# 🏆 LEGENDARY QUANT MASTER - 전설급 통합 시스템 (월 5-7% 완전체) + OpenAI
 # ============================================================================
 class LegendaryQuantMaster:
-    """전설급 5대 시스템 + 완전한 매도 시스템 통합 마스터 (월 5-7% 최적화)"""
+    """전설급 5대 시스템 + 완전한 매도 시스템 + OpenAI 통합 마스터 (월 5-7% 최적화)"""
     
-    def __init__(self, portfolio_value: float = 100_000_000, min_volume: float = 10_000_000_000, demo_mode: bool = True):
+    def __init__(self, portfolio_value: float = 100_000_000, min_volume: float = 10_000_000_000, 
+                 demo_mode: bool = True, openai_api_key: str = None):
         self.portfolio_value = portfolio_value
         self.min_volume = min_volume
         self.demo_mode = demo_mode
         
-        # 전설급 5대 엔진 초기화
-        self.neural_engine = NeuralQualityEngine()
+        # OpenAI 분석기 초기화
+        self.openai_analyzer = OpenAIMarketAnalyzer(openai_api_key)
+        
+        # 전설급 5대 엔진 초기화 (OpenAI 통합)
+        self.neural_engine = NeuralQualityEngine(self.openai_analyzer)
         self.quantum_cycle = QuantumCycleMatrix()
         self.fractal_filter = FractalFilteringPipeline(min_volume)
-        self.diamond_algorithm = DiamondHandAlgorithm(portfolio_value)
+        self.diamond_algorithm = DiamondHandAlgorithm(portfolio_value, self.openai_analyzer)
         
         # 매도 시스템 초기화
         self.position_manager = PositionManager()
@@ -1191,8 +1549,8 @@ class LegendaryQuantMaster:
         return datetime.now().weekday() in [0, 4]
     
     async def execute_legendary_strategy(self) -> List[LegendarySignal]:
-        """전설급 전략 실행 (월 5-7% 최적화)"""
-        logger.info("🏆 LEGENDARY QUANT STRATEGY COMPLETE (월 5-7% 최적화) 시작")
+        """전설급 전략 실행 (월 5-7% 최적화) + OpenAI"""
+        logger.info("🏆 LEGENDARY QUANT STRATEGY COMPLETE + OpenAI (월 5-7% 최적화) 시작")
         
         # 거래일 체크
         current_weekday = datetime.now().weekday()
@@ -1203,7 +1561,7 @@ class LegendaryQuantMaster:
             logger.info(f"⏸️ [{today_name}] 비거래일: 모니터링만 실행")
             return []
         
-        logger.info(f"📈 [{today_name}] 거래일: 전설급 전략 실행")
+        logger.info(f"📈 [{today_name}] 거래일: 전설급 전략 실행 (OpenAI {'활성화' if self.openai_analyzer.enabled else '비활성화'})")
         
         try:
             # 1단계: 양자 사이클 감지
@@ -1223,23 +1581,25 @@ class LegendaryQuantMaster:
                 logger.error("프랙탈 필터링 결과 없음")
                 return []
             
-            # 3단계: 개별 코인 전설급 분석
+            # 3단계: 개별 코인 전설급 분석 (OpenAI 통합)
             legendary_signals = []
             for i, candidate in enumerate(fractal_candidates[:self.target_portfolio_size], 1):
-                logger.info(f"💎 전설급 분석 [{i}/{min(len(fractal_candidates), self.target_portfolio_size)}]: {candidate['symbol']}")
+                logger.info(f"💎 전설급 분석 [{i}/{min(len(fractal_candidates), self.target_portfolio_size)}]: {candidate['symbol']} (AI {'ON' if self.openai_analyzer.enabled else 'OFF'})")
                 
                 signal = await self._analyze_legendary_coin(candidate, quantum_state)
                 if signal:
                     legendary_signals.append(signal)
                 
-                await asyncio.sleep(0.2)  # API 제한
+                await asyncio.sleep(0.5)  # API 제한 + OpenAI 호출 고려
             
             # 4단계: 최종 포트폴리오 랭킹
             legendary_signals.sort(key=lambda x: x.legendary_score, reverse=True)
             
             # 결과 요약
             buy_signals = [s for s in legendary_signals if s.action == 'BUY']
-            logger.info(f"✨ 전설급 분석 완료: {len(legendary_signals)}개 분석, {len(buy_signals)}개 매수 신호")
+            ai_enhanced_count = sum(1 for s in buy_signals if s.ai_enhanced)
+            
+            logger.info(f"✨ 전설급 분석 완료: {len(legendary_signals)}개 분석, {len(buy_signals)}개 매수 신호 (AI 강화: {ai_enhanced_count}개)")
             
             return legendary_signals
             
@@ -1248,37 +1608,63 @@ class LegendaryQuantMaster:
             return []
     
     async def _analyze_legendary_coin(self, candidate: Dict, quantum_state: Dict) -> Optional[LegendarySignal]:
-        """개별 코인 전설급 분석"""
+        """개별 코인 전설급 분석 (OpenAI 통합)"""
         try:
             symbol = candidate['symbol']
             price = candidate['price']
             
-            # Neural Quality Engine 분석
-            neural_result = self.neural_engine.neural_quality_score(
-                symbol, {'volume_24h_krw': candidate['volume_krw']}
-            )
+            # Neural Quality Engine 분석 (OpenAI 통합)
+            market_data = {
+                'volume_24h_krw': candidate['volume_krw'],
+                'price': price,
+                'ohlcv': candidate['ohlcv']
+            }
+            neural_result = await self.neural_engine.neural_quality_score(symbol, market_data)
             
-            # Diamond Hand Algorithm 분석
-            diamond_result = self.diamond_algorithm.calculate_diamond_strategy(
+            # OpenAI 시장 심리 분석 (있는 경우)
+            ai_sentiment = None
+            if self.openai_analyzer.enabled:
+                try:
+                    ai_sentiment = await self.openai_analyzer.analyze_market_sentiment(symbol, market_data, quantum_state)
+                except Exception as e:
+                    logger.debug(f"OpenAI 심리 분석 실패 {symbol}: {e}")
+            
+            # Diamond Hand Algorithm 분석 (OpenAI 통합)
+            diamond_result = await self.diamond_algorithm.calculate_diamond_strategy(
                 symbol, price, neural_result['confidence'], 
-                quantum_state['cycle'], neural_result['quality_score']
+                quantum_state['cycle'], neural_result['quality_score'], ai_sentiment
             )
             
-            # 종합 점수 계산
-            legendary_score = (
+            # 종합 점수 계산 (AI 가중치 추가)
+            base_score = (
                 neural_result['quality_score'] * 0.30 +      # Neural Quality
                 quantum_state['confidence'] * 0.25 +         # Quantum Cycle  
                 candidate.get('technical_score', 0.5) * 0.25 +  # Technical
                 candidate.get('momentum_score', 0.5) * 0.20     # Momentum
             )
             
-            # 액션 결정
+            # AI 보너스 점수 (있는 경우)
+            ai_bonus = 0.0
+            if ai_sentiment:
+                sentiment_score = ai_sentiment.get('overall_recommendation', 50) / 100
+                attractiveness_score = ai_sentiment.get('investment_attractiveness', 50) / 100
+                ai_bonus = (sentiment_score + attractiveness_score) / 2 * 0.1  # 최대 10% 보너스
+            
+            legendary_score = min(1.0, base_score + ai_bonus)
+            
+            # 액션 결정 (AI 보정)
             if legendary_score >= 0.70:
                 action = 'BUY'
             elif legendary_score <= 0.30:
                 action = 'SELL'
             else:
                 action = 'HOLD'
+            
+            # AI 분석 결과가 부정적이면 액션 하향 조정
+            if ai_sentiment and ai_sentiment.get('overall_recommendation', 50) < 30:
+                if action == 'BUY':
+                    action = 'HOLD'
+                    logger.info(f"🤖 {symbol}: AI 부정적 분석으로 BUY → HOLD 조정")
             
             # 전설급 시그널 생성
             signal = LegendarySignal(
@@ -1293,10 +1679,14 @@ class LegendaryQuantMaster:
                 kelly_fraction=diamond_result['kelly_fraction'],
                 emotion_factor=diamond_result['emotion_factor'],
                 total_investment=diamond_result['total_investment'],
+                ai_adjustment=diamond_result.get('ai_adjustment', 1.0),
                 entry_prices=diamond_result['entry_prices'],
                 stage_amounts=diamond_result['stage_amounts'],
                 take_profits=diamond_result['take_profits'],
                 stop_loss=diamond_result['stop_loss'],
+                ai_market_sentiment=ai_sentiment,
+                ai_fundamental=neural_result.get('ai_fundamental'),
+                ai_enhanced=neural_result.get('ai_enhanced', False) or diamond_result.get('ai_enhanced', False),
                 legendary_score=legendary_score,
                 timestamp=datetime.now()
             )
@@ -1308,10 +1698,10 @@ class LegendaryQuantMaster:
             return None
     
     def print_legendary_results(self, signals: List[LegendarySignal]):
-        """전설급 결과 출력 (월 5-7% 최적화)"""
-        print("\n" + "="*80)
-        print("🏆 LEGENDARY QUANT STRATEGY COMPLETE - 월 5-7% 최적화 🏆")
-        print("="*80)
+        """전설급 결과 출력 (월 5-7% 최적화) + OpenAI"""
+        print("\n" + "="*90)
+        print("🏆 LEGENDARY QUANT STRATEGY COMPLETE + OpenAI - 월 5-7% 최적화 🏆")
+        print("="*90)
         
         if not signals:
             print("❌ 분석된 신호가 없습니다.")
@@ -1319,6 +1709,7 @@ class LegendaryQuantMaster:
         
         buy_signals = [s for s in signals if s.action == 'BUY']
         total_investment = sum(s.total_investment for s in buy_signals)
+        ai_enhanced_count = sum(1 for s in buy_signals if s.ai_enhanced)
         
         # 현재 요일 정보
         current_weekday = datetime.now().weekday()
@@ -1329,6 +1720,7 @@ class LegendaryQuantMaster:
         print(f"\n📊 전략 요약:")
         print(f"   분석 코인: {len(signals)}개")
         print(f"   매수 신호: {len(buy_signals)}개") 
+        print(f"   AI 강화: {ai_enhanced_count}개 ({self.openai_analyzer.enabled and 'OpenAI 활성화' or 'OpenAI 비활성화'})")
         print(f"   총 투자금: {total_investment:,.0f}원")
         print(f"   포트폴리오 비중: {(total_investment/self.portfolio_value)*100:.1f}%")
         print(f"   운영 모드: {'시뮬레이션' if self.demo_mode else '실제거래'}")
@@ -1338,6 +1730,16 @@ class LegendaryQuantMaster:
             print(f"\n🌊 양자 사이클 상태:")
             print(f"   현재 사이클: {signals[0].quantum_cycle}")
             print(f"   신뢰도: {signals[0].cycle_confidence:.2f}")
+        
+        print(f"\n🤖 OpenAI 분석 시스템:")
+        if self.openai_analyzer.enabled:
+            print(f"   • 시장 심리 분석: GPT-3.5-Turbo")
+            print(f"   • 펀더멘털 분석: 블록체인 전문가 모드")
+            print(f"   • 거래 전략 생성: 퀀트 트레이더 모드")
+            print(f"   • AI 강화 비율: {ai_enhanced_count}/{len(buy_signals)}개")
+        else:
+            print(f"   • 상태: 비활성화 (OPENAI_API_KEY 없음)")
+            print(f"   • 기본 분석만 사용")
         
         print(f"\n✨ 월 5-7% 최적화 특징:")
         print(f"   • 0차 익절: 4-6% 수익시 20-25% 매도")
@@ -1350,37 +1752,57 @@ class LegendaryQuantMaster:
         
         print(f"\n💎 전설급 매수 신호:")
         for i, signal in enumerate(buy_signals, 1):
-            print(f"\n[{i}] {signal.symbol}")
+            ai_mark = "🤖" if signal.ai_enhanced else "📊"
+            print(f"\n[{i}] {signal.symbol} {ai_mark}")
             print(f"   전설 점수: {signal.legendary_score:.3f}")
             print(f"   AI 품질: {signal.neural_quality:.2f} | {signal.ai_explanation}")
             print(f"   켈리 비중: {signal.kelly_fraction:.1%}")
+            if signal.ai_adjustment != 1.0:
+                print(f"   AI 조정: {signal.ai_adjustment:.2f}x")
             print(f"   투자금액: {signal.total_investment:,.0f}원")
             print(f"   진입가격: {[f'{p:,.0f}' for p in signal.entry_prices]}")
             print(f"   익절가격: {[f'{p:,.0f}' for p in signal.take_profits]} (0차/1차/2차)")
             print(f"   손절가격: {signal.stop_loss:,.0f}원")
+            
+            # AI 추가 정보
+            if signal.ai_market_sentiment:
+                sentiment = signal.ai_market_sentiment
+                print(f"   🤖 AI 심리: {sentiment.get('market_sentiment', 0)}/100, 매력도: {sentiment.get('investment_attractiveness', 0)}/100")
+                if sentiment.get('risk_factors'):
+                    risks = ', '.join(sentiment['risk_factors'][:2])
+                    print(f"   ⚠️ 리스크: {risks}")
         
         print(f"\n📈 월 5-7% 달성 전략:")
         print(f"   • 포트폴리오 8개 중 2-3개 대박(50%+) → 월수익 견인")
         print(f"   • 나머지 4-5개 소폭수익(5-25%) → 안정성 확보")
         print(f"   • 1-2개 손실(-5~8%) → 손절로 제한")
         print(f"   • 평균 월수익: 5-7% 목표")
+        print(f"   • AI 분석으로 정확도 향상")
         
-        print("\n" + "="*80)
-        print("⚡ LEGENDARY STRATEGY COMPLETE - 월 5-7% 최적화 ⚡")
+        print("\n" + "="*90)
+        print("⚡ LEGENDARY STRATEGY COMPLETE + OpenAI - 월 5-7% 최적화 ⚡")
 
 # ============================================================================
 # 🚀 메인 실행 함수들
 # ============================================================================
 async def main():
-    """전설급 퀀트 전략 메인 실행 (월 5-7% 최적화)"""
-    print("⚡ LEGENDARY QUANT STRATEGY COMPLETE - 월 5-7% 최적화 STARTING ⚡")
-    print("🧠🌊⚡💎🕸️🎯🚨🎮📊 완전체 시스템 로딩...")
+    """전설급 퀀트 전략 메인 실행 (월 5-7% 최적화) + OpenAI"""
+    print("⚡ LEGENDARY QUANT STRATEGY COMPLETE + OpenAI - 월 5-7% 최적화 STARTING ⚡")
+    print("🧠🌊⚡💎🕸️🎯🚨🎮📊🤖 완전체 시스템 + AI 로딩...")
     
-    # 전설급 마스터 초기화 (시뮬레이션 모드)
+    # OpenAI API 키 확인
+    openai_key = os.getenv('OPENAI_API_KEY')
+    if openai_key:
+        print("🤖 OpenAI API 키 감지 - AI 분석 모드 활성화")
+    else:
+        print("📊 OpenAI API 키 없음 - 기본 분석 모드")
+    
+    # 전설급 마스터 초기화 (시뮬레이션 모드 + OpenAI)
     master = LegendaryQuantMaster(
         portfolio_value=100_000_000,  # 1억원
         min_volume=5_000_000_000,     # 50억원
-        demo_mode=True                # 시뮬레이션 모드
+        demo_mode=True,               # 시뮬레이션 모드
+        openai_api_key=openai_key     # OpenAI API 키
     )
     
     try:
@@ -1398,10 +1820,11 @@ async def main():
         print(f"\n❌ 실행 중 오류: {e}")
         logger.error(f"메인 실행 실패: {e}")
 
-# 단일 코인 분석 함수
+# 단일 코인 분석 함수 (OpenAI 통합)
 async def analyze_single_coin(symbol: str):
-    """단일 코인 전설급 분석 (월 5-7% 최적화)"""
-    master = LegendaryQuantMaster()
+    """단일 코인 전설급 분석 (월 5-7% 최적화) + OpenAI"""
+    openai_key = os.getenv('OPENAI_API_KEY')
+    master = LegendaryQuantMaster(openai_api_key=openai_key)
     
     try:
         price = pyupbit.get_current_price(symbol)
@@ -1421,15 +1844,37 @@ async def analyze_single_coin(symbol: str):
         signal = await master._analyze_legendary_coin(candidate, quantum_state)
         
         if signal:
-            print(f"\n🏆 {symbol} 전설급 분석 결과 (월 5-7% 최적화):")
+            ai_status = "🤖 AI 강화" if signal.ai_enhanced else "📊 기본 분석"
+            print(f"\n🏆 {symbol} 전설급 분석 결과 (월 5-7% 최적화) {ai_status}:")
             print(f"   액션: {signal.action}")
             print(f"   전설 점수: {signal.legendary_score:.3f}")
             print(f"   AI 설명: {signal.ai_explanation}")
             print(f"   양자 사이클: {signal.quantum_cycle}")
             print(f"   투자 권장: {signal.total_investment:,.0f}원")
+            if signal.ai_adjustment != 1.0:
+                print(f"   AI 조정: {signal.ai_adjustment:.2f}x")
             print(f"   익절 계획: {[f'{p:,.0f}' for p in signal.take_profits]} (0차/1차/2차)")
             print(f"   손절선: {signal.stop_loss:,.0f}원")
             
+            # AI 추가 정보
+            if signal.ai_market_sentiment:
+                sentiment = signal.ai_market_sentiment
+                print(f"\n🤖 OpenAI 분석:")
+                print(f"   시장 심리: {sentiment.get('market_sentiment', 0)}/100")
+                print(f"   투자 매력도: {sentiment.get('investment_attractiveness', 0)}/100")
+                print(f"   종합 추천도: {sentiment.get('overall_recommendation', 0)}/100")
+                print(f"   단기 전망: {sentiment.get('short_term_outlook', 'N/A')}")
+                if sentiment.get('reasoning'):
+                    print(f"   AI 근거: {sentiment['reasoning'][:100]}...")
+            
+            if signal.ai_fundamental:
+                fundamental = signal.ai_fundamental
+                print(f"\n🔬 AI 펀더멘털:")
+                print(f"   기술 혁신도: {fundamental.get('tech_innovation', 0)}/100")
+                print(f"   활용도: {fundamental.get('utility_score', 0)}/100")
+                print(f"   경쟁력: {fundamental.get('competitive_advantage', 0)}/100")
+                print(f"   성장 잠재력: {fundamental.get('growth_potential', 0)}/100")
+                
         return signal
         
     except Exception as e:
@@ -1438,10 +1883,15 @@ async def analyze_single_coin(symbol: str):
 
 # 실시간 모니터링 시작 함수
 async def start_monitoring():
-    """실시간 모니터링 시작"""
-    master = LegendaryQuantMaster()
+    """실시간 모니터링 시작 (OpenAI 통합)"""
+    openai_key = os.getenv('OPENAI_API_KEY')
+    master = LegendaryQuantMaster(openai_api_key=openai_key)
     
     print("🔄 실시간 모니터링 시작 (월금 매매 모드)")
+    if master.openai_analyzer.enabled:
+        print("🤖 OpenAI 분석 활성화")
+    else:
+        print("📊 기본 분석 모드")
     print("Ctrl+C로 중지할 수 있습니다.")
     
     try:
@@ -1449,6 +1899,45 @@ async def start_monitoring():
     except KeyboardInterrupt:
         print("\n⏹️ 실시간 모니터링을 중지합니다.")
         master.monitor.stop_monitoring()
+
+# OpenAI 테스트 함수
+async def test_openai():
+    """OpenAI 연결 테스트"""
+    openai_key = os.getenv('OPENAI_API_KEY')
+    if not openai_key:
+        print("❌ OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
+        print("다음과 같이 설정하세요:")
+        print("export OPENAI_API_KEY='your-api-key-here'")
+        return
+    
+    analyzer = OpenAIMarketAnalyzer(openai_key)
+    
+    if analyzer.enabled:
+        print("✅ OpenAI 연결 성공")
+        
+        # 간단한 테스트
+        try:
+            print("🧪 OpenAI 분석 테스트 중...")
+            test_data = {
+                'price': 50000000,
+                'volume_krw': 100000000000,
+                'ohlcv': None
+            }
+            cycle_info = {'cycle': 'accumulation', 'confidence': 0.7}
+            
+            result = await analyzer.analyze_market_sentiment('KRW-BTC', test_data, cycle_info)
+            
+            if result and result.get('market_sentiment'):
+                print(f"✅ OpenAI 테스트 성공!")
+                print(f"   시장 심리: {result['market_sentiment']}/100")
+                print(f"   분석 유형: {result.get('analysis_type', 'unknown')}")
+            else:
+                print("⚠️ OpenAI 응답이 예상과 다릅니다.")
+                
+        except Exception as e:
+            print(f"❌ OpenAI 테스트 실패: {e}")
+    else:
+        print("❌ OpenAI 초기화 실패")
 
 if __name__ == "__main__":
     import sys
@@ -1465,11 +1954,18 @@ if __name__ == "__main__":
         elif command == 'monitor':
             # 실시간 모니터링
             asyncio.run(start_monitoring())
+        elif command == 'test-openai':
+            # OpenAI 테스트
+            asyncio.run(test_openai())
         else:
             print("사용법:")
-            print("  python script.py              # 전체 전략 실행")
-            print("  python script.py analyze:BTC  # 단일 코인 분석")
-            print("  python script.py monitor      # 실시간 모니터링")
+            print("  python script.py                # 전체 전략 실행")
+            print("  python script.py analyze:BTC    # 단일 코인 분석")
+            print("  python script.py monitor        # 실시간 모니터링")
+            print("  python script.py test-openai    # OpenAI 연결 테스트")
+            print("")
+            print("OpenAI 설정:")
+            print("  export OPENAI_API_KEY='your-api-key-here'")
     else:
         # 기본 실행: 전체 전략
         asyncio.run(main())
