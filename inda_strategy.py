@@ -1322,7 +1322,7 @@ async def run_strategy(self, df=None, enable_trading=False):
 
 # ================== 실제 실행 및 데모 (원본 + IBKR 추가) ==================
 
-def main():
+async def main():
     """메인 실행 함수"""
     print("🇮🇳 인도 전설 투자전략 + IBKR 자동매매 시스템")
     print("=" * 70)
