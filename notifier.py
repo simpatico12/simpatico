@@ -3,7 +3,7 @@
 """
 🔔 퀸트프로젝트 통합 알림 시스템 (notifier.py)
 =================================================
-🏆 텔레그램 + 이메일 + SMS + 디스코드 + 슬랙 통합 알림
+🏆 텔레그램 + 이메일 + SMS + 디스코드 + 슬랙 + OpenAI 통합 알림
 
 ✨ 핵심 기능:
 - 다중 채널 통합 알림 시스템
@@ -14,9 +14,10 @@
 - 스팸 방지 및 중복 제거
 - 개인화된 알림 설정
 - 알림 성능 모니터링
+- OpenAI 스마트 메시지 생성
 
 Author: 퀸트마스터팀
-Version: 1.1.0 (멀티채널 + 스마트 라우팅)
+Version: 1.2.0 (멀티채널 + 스마트 라우팅 + OpenAI)
 """
 
 import asyncio
@@ -85,6 +86,13 @@ class NotifierConfig:
         self.KAKAO_REST_API_KEY = os.getenv('KAKAO_REST_API_KEY', '')
         self.KAKAO_ACCESS_TOKEN = os.getenv('KAKAO_ACCESS_TOKEN', '')
         
+        # OpenAI 설정
+        self.OPENAI_ENABLED = os.getenv('OPENAI_ENABLED', 'false').lower() == 'true'
+        self.OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+        self.OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
+        self.OPENAI_MAX_TOKENS = int(os.getenv('OPENAI_MAX_TOKENS', 150))
+        self.OPENAI_TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', 0.7))
+        
         # 알림 제어 설정
         self.NOTIFICATION_COOLDOWN = int(os.getenv('NOTIFICATION_COOLDOWN', 60))  # 중복 방지 시간
         self.MAX_NOTIFICATIONS_PER_HOUR = int(os.getenv('MAX_NOTIFICATIONS_PER_HOUR', 50))
@@ -92,9 +100,9 @@ class NotifierConfig:
         
         # 우선순위별 채널 설정
         self.PRIORITY_CHANNELS = {
-            'emergency': ['telegram', 'sms', 'email'],
-            'warning': ['telegram', 'discord'],
-            'info': ['telegram'],
+            'emergency': ['telegram', 'sms', 'email', 'openai'],
+            'warning': ['telegram', 'discord', 'openai'],
+            'info': ['telegram', 'openai'],
             'success': ['telegram'],
             'debug': ['discord']
         }
@@ -118,6 +126,7 @@ class NotificationMessage:
     channels: List[str] = field(default_factory=list)  # 특정 채널 지정
     retry_count: int = 0
     hash_id: str = field(init=False)
+    ai_enhanced: bool = False  # AI로 향상된 메시지인지 여부
     
     def __post_init__(self):
         # 메시지 해시 생성 (중복 방지용)
@@ -163,7 +172,8 @@ class NotificationHistory:
                     status TEXT,
                     timestamp DATETIME,
                     delivery_time REAL,
-                    error_message TEXT
+                    error_message TEXT,
+                    ai_enhanced INTEGER DEFAULT 0
                 )
             ''')
             
@@ -190,6 +200,19 @@ class NotificationHistory:
                 )
             ''')
             
+            # AI 응답 캐시 테이블
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ai_response_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    input_hash TEXT UNIQUE,
+                    input_text TEXT,
+                    response_text TEXT,
+                    model TEXT,
+                    created_at DATETIME,
+                    usage_count INTEGER DEFAULT 1
+                )
+            ''')
+            
             conn.commit()
             conn.close()
             
@@ -206,12 +229,13 @@ class NotificationHistory:
             cursor.execute('''
                 INSERT INTO notification_logs 
                 (hash_id, title, content, priority, category, channels, status, 
-                 timestamp, delivery_time, error_message)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 timestamp, delivery_time, error_message, ai_enhanced)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 message.hash_id, message.title, message.content[:500], 
                 message.priority, message.category, ','.join(channels),
-                status, message.timestamp.isoformat(), delivery_time, error_msg
+                status, message.timestamp.isoformat(), delivery_time, error_msg,
+                1 if message.ai_enhanced else 0
             ))
             
             conn.commit()
@@ -257,6 +281,49 @@ class NotificationHistory:
             if hour != current_hour:
                 del self.hourly_counts[hour]
     
+    def cache_ai_response(self, input_text: str, response_text: str, model: str):
+        """AI 응답 캐시 저장"""
+        try:
+            input_hash = hashlib.md5(input_text.encode()).hexdigest()
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO ai_response_cache 
+                (input_hash, input_text, response_text, model, created_at, usage_count)
+                VALUES (?, ?, ?, ?, ?, 
+                    COALESCE((SELECT usage_count + 1 FROM ai_response_cache WHERE input_hash = ?), 1))
+            ''', (input_hash, input_text, response_text, model, datetime.now().isoformat(), input_hash))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            self.logger.error(f"AI 응답 캐시 저장 실패: {e}")
+    
+    def get_cached_ai_response(self, input_text: str) -> Optional[str]:
+        """AI 응답 캐시 조회"""
+        try:
+            input_hash = hashlib.md5(input_text.encode()).hexdigest()
+            
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT response_text FROM ai_response_cache 
+                WHERE input_hash = ? AND created_at > ?
+            ''', (input_hash, (datetime.now() - timedelta(hours=24)).isoformat()))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result[0] if result else None
+            
+        except Exception as e:
+            self.logger.error(f"AI 응답 캐시 조회 실패: {e}")
+            return None
+    
     def get_statistics(self, days: int = 7) -> Dict[str, Any]:
         """알림 통계 조회"""
         try:
@@ -269,7 +336,8 @@ class NotificationHistory:
             cursor.execute('''
                 SELECT priority, COUNT(*) as count, 
                        AVG(delivery_time) as avg_time,
-                       SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count
+                       SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+                       SUM(ai_enhanced) as ai_enhanced_count
                 FROM notification_logs 
                 WHERE date(timestamp) >= ?
                 GROUP BY priority
@@ -277,13 +345,15 @@ class NotificationHistory:
             
             priority_stats = {}
             for row in cursor.fetchall():
-                priority, count, avg_time, success_count = row
+                priority, count, avg_time, success_count, ai_enhanced_count = row
                 success_rate = (success_count / count * 100) if count > 0 else 0
+                ai_usage_rate = (ai_enhanced_count / count * 100) if count > 0 else 0
                 
                 priority_stats[priority] = {
                     'count': count,
                     'avg_delivery_time': avg_time or 0,
-                    'success_rate': success_rate
+                    'success_rate': success_rate,
+                    'ai_usage_rate': ai_usage_rate
                 }
             
             # 채널별 통계
@@ -319,6 +389,228 @@ class NotificationHistory:
         except Exception as e:
             self.logger.error(f"통계 조회 실패: {e}")
             return {}
+
+# ============================================================================
+# 🤖 OpenAI 채널
+# ============================================================================
+class OpenAIChannel:
+    """OpenAI 스마트 메시지 생성 및 개선 채널"""
+    
+    def __init__(self, config: NotifierConfig):
+        self.config = config
+        self.session = None
+        self.logger = logging.getLogger('OpenAIChannel')
+        
+        # OpenAI 클라이언트 설정
+        self.headers = {
+            'Authorization': f'Bearer {self.config.OPENAI_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        # 메시지 유형별 프롬프트 템플릿
+        self.prompts = {
+            'enhance': """다음 알림 메시지를 더 명확하고 유용하게 개선해주세요. 
+금융/투자 전문용어는 유지하되, 읽기 쉽고 액션 아이템이 명확하도록 작성하세요.
+
+우선순위: {priority}
+카테고리: {category}
+원본 메시지: {content}
+
+개선된 메시지로 답변해주세요 (한국어):""",
+            
+            'summarize': """다음 상세한 정보를 간결한 알림 메시지로 요약해주세요.
+핵심 포인트만 포함하여 읽기 쉽게 작성하세요.
+
+정보: {content}
+
+요약된 알림 메시지 (한국어):""",
+            
+            'translate': """다음 메시지를 한국어로 번역하되, 금융/투자 용어는 적절히 현지화해주세요.
+
+원본: {content}
+
+번역된 메시지:""",
+            
+            'priority_analysis': """다음 알림 메시지의 우선순위를 분석하고 적절한 수준을 추천해주세요.
+emergency, warning, info, success, debug 중 하나를 선택하고 이유를 설명하세요.
+
+메시지: {content}
+
+분석 결과 (JSON 형식):
+{{"priority": "추천_우선순위", "reason": "선택_이유"}}""",
+            
+            'smart_notification': """퀸트프로젝트 투자 시스템을 위한 스마트 알림을 생성해주세요.
+다음 정보를 바탕으로 유용하고 액션 가능한 알림 메시지를 작성하세요.
+
+상황: {situation}
+데이터: {data}
+타겟 사용자: 개인투자자/퀀트 트레이더
+
+알림 메시지:"""
+        }
+    
+    async def send_message(self, message: NotificationMessage) -> Tuple[bool, str]:
+        """OpenAI로 메시지 개선 (실제 전송은 하지 않음)"""
+        if not self.config.OPENAI_ENABLED or not self.config.OPENAI_API_KEY:
+            return False, "OpenAI 설정 없음"
+        
+        try:
+            # 메시지 개선
+            enhanced_content = await self.enhance_message(message)
+            
+            if enhanced_content:
+                # 원본 메시지 업데이트
+                message.content = enhanced_content
+                message.ai_enhanced = True
+                return True, "메시지 AI 개선 완료"
+            else:
+                return False, "메시지 개선 실패"
+                
+        except Exception as e:
+            error_msg = f"OpenAI 처리 오류: {e}"
+            self.logger.error(error_msg)
+            return False, error_msg
+    
+    async def enhance_message(self, message: NotificationMessage) -> Optional[str]:
+        """메시지 개선"""
+        try:
+            # 캐시 확인
+            cache_key = f"{message.priority}_{message.category}_{message.content}"
+            cached_response = await self._get_cached_response(cache_key)
+            
+            if cached_response:
+                self.logger.info("AI 응답 캐시에서 조회")
+                return cached_response
+            
+            # OpenAI API 호출
+            prompt = self.prompts['enhance'].format(
+                priority=message.priority,
+                category=message.category,
+                content=message.content
+            )
+            
+            enhanced_content = await self._call_openai_api(prompt)
+            
+            # 캐시 저장
+            if enhanced_content:
+                await self._cache_response(cache_key, enhanced_content)
+            
+            return enhanced_content
+            
+        except Exception as e:
+            self.logger.error(f"메시지 개선 실패: {e}")
+            return None
+    
+    async def analyze_priority(self, content: str) -> Dict[str, str]:
+        """메시지 우선순위 AI 분석"""
+        try:
+            prompt = self.prompts['priority_analysis'].format(content=content)
+            response = await self._call_openai_api(prompt)
+            
+            if response:
+                try:
+                    return json.loads(response)
+                except json.JSONDecodeError:
+                    # JSON 파싱 실패시 기본값
+                    return {"priority": "info", "reason": "분석 실패"}
+            
+            return {"priority": "info", "reason": "AI 응답 없음"}
+            
+        except Exception as e:
+            self.logger.error(f"우선순위 분석 실패: {e}")
+            return {"priority": "info", "reason": f"오류: {e}"}
+    
+    async def generate_smart_notification(self, situation: str, data: Dict[str, Any]) -> Optional[str]:
+        """상황 기반 스마트 알림 생성"""
+        try:
+            data_str = json.dumps(data, ensure_ascii=False, indent=2)
+            
+            prompt = self.prompts['smart_notification'].format(
+                situation=situation,
+                data=data_str
+            )
+            
+            return await self._call_openai_api(prompt)
+            
+        except Exception as e:
+            self.logger.error(f"스마트 알림 생성 실패: {e}")
+            return None
+    
+    async def translate_message(self, content: str) -> Optional[str]:
+        """메시지 번역"""
+        try:
+            prompt = self.prompts['translate'].format(content=content)
+            return await self._call_openai_api(prompt)
+            
+        except Exception as e:
+            self.logger.error(f"메시지 번역 실패: {e}")
+            return None
+    
+    async def summarize_content(self, content: str) -> Optional[str]:
+        """내용 요약"""
+        try:
+            prompt = self.prompts['summarize'].format(content=content)
+            return await self._call_openai_api(prompt)
+            
+        except Exception as e:
+            self.logger.error(f"내용 요약 실패: {e}")
+            return None
+    
+    async def _call_openai_api(self, prompt: str) -> Optional[str]:
+        """OpenAI API 호출"""
+        try:
+            if not self.session:
+                self.session = aiohttp.ClientSession()
+            
+            payload = {
+                "model": self.config.OPENAI_MODEL,
+                "messages": [
+                    {"role": "system", "content": "당신은 퀸트프로젝트의 전문 투자 알림 어시스턴트입니다. 명확하고 유용한 메시지를 작성해주세요."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": self.config.OPENAI_MAX_TOKENS,
+                "temperature": self.config.OPENAI_TEMPERATURE
+            }
+            
+            async with self.session.post(
+                'https://api.openai.com/v1/chat/completions',
+                headers=self.headers,
+                json=payload,
+                timeout=30
+            ) as response:
+                
+                if response.status == 200:
+                    result = await response.json()
+                    content = result['choices'][0]['message']['content'].strip()
+                    return content
+                else:
+                    self.logger.error(f"OpenAI API 오류: {response.status}")
+                    return None
+                    
+        except Exception as e:
+            self.logger.error(f"OpenAI API 호출 실패: {e}")
+            return None
+    
+    async def _get_cached_response(self, cache_key: str) -> Optional[str]:
+        """캐시된 응답 조회"""
+        try:
+            # 간단한 메모리 캐시 (실제로는 데이터베이스 사용)
+            return None  # 캐시 미구현
+        except Exception:
+            return None
+    
+    async def _cache_response(self, cache_key: str, response: str):
+        """응답 캐시 저장"""
+        try:
+            # 캐시 저장 로직 (실제로는 데이터베이스 사용)
+            pass
+        except Exception:
+            pass
+    
+    async def close(self):
+        """세션 종료"""
+        if self.session:
+            await self.session.close()
 
 # ============================================================================
 # 📡 텔레그램 채널
@@ -418,6 +710,10 @@ class TelegramChannel:
         formatted += f"📋 <b>{message.title}</b>\n\n"
         formatted += f"{message.content}\n\n"
         
+        # AI 개선 표시
+        if message.ai_enhanced:
+            formatted += "🤖 <i>AI로 개선된 메시지</i>\n\n"
+        
         # 메타데이터 추가
         if message.metadata:
             formatted += "📄 <b>추가 정보:</b>\n"
@@ -478,7 +774,8 @@ class EmailChannel:
         }
         
         subject_prefix = priority_prefix.get(message.priority, '[📊]')
-        msg['Subject'] = f"{subject_prefix} {message.title}"
+        ai_suffix = " (AI 개선)" if message.ai_enhanced else ""
+        msg['Subject'] = f"{subject_prefix} {message.title}{ai_suffix}"
         msg['From'] = f"{self.config.EMAIL_FROM_NAME} <{self.config.EMAIL_USERNAME}>"
         msg['To'] = self.config.EMAIL_TO_ADDRESS
         
@@ -504,6 +801,7 @@ class EmailChannel:
         }
         
         color = priority_colors.get(message.priority, '#17a2b8')
+        ai_badge = '<span style="background-color: #6f42c1; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px;">🤖 AI 개선</span>' if message.ai_enhanced else ''
         
         html = f"""
         <!DOCTYPE html>
@@ -517,6 +815,7 @@ class EmailChannel:
                 .content {{ background-color: #f8f9fa; padding: 20px; }}
                 .metadata {{ background-color: #e9ecef; padding: 15px; margin-top: 15px; }}
                 .footer {{ text-align: center; padding: 10px; color: #6c757d; font-size: 12px; }}
+                .ai-badge {{ margin-top: 10px; }}
             </style>
         </head>
         <body>
@@ -524,6 +823,7 @@ class EmailChannel:
                 <div class="header">
                     <h1>🏆 퀸트프로젝트 알림</h1>
                     <h2>{message.title}</h2>
+                    <div class="ai-badge">{ai_badge}</div>
                 </div>
                 <div class="content">
                     <p>{message.content.replace(chr(10), '<br>')}</p>
@@ -554,6 +854,9 @@ class EmailChannel:
         text = f"🏆 퀸트프로젝트 알림\n\n"
         text += f"제목: {message.title}\n\n"
         text += f"{message.content}\n\n"
+        
+        if message.ai_enhanced:
+            text += "🤖 AI로 개선된 메시지\n\n"
         
         if message.metadata:
             text += "추가 정보:\n"
@@ -638,13 +941,17 @@ class DiscordChannel:
         
         color = priority_colors.get(message.priority, 0x0099ff)
         
+        title = f"🏆 {message.title}"
+        if message.ai_enhanced:
+            title += " 🤖"
+        
         embed = {
-            "title": f"🏆 {message.title}",
+            "title": title,
             "description": message.content,
             "color": color,
             "timestamp": message.timestamp.isoformat(),
             "footer": {
-                "text": f"우선순위: {message.priority.upper()} | 카테고리: {message.category}"
+                "text": f"우선순위: {message.priority.upper()} | 카테고리: {message.category}" + (" | AI 개선" if message.ai_enhanced else "")
             }
         }
         
@@ -730,15 +1037,19 @@ class SlackChannel:
         
         color = priority_colors.get(message.priority, 'good')
         
+        title = f"🏆 {message.title}"
+        if message.ai_enhanced:
+            title += " 🤖"
+        
         slack_message = {
             "channel": self.config.SLACK_CHANNEL,
             "username": "퀸트프로젝트",
             "icon_emoji": ":chart_with_upwards_trend:",
             "attachments": [{
                 "color": color,
-                "title": f"🏆 {message.title}",
+                "title": title,
                 "text": message.content,
-                "footer": f"우선순위: {message.priority.upper()} | 카테고리: {message.category}",
+                "footer": f"우선순위: {message.priority.upper()} | 카테고리: {message.category}" + (" | AI 개선" if message.ai_enhanced else ""),
                 "ts": int(message.timestamp.timestamp())
             }]
         }
@@ -821,9 +1132,13 @@ class SMSChannel:
         # 짧은 메시지 구성
         sms_text = f"{emoji} {message.title[:30]}"
         
+        # AI 표시
+        if message.ai_enhanced:
+            sms_text += " 🤖"
+        
         # 내용 요약 (100자 이내)
-        content_summary = message.content[:100]
-        if len(message.content) > 100:
+        content_summary = message.content[:90]
+        if len(message.content) > 90:
             content_summary += "..."
         
         sms_text += f"\n{content_summary}"
@@ -940,6 +1255,10 @@ class KakaoChannel:
         text = f"{emoji} 퀸트프로젝트 알림\n\n"
         text += f"📋 {message.title}\n\n"
         text += f"{message.content}\n\n"
+        
+        if message.ai_enhanced:
+            text += "🤖 AI로 개선된 메시지\n\n"
+        
         text += f"🕐 {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
         
         kakao_message = {
@@ -1009,6 +1328,10 @@ class MessageTemplateManager:
             'performance_report': {
                 'title': '📈 성과 보고서',
                 'format': '{period} 성과 요약\n\n총 수익률: {return_rate}\n거래 횟수: {trade_count}\n승률: {win_rate}'
+            },
+            'ai_analysis': {
+                'title': '🤖 AI 분석 결과',
+                'format': '{analysis_type} 분석이 완료되었습니다.\n\n주요 발견사항: {findings}\n추천 행동: {recommendations}'
             }
         }
     
@@ -1042,6 +1365,8 @@ class MessageTemplateManager:
             category = 'system'
         elif 'error' in template_name:
             category = 'error'
+        elif 'ai' in template_name:
+            category = 'ai'
         
         return NotificationMessage(
             title=title,
@@ -1074,7 +1399,8 @@ class UnifiedNotificationManager:
             'discord': DiscordChannel(self.config),
             'slack': SlackChannel(self.config),
             'sms': SMSChannel(self.config),
-            'kakao': KakaoChannel(self.config)
+            'kakao': KakaoChannel(self.config),
+            'openai': OpenAIChannel(self.config)
         }
         
         # 활성화된 채널 확인
@@ -1098,13 +1424,15 @@ class UnifiedNotificationManager:
             active.append('sms')
         if self.config.KAKAO_ENABLED and self.config.KAKAO_ACCESS_TOKEN:
             active.append('kakao')
+        if self.config.OPENAI_ENABLED and self.config.OPENAI_API_KEY:
+            active.append('openai')
         
         return active
     
     async def send_notification(self, message: Union[NotificationMessage, str], 
                               priority: str = 'info', category: str = 'general',
                               title: str = '알림', metadata: Dict[str, Any] = None,
-                              channels: List[str] = None) -> Dict[str, bool]:
+                              channels: List[str] = None, use_ai: bool = True) -> Dict[str, bool]:
         """통합 알림 전송"""
         
         # 문자열이면 NotificationMessage로 변환
@@ -1116,6 +1444,16 @@ class UnifiedNotificationManager:
                 category=category,
                 metadata=metadata or {}
             )
+        
+        # AI 개선 적용 (OpenAI 활성화 시)
+        if use_ai and 'openai' in self.active_channels and not message.ai_enhanced:
+            try:
+                openai_channel = self.channels['openai']
+                success, _ = await openai_channel.send_message(message)
+                if success:
+                    self.logger.info("메시지가 AI로 개선되었습니다")
+            except Exception as e:
+                self.logger.warning(f"AI 개선 실패, 원본 메시지 사용: {e}")
         
         # 중복 체크
         if self.history.is_duplicate(message):
@@ -1129,7 +1467,8 @@ class UnifiedNotificationManager:
         
         # 전송할 채널 결정
         target_channels = channels or message.channels or self.config.PRIORITY_CHANNELS.get(message.priority, ['telegram'])
-        target_channels = [ch for ch in target_channels if ch in self.active_channels]
+        # OpenAI는 실제 전송 채널이 아니므로 제외
+        target_channels = [ch for ch in target_channels if ch in self.active_channels and ch != 'openai']
         
         if not target_channels:
             self.logger.warning("전송 가능한 채널이 없습니다")
@@ -1170,11 +1509,11 @@ class UnifiedNotificationManager:
         self.logger.info(f"알림 전송 완료: {success_count}/{len(target_channels)} 성공")
         return results
     
-    async def send_template_notification(self, template_name: str, **kwargs) -> Dict[str, bool]:
+    async def send_template_notification(self, template_name: str, use_ai: bool = True, **kwargs) -> Dict[str, bool]:
         """템플릿 기반 알림 전송"""
         try:
             message = self.template_manager.create_message_from_template(template_name, **kwargs)
-            return await self.send_notification(message)
+            return await self.send_notification(message, use_ai=use_ai)
         except Exception as e:
             self.logger.error(f"템플릿 알림 전송 실패: {e}")
             return {}
@@ -1182,16 +1521,70 @@ class UnifiedNotificationManager:
     async def send_emergency_notification(self, title: str, content: str, 
                                         metadata: Dict[str, Any] = None) -> Dict[str, bool]:
         """응급 알림 전송 (모든 채널)"""
+        # OpenAI 제외한 모든 활성 채널
+        emergency_channels = [ch for ch in self.active_channels if ch != 'openai']
+        
         message = NotificationMessage(
             title=title,
             content=content,
             priority='emergency',
             category='system',
             metadata=metadata or {},
-            channels=list(self.active_channels)  # 모든 활성 채널
+            channels=emergency_channels
         )
         
         return await self.send_notification(message)
+    
+    async def send_ai_enhanced_notification(self, content: str, priority: str = 'info',
+                                          title: str = 'AI 분석 알림') -> Dict[str, bool]:
+        """AI로 개선된 알림 전송"""
+        if 'openai' not in self.active_channels:
+            self.logger.warning("OpenAI가 비활성화되어 일반 알림으로 전송")
+            return await self.send_notification(content, priority=priority, title=title, use_ai=False)
+        
+        # AI로 우선순위 분석
+        openai_channel = self.channels['openai']
+        priority_analysis = await openai_channel.analyze_priority(content)
+        analyzed_priority = priority_analysis.get('priority', priority)
+        
+        message = NotificationMessage(
+            title=title,
+            content=content,
+            priority=analyzed_priority,
+            category='ai',
+            metadata={'ai_analysis': priority_analysis}
+        )
+        
+        return await self.send_notification(message, use_ai=True)
+    
+    async def generate_smart_notification(self, situation: str, data: Dict[str, Any]) -> Dict[str, bool]:
+        """상황 기반 스마트 알림 생성 및 전송"""
+        if 'openai' not in self.active_channels:
+            self.logger.error("OpenAI가 비활성화되어 스마트 알림을 생성할 수 없습니다")
+            return {}
+        
+        try:
+            openai_channel = self.channels['openai']
+            smart_content = await openai_channel.generate_smart_notification(situation, data)
+            
+            if smart_content:
+                message = NotificationMessage(
+                    title=f"🤖 스마트 알림: {situation}",
+                    content=smart_content,
+                    priority='info',
+                    category='ai',
+                    metadata=data,
+                    ai_enhanced=True
+                )
+                
+                return await self.send_notification(message, use_ai=False)  # 이미 AI로 생성됨
+            else:
+                self.logger.error("스마트 알림 생성 실패")
+                return {}
+                
+        except Exception as e:
+            self.logger.error(f"스마트 알림 생성 오류: {e}")
+            return {}
     
     async def test_all_channels(self) -> Dict[str, bool]:
         """모든 채널 테스트"""
@@ -1203,7 +1596,10 @@ class UnifiedNotificationManager:
         )
         
         results = {}
-        for channel_name in self.active_channels:
+        # OpenAI 제외한 실제 전송 채널만 테스트
+        test_channels = [ch for ch in self.active_channels if ch != 'openai']
+        
+        for channel_name in test_channels:
             try:
                 channel = self.channels[channel_name]
                 success, error_msg = await channel.send_message(test_message)
@@ -1218,7 +1614,51 @@ class UnifiedNotificationManager:
                 results[channel_name] = False
                 self.logger.error(f"❌ {channel_name} 테스트 예외: {e}")
         
+        # OpenAI 기능 테스트
+        if 'openai' in self.active_channels:
+            try:
+                openai_channel = self.channels['openai']
+                test_content = await openai_channel.enhance_message(test_message)
+                results['openai'] = test_content is not None
+                
+                if results['openai']:
+                    self.logger.info("✅ OpenAI 테스트 성공")
+                else:
+                    self.logger.error("❌ OpenAI 테스트 실패")
+                    
+            except Exception as e:
+                results['openai'] = False
+                self.logger.error(f"❌ OpenAI 테스트 예외: {e}")
+        
         return results
+    
+    async def get_ai_statistics(self) -> Dict[str, Any]:
+        """AI 사용 통계 조회"""
+        if 'openai' not in self.active_channels:
+            return {"error": "OpenAI 비활성화"}
+        
+        try:
+            stats = self.get_statistics(7)
+            
+            # AI 관련 통계 추가
+            ai_stats = {
+                "ai_enabled": True,
+                "ai_model": self.config.OPENAI_MODEL,
+                "ai_usage_by_priority": {},
+                "total_ai_enhanced": 0
+            }
+            
+            # 우선순위별 AI 사용률 계산
+            for priority, data in stats.get('priority_stats', {}).items():
+                ai_stats["ai_usage_by_priority"][priority] = data.get('ai_usage_rate', 0)
+                ai_stats["total_ai_enhanced"] += data.get('count', 0) * data.get('ai_usage_rate', 0) / 100
+            
+            stats.update(ai_stats)
+            return stats
+            
+        except Exception as e:
+            self.logger.error(f"AI 통계 조회 실패: {e}")
+            return {"error": str(e)}
     
     def get_statistics(self, days: int = 7) -> Dict[str, Any]:
         """알림 통계 조회"""
@@ -1246,17 +1686,18 @@ def get_notifier() -> UnifiedNotificationManager:
     return _global_notifier
 
 async def send_quick_notification(message: str, priority: str = 'info', 
-                                title: str = '퀸트프로젝트 알림') -> Dict[str, bool]:
+                                title: str = '퀸트프로젝트 알림', use_ai: bool = True) -> Dict[str, bool]:
     """빠른 알림 전송"""
     notifier = get_notifier()
-    return await notifier.send_notification(message, priority=priority, title=title)
+    return await notifier.send_notification(message, priority=priority, title=title, use_ai=use_ai)
 
 async def send_trading_signal(strategy: str, action: str, symbol: str, 
-                            price: float, quantity: int) -> Dict[str, bool]:
+                            price: float, quantity: int, use_ai: bool = True) -> Dict[str, bool]:
     """거래 신호 알림"""
     notifier = get_notifier()
     return await notifier.send_template_notification(
         'trading_signal',
+        use_ai=use_ai,
         strategy=strategy,
         action=action,
         symbol=symbol,
@@ -1265,22 +1706,24 @@ async def send_trading_signal(strategy: str, action: str, symbol: str,
     )
 
 async def send_portfolio_alert(alert_type: str, pnl: float, total_value: float, 
-                             risk_level: str) -> Dict[str, bool]:
+                             risk_level: str, use_ai: bool = True) -> Dict[str, bool]:
     """포트폴리오 알림"""
     notifier = get_notifier()
     return await notifier.send_template_notification(
         'portfolio_alert',
+        use_ai=use_ai,
         alert_type=alert_type,
         pnl=pnl,
         total_value=total_value,
         risk_level=risk_level
     )
 
-async def send_system_error(component: str, error_message: str) -> Dict[str, bool]:
+async def send_system_error(component: str, error_message: str, use_ai: bool = True) -> Dict[str, bool]:
     """시스템 오류 알림"""
     notifier = get_notifier()
     return await notifier.send_template_notification(
         'system_error',
+        use_ai=use_ai,
         component=component,
         error_message=error_message,
         timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1291,13 +1734,30 @@ async def send_emergency_alert(title: str, content: str) -> Dict[str, bool]:
     notifier = get_notifier()
     return await notifier.send_emergency_notification(title, content)
 
+async def send_ai_analysis_result(analysis_type: str, findings: str, 
+                                recommendations: str) -> Dict[str, bool]:
+    """AI 분석 결과 알림"""
+    notifier = get_notifier()
+    return await notifier.send_template_notification(
+        'ai_analysis',
+        use_ai=True,
+        analysis_type=analysis_type,
+        findings=findings,
+        recommendations=recommendations
+    )
+
+async def generate_smart_alert(situation: str, **data) -> Dict[str, bool]:
+    """스마트 알림 생성"""
+    notifier = get_notifier()
+    return await notifier.generate_smart_notification(situation, data)
+
 # ============================================================================
 # 🏁 메인 실행부 (테스트용)
 # ============================================================================
 async def main():
     """메인 테스트 함수"""
     print("🔔" + "="*70)
-    print("🔔 퀸트프로젝트 통합 알림 시스템 v1.1.0")
+    print("🔔 퀸트프로젝트 통합 알림 시스템 v1.2.0")
     print("🔔" + "="*70)
     print("✨ 다중 채널 통합 알림")
     print("✨ 우선순위별 라우팅")
@@ -1305,6 +1765,7 @@ async def main():
     print("✨ 알림 히스토리 관리")
     print("✨ 스팸 방지 시스템")
     print("✨ 성능 모니터링")
+    print("🤖 OpenAI 스마트 메시지 생성")
     print("🔔" + "="*70)
     
     # 알림 관리자 생성
@@ -1322,17 +1783,39 @@ async def main():
         # 다양한 알림 테스트
         print("\n📨 알림 테스트 시작...")
         
-        # 일반 알림
-        await send_quick_notification("시스템이 정상적으로 시작되었습니다.", 'success')
+        # 일반 알림 (AI 개선 포함)
+        await send_quick_notification("시스템이 정상적으로 시작되었습니다.", 'success', use_ai=True)
         
-        # 거래 신호 알림
-        await send_trading_signal('미국전략', 'BUY', 'AAPL', 150.25, 100)
+        # 거래 신호 알림 (AI 개선 포함)
+        await send_trading_signal('미국전략', 'BUY', 'AAPL', 150.25, 100, use_ai=True)
         
         # 포트폴리오 알림
-        await send_portfolio_alert('수익 달성', 1500000, 50000000, '낮음')
+        await send_portfolio_alert('수익 달성', 1500000, 50000000, '낮음', use_ai=True)
         
-        # 통계 조회
-        print("\n📊 알림 통계:")
+        # AI 분석 결과 알림
+        await send_ai_analysis_result(
+            '시장 동향 분석',
+            '기술주 섹터의 상승 모멘텀이 지속되고 있습니다.',
+            'AAPL, MSFT 등 대형 기술주 비중 확대를 권장합니다.'
+        )
+        
+        # 스마트 알림 생성 테스트
+        if 'openai' in notifier.active_channels:
+            print("\n🤖 스마트 알림 생성 테스트...")
+            await generate_smart_alert(
+                '포트폴리오 리밸런싱 필요',
+                current_allocation={'TECH': 60, 'FINANCE': 25, 'ENERGY': 15},
+                target_allocation={'TECH': 50, 'FINANCE': 30, 'ENERGY': 20},
+                total_value=100000000
+            )
+        
+        # AI 통계 조회
+        print("\n📊 AI 알림 통계:")
+        ai_stats = await notifier.get_ai_statistics()
+        print(json.dumps(ai_stats, indent=2, ensure_ascii=False))
+        
+        # 일반 통계 조회
+        print("\n📈 전체 알림 통계:")
         stats = notifier.get_statistics(7)
         print(json.dumps(stats, indent=2, ensure_ascii=False))
         
