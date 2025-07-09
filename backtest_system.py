@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🏆 퀸트프로젝트 통합 백테스팅 시스템 v2.0
+🏆 퀸트프로젝트 통합 백테스팅 시스템 v2.1
 =============================================
-🇺🇸 미국 + 🇯🇵 일본 + 🇮🇳 인도 + 💰 암호화폐 통합 백테스팅
+🇺🇸 미국 + 🇯🇵 일본 + 🇮🇳 인도 + 💰 암호화폐 통합 백테스팅 + 🤖 OpenAI 분석
 
 ✨ 핵심 기능:
 - 4가지 전략 통합 백테스팅
@@ -12,8 +12,9 @@
 - 리스크 분석
 - 성과 비교 분석
 - CSV/JSON 내보내기
+- 🤖 OpenAI 기반 AI 분석 및 추천
 
-Author: 퀸트팀 | Version: 2.0.0
+Author: 퀸트팀 | Version: 2.1.0
 """
 
 import asyncio
@@ -38,6 +39,14 @@ from plotly.subplots import make_subplots
 import io
 import zipfile
 
+# OpenAI 통합
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    print("⚠️ OpenAI 라이브러리가 설치되지 않았습니다. pip install openai를 실행하세요.")
+
 warnings.filterwarnings('ignore')
 
 # ============================================================================
@@ -58,6 +67,14 @@ RESULTS_DIR = Path("backtest_results")
 DATA_DIR.mkdir(exist_ok=True)
 RESULTS_DIR.mkdir(exist_ok=True)
 
+# OpenAI 설정
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+if OPENAI_AVAILABLE and OPENAI_API_KEY:
+    openai.api_key = OPENAI_API_KEY
+    logger.info("🤖 OpenAI API 키가 설정되었습니다.")
+else:
+    logger.warning("⚠️ OpenAI API 키가 설정되지 않았습니다. 환경변수 OPENAI_API_KEY를 설정하세요.")
+
 # ============================================================================
 # 📊 데이터 클래스
 # ============================================================================
@@ -72,6 +89,8 @@ class BacktestConfig:
     slippage: float
     enabled_strategies: List[str]
     risk_free_rate: float = 0.02
+    use_openai: bool = True
+    openai_model: str = "gpt-4"
 
 @dataclass
 class Trade:
@@ -84,6 +103,8 @@ class Trade:
     commission: float
     strategy: str
     reason: str = ""
+    ai_confidence: float = 0.0
+    ai_reason: str = ""
 
 @dataclass
 class Position:
@@ -96,6 +117,7 @@ class Position:
     realized_pnl: float
     strategy: str
     entry_date: datetime
+    ai_score: float = 0.0
 
 @dataclass
 class PerformanceMetrics:
@@ -111,11 +133,423 @@ class PerformanceMetrics:
     volatility: float
     calmar_ratio: float
 
+@dataclass
+class AIAnalysis:
+    """AI 분석 결과"""
+    market_sentiment: str
+    risk_level: str
+    recommendation: str
+    confidence_score: float
+    key_insights: List[str]
+    sector_analysis: Dict[str, str]
+    portfolio_suggestions: List[str]
+    risk_warnings: List[str]
+
 # ============================================================================
-# 🎯 전략 인터페이스
+# 🤖 OpenAI 분석 클래스
+# ============================================================================
+class OpenAIAnalyzer:
+    """OpenAI 기반 시장 분석 및 추천 시스템"""
+    
+    def __init__(self, api_key: str = None, model: str = "gpt-4"):
+        self.api_key = api_key or OPENAI_API_KEY
+        self.model = model
+        self.available = OPENAI_AVAILABLE and bool(self.api_key)
+        
+        if self.available:
+            openai.api_key = self.api_key
+    
+    async def analyze_market_data(self, symbol: str, data: pd.DataFrame, 
+                                  strategy_signals: Dict = None) -> Dict:
+        """시장 데이터 AI 분석"""
+        if not self.available:
+            return self._fallback_analysis()
+        
+        try:
+            # 데이터 요약 생성
+            market_summary = self._generate_market_summary(symbol, data)
+            
+            # AI 프롬프트 생성
+            prompt = self._create_market_analysis_prompt(symbol, market_summary, strategy_signals)
+            
+            # OpenAI API 호출
+            response = await self._call_openai_api(prompt)
+            
+            # 응답 파싱
+            analysis = self._parse_ai_response(response)
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"OpenAI 시장 분석 실패 {symbol}: {e}")
+            return self._fallback_analysis()
+    
+    async def analyze_portfolio_performance(self, portfolio_data: Dict, 
+                                            strategy_results: Dict) -> AIAnalysis:
+        """포트폴리오 성과 AI 분석"""
+        if not self.available:
+            return self._fallback_portfolio_analysis()
+        
+        try:
+            # 포트폴리오 요약 생성
+            portfolio_summary = self._generate_portfolio_summary(portfolio_data, strategy_results)
+            
+            # AI 프롬프트 생성
+            prompt = self._create_portfolio_analysis_prompt(portfolio_summary)
+            
+            # OpenAI API 호출
+            response = await self._call_openai_api(prompt)
+            
+            # 응답 파싱
+            analysis = self._parse_portfolio_response(response)
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"OpenAI 포트폴리오 분석 실패: {e}")
+            return self._fallback_portfolio_analysis()
+    
+    async def generate_trading_insights(self, symbol: str, technical_data: Dict,
+                                        fundamental_data: Dict = None) -> Dict:
+        """거래 인사이트 생성"""
+        if not self.available:
+            return {'insights': ['AI 분석을 사용할 수 없습니다.'], 'confidence': 0.5}
+        
+        try:
+            # 인사이트 프롬프트 생성
+            prompt = self._create_trading_insights_prompt(symbol, technical_data, fundamental_data)
+            
+            # OpenAI API 호출
+            response = await self._call_openai_api(prompt)
+            
+            # 인사이트 파싱
+            insights = self._parse_trading_insights(response)
+            
+            return insights
+            
+        except Exception as e:
+            logger.error(f"OpenAI 거래 인사이트 생성 실패 {symbol}: {e}")
+            return {'insights': ['분석 실패'], 'confidence': 0.5}
+    
+    async def optimize_portfolio_allocation(self, strategies_performance: Dict,
+                                            market_conditions: Dict) -> Dict:
+        """포트폴리오 배분 최적화 AI 추천"""
+        if not self.available:
+            return self._fallback_allocation()
+        
+        try:
+            # 최적화 프롬프트 생성
+            prompt = self._create_optimization_prompt(strategies_performance, market_conditions)
+            
+            # OpenAI API 호출
+            response = await self._call_openai_api(prompt)
+            
+            # 배분 파싱
+            allocation = self._parse_allocation_response(response)
+            
+            return allocation
+            
+        except Exception as e:
+            logger.error(f"OpenAI 포트폴리오 최적화 실패: {e}")
+            return self._fallback_allocation()
+    
+    async def _call_openai_api(self, prompt: str, max_tokens: int = 1500) -> str:
+        """OpenAI API 호출"""
+        try:
+            response = await asyncio.to_thread(
+                openai.ChatCompletion.create,
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "당신은 전문적인 퀀트 투자 분석가입니다. 정확하고 실용적인 분석을 제공해주세요."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=max_tokens,
+                temperature=0.3
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            logger.error(f"OpenAI API 호출 실패: {e}")
+            raise
+    
+    def _generate_market_summary(self, symbol: str, data: pd.DataFrame) -> str:
+        """시장 데이터 요약 생성"""
+        try:
+            if len(data) < 5:
+                return f"{symbol}: 데이터 부족"
+            
+            current_price = data['Close'].iloc[-1]
+            price_change = (current_price / data['Close'].iloc[-5] - 1) * 100
+            volume = data['Volume'].iloc[-1]
+            avg_volume = data['Volume'].rolling(20).mean().iloc[-1]
+            
+            # 기술적 지표
+            rsi = self._calculate_rsi(data['Close'])
+            ma20 = data['Close'].rolling(20).mean().iloc[-1]
+            ma50 = data['Close'].rolling(50).mean().iloc[-1] if len(data) >= 50 else ma20
+            
+            summary = f"""
+            심볼: {symbol}
+            현재가: {current_price:.2f}
+            5일 변동률: {price_change:.2f}%
+            거래량: {volume:,.0f} (평균 대비 {volume/avg_volume:.2f}배)
+            RSI: {rsi:.1f}
+            MA20: {ma20:.2f}
+            MA50: {ma50:.2f}
+            가격 위치: MA20 {'위' if current_price > ma20 else '아래'}, MA50 {'위' if current_price > ma50 else '아래'}
+            """
+            
+            return summary
+            
+        except Exception as e:
+            return f"{symbol}: 요약 생성 실패 - {str(e)}"
+    
+    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> float:
+        """RSI 계산"""
+        try:
+            delta = prices.diff()
+            gain = delta.where(delta > 0, 0).rolling(period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            return float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
+        except:
+            return 50.0
+    
+    def _create_market_analysis_prompt(self, symbol: str, market_summary: str,
+                                       strategy_signals: Dict = None) -> str:
+        """시장 분석 프롬프트 생성"""
+        signals_text = ""
+        if strategy_signals:
+            signals_text = f"전략 신호: {json.dumps(strategy_signals, indent=2)}"
+        
+        prompt = f"""
+        다음 시장 데이터를 분석하고 투자 관점에서 평가해주세요:
+        
+        {market_summary}
+        
+        {signals_text}
+        
+        다음 형식으로 JSON 응답해주세요:
+        {{
+            "action": "buy/sell/hold",
+            "confidence": 0.0-1.0,
+            "reasoning": "분석 근거",
+            "risk_level": "low/medium/high",
+            "price_target": "목표가 (선택사항)",
+            "stop_loss": "손절가 (선택사항)",
+            "key_factors": ["주요 요인1", "주요 요인2"],
+            "market_sentiment": "bullish/bearish/neutral"
+        }}
+        """
+        
+        return prompt
+    
+    def _create_portfolio_analysis_prompt(self, portfolio_summary: str) -> str:
+        """포트폴리오 분석 프롬프트 생성"""
+        prompt = f"""
+        다음 포트폴리오 성과를 분석하고 개선 방안을 제시해주세요:
+        
+        {portfolio_summary}
+        
+        다음 형식으로 JSON 응답해주세요:
+        {{
+            "overall_performance": "excellent/good/average/poor",
+            "market_sentiment": "bullish/bearish/neutral",
+            "risk_level": "low/medium/high",
+            "recommendation": "상세 추천사항",
+            "confidence_score": 0.0-1.0,
+            "key_insights": ["인사이트1", "인사이트2"],
+            "sector_analysis": {{"sector1": "분석1", "sector2": "분석2"}},
+            "portfolio_suggestions": ["제안1", "제안2"],
+            "risk_warnings": ["위험요소1", "위험요소2"]
+        }}
+        """
+        
+        return prompt
+    
+    def _create_trading_insights_prompt(self, symbol: str, technical_data: Dict,
+                                        fundamental_data: Dict = None) -> str:
+        """거래 인사이트 프롬프트 생성"""
+        fundamental_text = ""
+        if fundamental_data:
+            fundamental_text = f"펀더멘털 데이터: {json.dumps(fundamental_data, indent=2)}"
+        
+        prompt = f"""
+        {symbol}에 대한 거래 인사이트를 생성해주세요:
+        
+        기술적 데이터: {json.dumps(technical_data, indent=2)}
+        {fundamental_text}
+        
+        다음 형식으로 JSON 응답해주세요:
+        {{
+            "insights": ["인사이트1", "인사이트2", "인사이트3"],
+            "confidence": 0.0-1.0,
+            "entry_strategy": "진입 전략",
+            "exit_strategy": "청산 전략",
+            "risk_management": "리스크 관리 방안",
+            "timeframe": "추천 투자 기간"
+        }}
+        """
+        
+        return prompt
+    
+    def _create_optimization_prompt(self, strategies_performance: Dict,
+                                    market_conditions: Dict) -> str:
+        """포트폴리오 최적화 프롬프트 생성"""
+        prompt = f"""
+        다음 전략 성과와 시장 상황을 바탕으로 최적의 포트폴리오 배분을 추천해주세요:
+        
+        전략 성과: {json.dumps(strategies_performance, indent=2)}
+        시장 상황: {json.dumps(market_conditions, indent=2)}
+        
+        다음 형식으로 JSON 응답해주세요:
+        {{
+            "recommended_allocation": {{"US_Strategy": 0.4, "Japan_Strategy": 0.25, "Crypto_Strategy": 0.2, "India_Strategy": 0.15}},
+            "reasoning": "배분 근거",
+            "expected_return": "예상 수익률",
+            "risk_assessment": "리스크 평가",
+            "rebalancing_frequency": "리밸런싱 주기",
+            "market_outlook": "시장 전망"
+        }}
+        """
+        
+        return prompt
+    
+    def _parse_ai_response(self, response: str) -> Dict:
+        """AI 응답 파싱"""
+        try:
+            # JSON 파싱 시도
+            return json.loads(response)
+        except:
+            # 파싱 실패시 기본값 반환
+            return {
+                'action': 'hold',
+                'confidence': 0.5,
+                'reasoning': response[:200] + '...' if len(response) > 200 else response,
+                'risk_level': 'medium',
+                'key_factors': ['AI 파싱 실패'],
+                'market_sentiment': 'neutral'
+            }
+    
+    def _parse_portfolio_response(self, response: str) -> AIAnalysis:
+        """포트폴리오 응답 파싱"""
+        try:
+            data = json.loads(response)
+            return AIAnalysis(
+                market_sentiment=data.get('market_sentiment', 'neutral'),
+                risk_level=data.get('risk_level', 'medium'),
+                recommendation=data.get('recommendation', '분석 결과 없음'),
+                confidence_score=data.get('confidence_score', 0.5),
+                key_insights=data.get('key_insights', []),
+                sector_analysis=data.get('sector_analysis', {}),
+                portfolio_suggestions=data.get('portfolio_suggestions', []),
+                risk_warnings=data.get('risk_warnings', [])
+            )
+        except:
+            return self._fallback_portfolio_analysis()
+    
+    def _parse_trading_insights(self, response: str) -> Dict:
+        """거래 인사이트 파싱"""
+        try:
+            return json.loads(response)
+        except:
+            return {
+                'insights': ['AI 분석 파싱 실패'],
+                'confidence': 0.5,
+                'entry_strategy': '신중한 접근',
+                'exit_strategy': '손실 제한',
+                'risk_management': '분산 투자',
+                'timeframe': '중기'
+            }
+    
+    def _parse_allocation_response(self, response: str) -> Dict:
+        """배분 응답 파싱"""
+        try:
+            return json.loads(response)
+        except:
+            return self._fallback_allocation()
+    
+    def _generate_portfolio_summary(self, portfolio_data: Dict, strategy_results: Dict) -> str:
+        """포트폴리오 요약 생성"""
+        try:
+            total_return = portfolio_data.get('total_return', 0)
+            initial_capital = portfolio_data.get('initial_capital', 1000000000)
+            final_value = portfolio_data.get('final_value', initial_capital)
+            
+            summary = f"""
+            포트폴리오 성과 요약:
+            - 총 수익률: {total_return:.2f}%
+            - 초기 자본: {initial_capital:,.0f}원
+            - 최종 가치: {final_value:,.0f}원
+            - 손익: {final_value - initial_capital:,.0f}원
+            
+            전략별 성과:
+            """
+            
+            for strategy_name, result in strategy_results.items():
+                if 'error' not in result and 'performance' in result:
+                    perf = result['performance']
+                    summary += f"""
+            {strategy_name}:
+            - 수익률: {perf.total_return:.2f}%
+            - 샤프비율: {perf.sharpe_ratio:.2f}
+            - 최대낙폭: {perf.max_drawdown:.2f}%
+            - 승률: {perf.win_rate:.1f}%
+            - 거래수: {perf.num_trades}회
+            """
+            
+            return summary
+            
+        except Exception as e:
+            return f"포트폴리오 요약 생성 실패: {str(e)}"
+    
+    def _fallback_analysis(self) -> Dict:
+        """AI 분석 실패시 대체 분석"""
+        return {
+            'action': 'hold',
+            'confidence': 0.5,
+            'reasoning': 'AI 분석을 사용할 수 없어 보수적 접근을 권장합니다.',
+            'risk_level': 'medium',
+            'key_factors': ['AI 분석 불가'],
+            'market_sentiment': 'neutral'
+        }
+    
+    def _fallback_portfolio_analysis(self) -> AIAnalysis:
+        """포트폴리오 AI 분석 실패시 대체 분석"""
+        return AIAnalysis(
+            market_sentiment='neutral',
+            risk_level='medium',
+            recommendation='AI 분석을 사용할 수 없어 현재 포트폴리오를 유지하는 것을 권장합니다.',
+            confidence_score=0.5,
+            key_insights=['AI 분석 불가능'],
+            sector_analysis={},
+            portfolio_suggestions=['분산 투자 유지'],
+            risk_warnings=['시장 변동성 주의']
+        )
+    
+    def _fallback_allocation(self) -> Dict:
+        """배분 최적화 실패시 기본 배분"""
+        return {
+            'recommended_allocation': {
+                'US_Strategy': 0.40,
+                'Japan_Strategy': 0.25,
+                'Crypto_Strategy': 0.20,
+                'India_Strategy': 0.15
+            },
+            'reasoning': 'AI 분석 불가로 기본 균형 배분을 유지합니다.',
+            'expected_return': '중간 수준',
+            'risk_assessment': '보통',
+            'rebalancing_frequency': '월간',
+            'market_outlook': '중립'
+        }
+
+# ============================================================================
+# 🎯 전략 인터페이스 (AI 통합)
 # ============================================================================
 class StrategyInterface:
-    """전략 인터페이스"""
+    """전략 인터페이스 (AI 분석 통합)"""
     
     def __init__(self, name: str, initial_capital: float):
         self.name = name
@@ -125,10 +559,71 @@ class StrategyInterface:
         self.trades: List[Trade] = []
         self.equity_curve: List[float] = [initial_capital]
         self.dates: List[datetime] = []
+        self.ai_analyzer = OpenAIAnalyzer()
     
     async def generate_signals(self, symbol: str, data: pd.DataFrame) -> Dict:
         """신호 생성 (오버라이드 필요)"""
         raise NotImplementedError
+    
+    async def generate_ai_enhanced_signals(self, symbol: str, data: pd.DataFrame) -> Dict:
+        """AI 강화 신호 생성"""
+        try:
+            # 기본 전략 신호 생성
+            base_signals = await self.generate_signals(symbol, data)
+            
+            # AI 분석 추가
+            if self.ai_analyzer.available:
+                ai_analysis = await self.ai_analyzer.analyze_market_data(symbol, data, base_signals)
+                
+                # AI 분석 결과를 기본 신호와 통합
+                enhanced_signals = self._integrate_ai_signals(base_signals, ai_analysis)
+                
+                return enhanced_signals
+            else:
+                return base_signals
+                
+        except Exception as e:
+            logger.error(f"AI 강화 신호 생성 실패 {symbol}: {e}")
+            return await self.generate_signals(symbol, data)
+    
+    def _integrate_ai_signals(self, base_signals: Dict, ai_analysis: Dict) -> Dict:
+        """기본 신호와 AI 분석 통합"""
+        try:
+            base_action = base_signals.get('action', 'hold')
+            base_confidence = base_signals.get('confidence', 0.5)
+            
+            ai_action = ai_analysis.get('action', 'hold')
+            ai_confidence = ai_analysis.get('confidence', 0.5)
+            
+            # 신호 통합 로직
+            if base_action == ai_action:
+                # 같은 신호인 경우 신뢰도 증가
+                final_confidence = min(0.95, (base_confidence + ai_confidence) / 2 * 1.2)
+                final_action = base_action
+            elif base_action == 'hold' or ai_action == 'hold':
+                # 한쪽이 hold인 경우
+                final_action = 'hold' if base_action == 'hold' else ai_action
+                final_confidence = min(base_confidence, ai_confidence) * 0.8
+            else:
+                # 반대 신호인 경우 보수적 접근
+                final_action = 'hold'
+                final_confidence = 0.3
+            
+            # 통합 결과
+            enhanced_signals = {
+                **base_signals,
+                'action': final_action,
+                'confidence': final_confidence,
+                'ai_analysis': ai_analysis,
+                'base_signals': base_signals,
+                'integration_method': 'ai_enhanced'
+            }
+            
+            return enhanced_signals
+            
+        except Exception as e:
+            logger.error(f"신호 통합 실패: {e}")
+            return base_signals
     
     def execute_trade(self, trade: Trade):
         """거래 실행"""
@@ -165,7 +660,8 @@ class StrategyInterface:
                 unrealized_pnl=0.0,
                 realized_pnl=0.0,
                 strategy=self.name,
-                entry_date=trade.timestamp
+                entry_date=trade.timestamp,
+                ai_score=trade.ai_confidence
             )
         
         return True
@@ -218,10 +714,10 @@ class StrategyInterface:
         return total_value
 
 # ============================================================================
-# 🇺🇸 미국 주식 전략
+# 🇺🇸 미국 주식 전략 (AI 통합)
 # ============================================================================
 class USStrategy(StrategyInterface):
-    """미국 주식 전략 (서머타임 + 고급기술지표)"""
+    """미국 주식 전략 (서머타임 + 고급기술지표 + AI)"""
     
     def __init__(self, initial_capital: float):
         super().__init__("US_Strategy", initial_capital)
@@ -337,10 +833,10 @@ class USStrategy(StrategyInterface):
             return {'buffett': 0.5, 'lynch': 0.5, 'momentum': 0.5, 'technical': 0.5, 'advanced': 0.5}
 
 # ============================================================================
-# 🇯🇵 일본 주식 전략
+# 🇯🇵 일본 주식 전략 (AI 통합)
 # ============================================================================
 class JapanStrategy(StrategyInterface):
-    """일본 주식 전략 (엔화 + 화목 하이브리드)"""
+    """일본 주식 전략 (엔화 + 화목 하이브리드 + AI)"""
     
     def __init__(self, initial_capital: float):
         super().__init__("Japan_Strategy", initial_capital)
@@ -475,10 +971,10 @@ class JapanStrategy(StrategyInterface):
             return 'neutral'
 
 # ============================================================================
-# 🇮🇳 인도 주식 전략
+# 🇮🇳 인도 주식 전략 (AI 통합)
 # ============================================================================
 class IndiaStrategy(StrategyInterface):
-    """인도 주식 전략 (5대 전설 + 수요일 안정형)"""
+    """인도 주식 전략 (5대 전설 + 수요일 안정형 + AI)"""
     
     def __init__(self, initial_capital: float):
         super().__init__("India_Strategy", initial_capital)
@@ -600,10 +1096,10 @@ class IndiaStrategy(StrategyInterface):
             return {'ichimoku': 0.5, 'elliott': 0.5, 'vwap': 0.5, 'macd': 0.5}
 
 # ============================================================================
-# 💰 암호화폐 전략
+# 💰 암호화폐 전략 (AI 통합)
 # ============================================================================
 class CryptoStrategy(StrategyInterface):
-    """암호화폐 전략 (전설급 5대 시스템 + 월금 매매)"""
+    """암호화폐 전략 (전설급 5대 시스템 + 월금 매매 + AI)"""
     
     def __init__(self, initial_capital: float):
         super().__init__("Crypto_Strategy", initial_capital)
@@ -754,10 +1250,10 @@ class CryptoStrategy(StrategyInterface):
         return correlation_factors.get(coin_name, 0.7)
 
 # ============================================================================
-# 📊 통합 백테스트 엔진
+# 📊 통합 백테스트 엔진 (AI 통합)
 # ============================================================================
 class IntegratedBacktestEngine:
-    """4가지 전략 통합 백테스트 엔진"""
+    """4가지 전략 통합 백테스트 엔진 (AI 분석 포함)"""
     
     def __init__(self, config: BacktestConfig):
         self.config = config
@@ -765,6 +1261,7 @@ class IntegratedBacktestEngine:
         self.results: Dict[str, Any] = {}
         self.portfolio_equity: List[float] = []
         self.portfolio_dates: List[datetime] = []
+        self.ai_analyzer = OpenAIAnalyzer() if config.use_openai else None
         
         # 전략별 자본 배분
         strategy_allocations = {
@@ -789,8 +1286,8 @@ class IntegratedBacktestEngine:
                     self.strategies[strategy_name] = IndiaStrategy(capital)
     
     async def run_backtest(self, symbols: Dict[str, List[str]]) -> Dict[str, Any]:
-        """통합 백테스트 실행"""
-        logger.info("🏆 통합 백테스트 시작")
+        """통합 백테스트 실행 (AI 분석 포함)"""
+        logger.info("🏆 AI 통합 백테스트 시작")
         
         try:
             # 날짜 범위 생성
@@ -816,15 +1313,27 @@ class IntegratedBacktestEngine:
             # 통합 포트폴리오 성과 계산
             portfolio_result = self._calculate_portfolio_performance(strategy_results)
             
+            # AI 분석 추가
+            ai_analysis = None
+            if self.ai_analyzer and self.ai_analyzer.available:
+                try:
+                    logger.info("🤖 AI 포트폴리오 분석 중...")
+                    ai_analysis = await self.ai_analyzer.analyze_portfolio_performance(
+                        portfolio_result, strategy_results
+                    )
+                except Exception as e:
+                    logger.error(f"AI 분석 실패: {e}")
+            
             # 결과 종합
             self.results = {
                 'config': asdict(self.config),
                 'strategy_results': strategy_results,
                 'portfolio_result': portfolio_result,
-                'summary': self._generate_summary(strategy_results, portfolio_result)
+                'ai_analysis': asdict(ai_analysis) if ai_analysis else None,
+                'summary': self._generate_summary(strategy_results, portfolio_result, ai_analysis)
             }
             
-            logger.info("✅ 통합 백테스트 완료")
+            logger.info("✅ AI 통합 백테스트 완료")
             return self.results
             
         except Exception as e:
@@ -833,7 +1342,7 @@ class IntegratedBacktestEngine:
     
     async def _run_strategy_backtest(self, strategy: StrategyInterface, symbols: List[str], 
                                    start_date: datetime, end_date: datetime) -> Dict:
-        """개별 전략 백테스트"""
+        """개별 전략 백테스트 (AI 강화)"""
         try:
             all_data = {}
             
@@ -943,7 +1452,7 @@ class IntegratedBacktestEngine:
     
     async def _process_trading_day(self, strategy: StrategyInterface, all_data: Dict[str, pd.DataFrame], 
                                  current_date: datetime):
-        """거래일 처리"""
+        """거래일 처리 (AI 강화)"""
         try:
             # 현재 가격 수집
             current_prices = {}
@@ -958,7 +1467,7 @@ class IntegratedBacktestEngine:
             # 포지션 업데이트
             strategy.update_positions(current_prices, current_date)
             
-            # 각 심볼에 대해 신호 생성
+            # 각 심볼에 대해 신호 생성 (AI 강화)
             for symbol, data in all_data.items():
                 if current_date not in data.index:
                     continue
@@ -969,8 +1478,11 @@ class IntegratedBacktestEngine:
                 if len(historical_data) < 30:  # 최소 데이터 요구사항
                     continue
                 
-                # 신호 생성
-                signal = await strategy.generate_signals(symbol, historical_data)
+                # AI 강화 신호 생성
+                if self.config.use_openai:
+                    signal = await strategy.generate_ai_enhanced_signals(symbol, historical_data)
+                else:
+                    signal = await strategy.generate_signals(symbol, historical_data)
                 
                 if signal.get('action') == 'buy':
                     await self._execute_buy_signal(strategy, symbol, signal, current_prices[symbol], current_date)
@@ -982,13 +1494,18 @@ class IntegratedBacktestEngine:
     
     async def _execute_buy_signal(self, strategy: StrategyInterface, symbol: str, signal: Dict, 
                                 price: float, timestamp: datetime):
-        """매수 신호 실행"""
+        """매수 신호 실행 (AI 정보 포함)"""
         try:
             confidence = signal.get('confidence', 0.5)
             max_position_size = strategy.current_capital * 0.1 * confidence  # 신뢰도에 따른 포지션 크기
             
             quantity = max_position_size / price
             commission = max_position_size * self.config.commission
+            
+            # AI 분석 정보 추출
+            ai_analysis = signal.get('ai_analysis', {})
+            ai_confidence = ai_analysis.get('confidence', 0.5)
+            ai_reason = ai_analysis.get('reasoning', '')
             
             trade = Trade(
                 symbol=symbol,
@@ -998,7 +1515,9 @@ class IntegratedBacktestEngine:
                 timestamp=timestamp,
                 commission=commission,
                 strategy=strategy.name,
-                reason=f"Signal confidence: {confidence:.2f}"
+                reason=f"Signal confidence: {confidence:.2f}",
+                ai_confidence=ai_confidence,
+                ai_reason=ai_reason
             )
             
             success = strategy._execute_buy(trade)
@@ -1010,7 +1529,7 @@ class IntegratedBacktestEngine:
     
     async def _execute_sell_signal(self, strategy: StrategyInterface, symbol: str, signal: Dict, 
                                  price: float, timestamp: datetime):
-        """매도 신호 실행"""
+        """매도 신호 실행 (AI 정보 포함)"""
         try:
             if symbol not in strategy.positions:
                 return
@@ -1018,6 +1537,11 @@ class IntegratedBacktestEngine:
             position = strategy.positions[symbol]
             quantity = position.quantity  # 전량 매도
             commission = quantity * price * self.config.commission
+            
+            # AI 분석 정보 추출
+            ai_analysis = signal.get('ai_analysis', {})
+            ai_confidence = ai_analysis.get('confidence', 0.5)
+            ai_reason = ai_analysis.get('reasoning', '')
             
             trade = Trade(
                 symbol=symbol,
@@ -1027,7 +1551,9 @@ class IntegratedBacktestEngine:
                 timestamp=timestamp,
                 commission=commission,
                 strategy=strategy.name,
-                reason=f"Sell signal"
+                reason=f"Sell signal",
+                ai_confidence=ai_confidence,
+                ai_reason=ai_reason
             )
             
             success = strategy._execute_sell(trade)
@@ -1163,8 +1689,9 @@ class IntegratedBacktestEngine:
             logger.error(f"포트폴리오 성과 계산 실패: {e}")
             return {'error': str(e)}
     
-    def _generate_summary(self, strategy_results: Dict, portfolio_result: Dict) -> Dict:
-        """결과 요약 생성"""
+    def _generate_summary(self, strategy_results: Dict, portfolio_result: Dict, 
+                         ai_analysis: AIAnalysis = None) -> Dict:
+        """결과 요약 생성 (AI 분석 포함)"""
         try:
             successful_strategies = {k: v for k, v in strategy_results.items() if 'error' not in v}
             
@@ -1177,8 +1704,19 @@ class IntegratedBacktestEngine:
                 'backtest_period': f"{self.config.start_date} ~ {self.config.end_date}",
                 'initial_capital': self.config.initial_capital,
                 'final_value': portfolio_result.get('final_value', 0),
+                'ai_enabled': self.config.use_openai,
                 'strategy_summary': {}
             }
+            
+            # AI 분석 요약 추가
+            if ai_analysis:
+                summary['ai_insights'] = {
+                    'market_sentiment': ai_analysis.market_sentiment,
+                    'risk_level': ai_analysis.risk_level,
+                    'confidence_score': ai_analysis.confidence_score,
+                    'key_insights': ai_analysis.key_insights[:3],  # 상위 3개만
+                    'recommendation': ai_analysis.recommendation[:200] + '...' if len(ai_analysis.recommendation) > 200 else ai_analysis.recommendation
+                }
             
             # 전략별 요약
             for strategy_name, result in successful_strategies.items():
@@ -1197,130 +1735,33 @@ class IntegratedBacktestEngine:
         except Exception as e:
             logger.error(f"요약 생성 실패: {e}")
             return {'error': str(e)}
-
-# ============================================================================
-# 🌐 웹 인터페이스
-# ============================================================================
-app = Flask(__name__)
-
-# 전역 변수
-backtest_engine = None
-current_results = None
-
-@app.route('/')
-def index():
-    """메인 페이지"""
-    return render_template_string('''
-<!DOCTYPE html>
-<html>
-<head>
-    <title>🏆 퀸트프로젝트 통합 백테스팅 시스템</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .header { text-align: center; margin-bottom: 30px; }
-        .config-section { background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-        .strategy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0; }
-        .strategy-card { background: white; padding: 15px; border-radius: 8px; border: 2px solid #e9ecef; }
-        .strategy-card.enabled { border-color: #28a745; }
-        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin: 5px; }
-        .btn-primary { background: #007bff; color: white; }
-        .btn-success { background: #28a745; color: white; }
-        .btn-danger { background: #dc3545; color: white; }
-        .btn:hover { opacity: 0.8; }
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .form-group input, .form-group select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-        .results-section { margin-top: 30px; }
-        .loading { text-align: center; padding: 50px; }
-        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .metric-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; }
-        .metric-value { font-size: 2em; font-weight: bold; margin-bottom: 5px; }
-        .metric-label { font-size: 0.9em; opacity: 0.9; }
-        .chart-container { margin: 20px 0; }
-        .tabs { display: flex; border-bottom: 2px solid #e9ecef; margin-bottom: 20px; }
-        .tab { padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; }
-        .tab.active { border-bottom-color: #007bff; color: #007bff; font-weight: bold; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🏆 퀸트프로젝트 통합 백테스팅 시스템</h1>
-            <p>🇺🇸 미국 + 🇯🇵 일본 + 🇮🇳 인도 + 💰 암호화폐 통합 백테스팅</p>
-        </div>
-
-        <div class="config-section">
-            <h3>⚙️ 백테스트 설정</h3>
-            <form id="backtest-form">
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
-                    <div class="form-group">
-                        <label>시작일자</label>
-                        <input type="date" id="start_date" value="2023-01-01" required>
-                    </div>
-                    <div class="form-group">
-                        <label>종료일자</label>
-                        <input type="date" id="end_date" value="2024-12-31" required>
-                    </div>
-                    <div class="form-group">
-                        <label>초기자본 (원)</label>
-                        <input type="number" id="initial_capital" value="1000000000" min="1000000" step="1000000" required>
-                    </div>
-                </div>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
-                    <div class="form-group">
-                        <label>수수료 (%)</label>
-                        <input type="number" id="commission" value="0.25" min="0" max="5" step="0.01" required>
-                    </div>
-                    <div class="form-group">
-                        <label>슬리피지 (%)</label>
-                        <input type="number" id="slippage" value="0.1" min="0" max="2" step="0.01" required>
-                    </div>
-                </div>
-            </form>
-        </div>
-
-        <div class="config-section">
-            <h3>📊 전략 선택</h3>
-            <div class="strategy-grid">
-                <div class="strategy-card enabled">
-                    <h4>🇺🇸 미국 주식 전략</h4>
-                    <p>서머타임 연동 + 5가지 융합 전략 + 화목 매매</p>
-                    <label><input type="checkbox" id="us_strategy" checked> 활성화 (40% 배분)</label>
-                </div>
-                <div class="strategy-card enabled">
-                    <h4>🇯🇵 일본 주식 전략</h4>
-                    <p>엔화 연동 + 6개 기술지표 + 화목 하이브리드</p>
+            <div class="strategy-card enabled">
+                    <h4>🇯🇵 일본 주식 전략 <span class="ai-badge">AI</span></h4>
+                    <p>엔화 연동 + 6개 기술지표 + AI 하이브리드</p>
                     <label><input type="checkbox" id="japan_strategy" checked> 활성화 (25% 배분)</label>
                 </div>
                 <div class="strategy-card enabled">
-                    <h4>💰 암호화폐 전략</h4>
-                    <p>전설급 5대 시스템 + 월금 매매</p>
+                    <h4>💰 암호화폐 전략 <span class="ai-badge">AI</span></h4>
+                    <p>전설급 5대 시스템 + AI 예측 + 월금 매매</p>
                     <label><input type="checkbox" id="crypto_strategy" checked> 활성화 (20% 배분)</label>
                 </div>
                 <div class="strategy-card enabled">
-                    <h4>🇮🇳 인도 주식 전략</h4>
-                    <p>5대 전설 투자자 + 수요일 안정형</p>
+                    <h4>🇮🇳 인도 주식 전략 <span class="ai-badge">AI</span></h4>
+                    <p>5대 전설 투자자 + AI 안정형 + 수요일 매매</p>
                     <label><input type="checkbox" id="india_strategy" checked> 활성화 (15% 배분)</label>
                 </div>
             </div>
         </div>
 
         <div style="text-align: center; margin: 30px 0;">
-            <button class="btn btn-primary" onclick="runBacktest()">🚀 백테스트 실행</button>
+            <button class="btn btn-ai" onclick="runBacktest()">🚀 AI 백테스트 실행</button>
             <button class="btn btn-success" onclick="downloadResults()" id="download-btn" style="display: none;">📥 결과 다운로드</button>
+            <button class="btn btn-primary" onclick="getAIInsights()" id="ai-insights-btn" style="display: none;">🧠 AI 인사이트</button>
         </div>
 
         <div id="loading" class="loading" style="display: none;">
             <div class="spinner"></div>
-            <p>백테스트 실행 중... 잠시만 기다려주세요.</p>
+            <p>🤖 AI 백테스트 실행 중... 잠시만 기다려주세요.</p>
         </div>
 
         <div id="results" class="results-section" style="display: none;">
@@ -1329,6 +1770,7 @@ def index():
                 <div class="tab" onclick="showTab('performance')">📈 성과</div>
                 <div class="tab" onclick="showTab('strategies')">🎯 전략별</div>
                 <div class="tab" onclick="showTab('trades')">💼 거래내역</div>
+                <div class="tab" onclick="showTab('ai')">🤖 AI 분석</div>
             </div>
 
             <div id="summary-tab" class="tab-content active">
@@ -1349,6 +1791,11 @@ def index():
             <div id="trades-tab" class="tab-content">
                 <h3>💼 거래 내역</h3>
                 <div id="trades-content"></div>
+            </div>
+
+            <div id="ai-tab" class="tab-content">
+                <h3>🤖 AI 분석 및 추천</h3>
+                <div id="ai-analysis-content"></div>
             </div>
         </div>
     </div>
@@ -1378,6 +1825,8 @@ def index():
                 initial_capital: parseFloat(document.getElementById('initial_capital').value),
                 commission: parseFloat(document.getElementById('commission').value) / 100,
                 slippage: parseFloat(document.getElementById('slippage').value) / 100,
+                use_openai: document.getElementById('use_openai').checked,
+                openai_model: document.getElementById('openai_model').value,
                 enabled_strategies: []
             };
 
@@ -1413,8 +1862,9 @@ def index():
                 currentResults = data;
                 displayResults(data);
                 
-                // 다운로드 버튼 표시
+                // 버튼 표시
                 document.getElementById('download-btn').style.display = 'inline-block';
+                document.getElementById('ai-insights-btn').style.display = 'inline-block';
 
             } catch (error) {
                 alert('백테스트 실행 중 오류가 발생했습니다: ' + error);
@@ -1438,10 +1888,15 @@ def index():
             
             // 거래 내역 표시
             displayTrades(data.strategy_results);
+            
+            // AI 분석 표시
+            displayAIAnalysis(data.ai_analysis);
         }
 
         function displaySummary(summary) {
             const container = document.getElementById('summary-content');
+            
+            const aiInsights = summary.ai_insights || {};
             
             const html = `
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px;">
@@ -1458,16 +1913,46 @@ def index():
                         <div class="metric-label">총 거래 수</div>
                     </div>
                     <div class="metric-card">
-                        <div class="metric-value">${summary.successful_strategies || 0}/${summary.total_strategies || 0}</div>
-                        <div class="metric-label">성공 전략</div>
+                        <div class="metric-value">${summary.ai_enabled ? '🤖 ON' : '❌ OFF'}</div>
+                        <div class="metric-label">AI 분석</div>
                     </div>
                 </div>
+                
+                ${aiInsights.market_sentiment ? `
+                    <div class="ai-recommendation">
+                        <h4>🤖 AI 종합 분석</h4>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                            <div style="text-align: center;">
+                                <strong>시장 심리</strong><br>
+                                <span style="font-size: 1.2em;">${aiInsights.market_sentiment || 'N/A'}</span>
+                            </div>
+                            <div style="text-align: center;">
+                                <strong>리스크 수준</strong><br>
+                                <span style="font-size: 1.2em;">${aiInsights.risk_level || 'N/A'}</span>
+                            </div>
+                            <div style="text-align: center;">
+                                <strong>AI 신뢰도</strong><br>
+                                <div class="confidence-bar">
+                                    <div class="confidence-fill" style="width: ${(aiInsights.confidence_score || 0) * 100}%"></div>
+                                </div>
+                                <span>${((aiInsights.confidence_score || 0) * 100).toFixed(1)}%</span>
+                            </div>
+                        </div>
+                        <p><strong>AI 추천:</strong> ${aiInsights.recommendation || 'AI 분석 결과 없음'}</p>
+                        ${aiInsights.key_insights && aiInsights.key_insights.length > 0 ? 
+                            '<strong>핵심 인사이트:</strong><ul>' + 
+                            aiInsights.key_insights.map(insight => `<li>${insight}</li>`).join('') + 
+                            '</ul>' : ''
+                        }
+                    </div>
+                ` : ''}
                 
                 <div style="background: #f8f9fa; padding: 20px; border-radius: 8px;">
                     <h4>📋 상세 정보</h4>
                     <p><strong>백테스트 기간:</strong> ${summary.backtest_period || 'N/A'}</p>
                     <p><strong>초기 자본:</strong> ${(summary.initial_capital / 100000000).toFixed(1)}억원</p>
                     <p><strong>최고 성과 전략:</strong> ${summary.best_performing_strategy ? summary.best_performing_strategy[0] + ' (' + summary.best_performing_strategy[1].toFixed(2) + '%)' : 'N/A'}</p>
+                    <p><strong>성공한 전략:</strong> ${summary.successful_strategies}/${summary.total_strategies}</p>
                     
                     ${summary.strategy_summary ? 
                         '<h4 style="margin-top: 20px;">🎯 전략별 요약</h4>' +
@@ -1510,7 +1995,7 @@ def index():
                         y: returns,
                         type: 'scatter',
                         mode: 'lines',
-                        name: name.replace('_Strategy', ''),
+                        name: name.replace('_Strategy', '') + (data.summary.ai_enabled ? ' (AI)' : ''),
                         line: { color: strategyColors[name] }
                     });
                 }
@@ -1518,7 +2003,7 @@ def index():
 
             if (portfolioData.length > 0) {
                 Plotly.newPlot('performance-charts', portfolioData, {
-                    title: '📈 전략별 수익률 곡선',
+                    title: '📈 AI 강화 전략별 수익률 곡선',
                     xaxis: { title: '날짜' },
                     yaxis: { title: '수익률 (%)' },
                     height: 500,
@@ -1547,9 +2032,14 @@ def index():
                 const finalValue = result.final_capital + (result.total_positions_value || 0);
                 const totalReturn = ((finalValue - result.initial_capital) / result.initial_capital * 100).toFixed(2);
 
+                // AI 거래 통계
+                const aiTrades = result.trades ? result.trades.filter(t => t.ai_confidence > 0) : [];
+                const avgAiConfidence = aiTrades.length > 0 ? 
+                    (aiTrades.reduce((sum, t) => sum + t.ai_confidence, 0) / aiTrades.length).toFixed(2) : 0;
+
                 html += `
                     <div style="background: white; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
-                        <h4>${name.replace('_Strategy', '')} 전략</h4>
+                        <h4>${name.replace('_Strategy', '')} 전략 <span class="ai-badge">AI 강화</span></h4>
                         
                         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 15px 0;">
                             <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 5px;">
@@ -1565,8 +2055,8 @@ def index():
                                 <div>최대 낙폭</div>
                             </div>
                             <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 5px;">
-                                <div style="font-size: 1.5em; font-weight: bold;">${perf.win_rate?.toFixed(1) || 'N/A'}%</div>
-                                <div>승률</div>
+                                <div style="font-size: 1.5em; font-weight: bold;">${avgAiConfidence}</div>
+                                <div>AI 평균 신뢰도</div>
                             </div>
                         </div>
                         
@@ -1574,8 +2064,9 @@ def index():
                             <p><strong>초기 자본:</strong> ${(result.initial_capital / 100000000).toFixed(2)}억원</p>
                             <p><strong>최종 가치:</strong> ${(finalValue / 100000000).toFixed(2)}억원</p>
                             <p><strong>총 거래 수:</strong> ${result.total_trades || 0}회</p>
+                            <p><strong>AI 거래 수:</strong> ${aiTrades.length}회 (${((aiTrades.length / (result.total_trades || 1)) * 100).toFixed(1)}%)</p>
+                            <p><strong>승률:</strong> ${perf.win_rate?.toFixed(1) || 'N/A'}%</p>
                             <p><strong>변동성:</strong> ${perf.volatility?.toFixed(2) || 'N/A'}%</p>
-                            <p><strong>칼마 비율:</strong> ${perf.calmar_ratio?.toFixed(2) || 'N/A'}</p>
                         </div>
                     </div>
                 `;
@@ -1603,12 +2094,23 @@ def index():
             // 최신 거래부터 정렬
             allTrades.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             
+            const aiTrades = allTrades.filter(t => t.ai_confidence > 0);
+            
             let html = `
                 <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                     <h4>📊 거래 통계</h4>
-                    <p><strong>총 거래 수:</strong> ${allTrades.length}회</p>
-                    <p><strong>매수 거래:</strong> ${allTrades.filter(t => t.action === 'buy').length}회</p>
-                    <p><strong>매도 거래:</strong> ${allTrades.filter(t => t.action === 'sell').length}회</p>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                        <div>
+                            <strong>총 거래 수:</strong> ${allTrades.length}회<br>
+                            <strong>매수 거래:</strong> ${allTrades.filter(t => t.action === 'buy').length}회<br>
+                            <strong>매도 거래:</strong> ${allTrades.filter(t => t.action === 'sell').length}회
+                        </div>
+                        <div>
+                            <strong>🤖 AI 거래:</strong> ${aiTrades.length}회<br>
+                            <strong>AI 비율:</strong> ${((aiTrades.length / allTrades.length) * 100).toFixed(1)}%<br>
+                            <strong>평균 AI 신뢰도:</strong> ${aiTrades.length > 0 ? (aiTrades.reduce((sum, t) => sum + t.ai_confidence, 0) / aiTrades.length).toFixed(2) : 'N/A'}
+                        </div>
+                    </div>
                 </div>
                 
                 <div style="overflow-x: auto;">
@@ -1621,7 +2123,7 @@ def index():
                                 <th style="padding: 12px; border: 1px solid #dee2e6;">액션</th>
                                 <th style="padding: 12px; border: 1px solid #dee2e6;">수량</th>
                                 <th style="padding: 12px; border: 1px solid #dee2e6;">가격</th>
-                                <th style="padding: 12px; border: 1px solid #dee2e6;">수수료</th>
+                                <th style="padding: 12px; border: 1px solid #dee2e6;">AI 신뢰도</th>
                                 <th style="padding: 12px; border: 1px solid #dee2e6;">사유</th>
                             </tr>
                         </thead>
@@ -1631,16 +2133,25 @@ def index():
             allTrades.slice(0, 100).forEach(trade => {
                 const actionColor = trade.action === 'buy' ? '#28a745' : '#dc3545';
                 const actionSymbol = trade.action === 'buy' ? '📈' : '📉';
+                const aiIndicator = trade.ai_confidence > 0 ? '🤖' : '📊';
                 
                 html += `
                     <tr>
                         <td style="padding: 8px; border: 1px solid #dee2e6;">${new Date(trade.timestamp).toLocaleDateString()}</td>
                         <td style="padding: 8px; border: 1px solid #dee2e6;">${trade.strategy}</td>
                         <td style="padding: 8px; border: 1px solid #dee2e6;">${trade.symbol}</td>
-                        <td style="padding: 8px; border: 1px solid #dee2e6; color: ${actionColor};">${actionSymbol} ${trade.action.toUpperCase()}</td>
+                        <td style="padding: 8px; border: 1px solid #dee2e6; color: ${actionColor};">${aiIndicator} ${actionSymbol} ${trade.action.toUpperCase()}</td>
                         <td style="padding: 8px; border: 1px solid #dee2e6; text-align: right;">${trade.quantity.toFixed(6)}</td>
                         <td style="padding: 8px; border: 1px solid #dee2e6; text-align: right;">${trade.price.toLocaleString()}</td>
-                        <td style="padding: 8px; border: 1px solid #dee2e6; text-align: right;">${trade.commission.toLocaleString()}</td>
+                        <td style="padding: 8px; border: 1px solid #dee2e6; text-align: center;">
+                            ${trade.ai_confidence > 0 ? 
+                                `<div class="confidence-bar" style="width: 60px; margin: 0 auto;">
+                                    <div class="confidence-fill" style="width: ${trade.ai_confidence * 100}%"></div>
+                                </div>
+                                <small>${(trade.ai_confidence * 100).toFixed(0)}%</small>` : 
+                                'N/A'
+                            }
+                        </td>
                         <td style="padding: 8px; border: 1px solid #dee2e6;">${trade.reason || '-'}</td>
                     </tr>
                 `;
@@ -1654,6 +2165,132 @@ def index():
             `;
             
             container.innerHTML = html;
+        }
+
+        function displayAIAnalysis(aiAnalysis) {
+            const container = document.getElementById('ai-analysis-content');
+            
+            if (!aiAnalysis) {
+                container.innerHTML = `
+                    <div class="ai-insight">
+                        <h4>🤖 AI 분석 결과 없음</h4>
+                        <p>AI 분석이 비활성화되었거나 OpenAI API 키가 설정되지 않았습니다.</p>
+                        <ul>
+                            <li>환경변수 OPENAI_API_KEY를 설정하세요</li>
+                            <li>AI 분석 옵션을 활성화하세요</li>
+                            <li>인터넷 연결을 확인하세요</li>
+                        </ul>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = `
+                <div class="ai-recommendation">
+                    <h4>🧠 AI 종합 포트폴리오 분석</h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                        <div style="text-align: center; padding: 15px; background: rgba(255,255,255,0.5); border-radius: 8px;">
+                            <h5>시장 심리</h5>
+                            <div style="font-size: 1.5em; font-weight: bold;">${aiAnalysis.market_sentiment || 'N/A'}</div>
+                        </div>
+                        <div style="text-align: center; padding: 15px; background: rgba(255,255,255,0.5); border-radius: 8px;">
+                            <h5>리스크 수준</h5>
+                            <div style="font-size: 1.5em; font-weight: bold;">${aiAnalysis.risk_level || 'N/A'}</div>
+                        </div>
+                        <div style="text-align: center; padding: 15px; background: rgba(255,255,255,0.5); border-radius: 8px;">
+                            <h5>AI 신뢰도</h5>
+                            <div class="confidence-bar" style="margin: 10px auto; width: 100px;">
+                                <div class="confidence-fill" style="width: ${(aiAnalysis.confidence_score || 0) * 100}%"></div>
+                            </div>
+                            <div style="font-size: 1.2em; font-weight: bold;">${((aiAnalysis.confidence_score || 0) * 100).toFixed(1)}%</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="ai-insight">
+                    <h4>💡 AI 추천 사항</h4>
+                    <p>${aiAnalysis.recommendation || 'AI 추천 사항이 없습니다.'}</p>
+                </div>
+            `;
+            
+            if (aiAnalysis.key_insights && aiAnalysis.key_insights.length > 0) {
+                html += `
+                    <div class="ai-insight">
+                        <h4>🔍 핵심 인사이트</h4>
+                        <ul>
+                            ${aiAnalysis.key_insights.map(insight => `<li>${insight}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+            
+            if (aiAnalysis.sector_analysis && Object.keys(aiAnalysis.sector_analysis).length > 0) {
+                html += `
+                    <div class="ai-insight">
+                        <h4>📊 섹터별 분석</h4>
+                        ${Object.entries(aiAnalysis.sector_analysis).map(([sector, analysis]) => 
+                            `<p><strong>${sector}:</strong> ${analysis}</p>`
+                        ).join('')}
+                    </div>
+                `;
+            }
+            
+            if (aiAnalysis.portfolio_suggestions && aiAnalysis.portfolio_suggestions.length > 0) {
+                html += `
+                    <div class="ai-insight">
+                        <h4>📋 포트폴리오 개선 제안</h4>
+                        <ul>
+                            ${aiAnalysis.portfolio_suggestions.map(suggestion => `<li>${suggestion}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+            
+            if (aiAnalysis.risk_warnings && aiAnalysis.risk_warnings.length > 0) {
+                html += `
+                    <div class="risk-warning">
+                        <h4>⚠️ 리스크 경고</h4>
+                        <ul>
+                            ${aiAnalysis.risk_warnings.map(warning => `<li>${warning}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+            
+            container.innerHTML = html;
+        }
+
+        async function getAIInsights() {
+            if (!currentResults) {
+                alert('분석할 결과가 없습니다.');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/ai-insights', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentResults)
+                });
+
+                const insights = await response.json();
+                
+                if (insights.error) {
+                    alert('AI 인사이트 생성 실패: ' + insights.error);
+                    return;
+                }
+
+                alert('AI 인사이트가 생성되었습니다! AI 분석 탭을 확인하세요.');
+                
+                // AI 탭으로 이동
+                showTab('ai');
+                
+                // AI 분석 업데이트
+                displayAIAnalysis(insights);
+                
+            } catch (error) {
+                alert('AI 인사이트 요청 중 오류가 발생했습니다: ' + error);
+            }
         }
 
         async function downloadResults() {
@@ -1674,7 +2311,7 @@ def index():
                     const url = window.URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `backtest_results_${new Date().toISOString().split('T')[0]}.zip`;
+                    a.download = `ai_backtest_results_${new Date().toISOString().split('T')[0]}.zip`;
                     document.body.appendChild(a);
                     a.click();
                     window.URL.revokeObjectURL(url);
@@ -1699,7 +2336,7 @@ def index():
 
 @app.route('/api/backtest', methods=['POST'])
 def api_backtest():
-    """백테스트 API"""
+    """백테스트 API (AI 통합)"""
     global backtest_engine, current_results
     
     try:
@@ -1707,13 +2344,15 @@ def api_backtest():
         
         # 설정 객체 생성
         config = BacktestConfig(
-            strategy_name="Integrated_Backtest",
+            strategy_name="AI_Integrated_Backtest",
             start_date=config_data['start_date'],
             end_date=config_data['end_date'],
             initial_capital=config_data['initial_capital'],
             commission=config_data['commission'],
             slippage=config_data['slippage'],
-            enabled_strategies=config_data['enabled_strategies']
+            enabled_strategies=config_data['enabled_strategies'],
+            use_openai=config_data.get('use_openai', False),
+            openai_model=config_data.get('openai_model', 'gpt-4')
         )
         
         # 백테스트 엔진 생성
@@ -1745,9 +2384,44 @@ def api_backtest():
         logger.error(f"백테스트 API 오류: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/ai-insights', methods=['POST'])
+def api_ai_insights():
+    """AI 인사이트 생성 API"""
+    try:
+        if not OPENAI_AVAILABLE or not OPENAI_API_KEY:
+            return jsonify({'error': 'OpenAI API를 사용할 수 없습니다. API 키를 확인하세요.'}), 400
+        
+        results_data = request.get_json()
+        
+        # AI 분석기 생성
+        ai_analyzer = OpenAIAnalyzer()
+        
+        if not ai_analyzer.available:
+            return jsonify({'error': 'AI 분석기를 초기화할 수 없습니다.'}), 500
+        
+        # 포트폴리오 분석 실행
+        async def generate_insights():
+            portfolio_data = results_data.get('portfolio_result', {})
+            strategy_results = results_data.get('strategy_results', {})
+            
+            return await ai_analyzer.analyze_portfolio_performance(portfolio_data, strategy_results)
+        
+        # 동기 실행
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        ai_analysis = loop.run_until_complete(generate_insights())
+        loop.close()
+        
+        return jsonify(asdict(ai_analysis))
+        
+    except Exception as e:
+        logger.error(f"AI 인사이트 API 오류: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/download', methods=['POST'])
 def api_download():
-    """결과 다운로드 API"""
+    """결과 다운로드 API (AI 분석 포함)"""
     try:
         results = request.get_json()
         
@@ -1757,7 +2431,7 @@ def api_download():
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             # JSON 결과
             zip_file.writestr(
-                'backtest_results.json',
+                'ai_backtest_results.json',
                 json.dumps(results, indent=2, default=str)
             )
             
@@ -1767,6 +2441,36 @@ def api_download():
                 csv_buffer = io.StringIO()
                 summary_df.to_csv(csv_buffer, index=False, encoding='utf-8')
                 zip_file.writestr('summary.csv', csv_buffer.getvalue())
+            
+            # AI 분석 결과 CSV
+            if 'ai_analysis' in results and results['ai_analysis']:
+                ai_df = pd.DataFrame([results['ai_analysis']])
+                csv_buffer = io.StringIO()
+                ai_df.to_csv(csv_buffer, index=False, encoding='utf-8')
+                zip_file.writestr('ai_analysis.csv', csv_buffer.getvalue())
+                
+                # AI 인사이트 텍스트 파일
+                ai_insights_text = f"""
+AI 포트폴리오 분석 보고서
+=======================
+
+시장 심리: {results['ai_analysis'].get('market_sentiment', 'N/A')}
+리스크 수준: {results['ai_analysis'].get('risk_level', 'N/A')}
+AI 신뢰도: {results['ai_analysis'].get('confidence_score', 0):.2%}
+
+추천 사항:
+{results['ai_analysis'].get('recommendation', 'N/A')}
+
+핵심 인사이트:
+{chr(10).join(f"- {insight}" for insight in results['ai_analysis'].get('key_insights', []))}
+
+포트폴리오 개선 제안:
+{chr(10).join(f"- {suggestion}" for suggestion in results['ai_analysis'].get('portfolio_suggestions', []))}
+
+리스크 경고:
+{chr(10).join(f"- {warning}" for warning in results['ai_analysis'].get('risk_warnings', []))}
+                """
+                zip_file.writestr('ai_insights.txt', ai_insights_text)
             
             # 전략별 결과 CSV
             if 'strategy_results' in results:
@@ -1793,7 +2497,7 @@ def api_download():
             io.BytesIO(zip_buffer.read()),
             mimetype='application/zip',
             as_attachment=True,
-            download_name=f'backtest_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
+            download_name=f'ai_backtest_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
         )
         
     except Exception as e:
@@ -1805,12 +2509,20 @@ def api_download():
 # ============================================================================
 def main():
     """메인 실행 함수"""
-    print("🏆 퀸트프로젝트 통합 백테스팅 시스템 v2.0")
+    print("🏆 퀸트프로젝트 AI 통합 백테스팅 시스템 v2.1")
     print("="*60)
+    print("🤖 OpenAI 통합 AI 분석 시스템")
     print("🌐 웹 인터페이스 시작 중...")
     print("📱 접속 주소: http://localhost:5000")
     print("📱 모바일 접속: http://[IP주소]:5000")
     print("⚡ Ctrl+C로 종료")
+    
+    # OpenAI 상태 확인
+    if OPENAI_AVAILABLE and OPENAI_API_KEY:
+        print("✅ OpenAI API 연동 완료")
+    else:
+        print("⚠️  OpenAI API 미연동 (환경변수 OPENAI_API_KEY 설정 필요)")
+    
     print("="*60)
     
     try:
@@ -1822,9 +2534,143 @@ def main():
             threaded=True
         )
     except KeyboardInterrupt:
-        print("\n👋 백테스팅 시스템을 종료합니다.")
+        print("\n👋 AI 백테스팅 시스템을 종료합니다.")
     except Exception as e:
         print(f"❌ 시스템 실행 오류: {e}")
 
 if __name__ == "__main__":
-    main() 
+    main()# ============================================================================
+# 🌐 웹 인터페이스 (AI 통합)
+# ============================================================================
+app = Flask(__name__)
+
+# 전역 변수
+backtest_engine = None
+current_results = None
+
+@app.route('/')
+def index():
+    """메인 페이지 (AI 기능 포함)"""
+    return render_template_string('''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🏆 퀸트프로젝트 AI 통합 백테스팅 시스템 v2.1</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .ai-badge { background: linear-gradient(45deg, #667eea, #764ba2); color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; }
+        .config-section { background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .strategy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0; }
+        .strategy-card { background: white; padding: 15px; border-radius: 8px; border: 2px solid #e9ecef; }
+        .strategy-card.enabled { border-color: #28a745; }
+        .ai-section { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin: 5px; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-ai { background: linear-gradient(45deg, #667eea, #764ba2); color: white; }
+        .btn:hover { opacity: 0.8; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group input, .form-group select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .results-section { margin-top: 30px; }
+        .loading { text-align: center; padding: 50px; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .metric-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; }
+        .metric-value { font-size: 2em; font-weight: bold; margin-bottom: 5px; }
+        .metric-label { font-size: 0.9em; opacity: 0.9; }
+        .chart-container { margin: 20px 0; }
+        .tabs { display: flex; border-bottom: 2px solid #e9ecef; margin-bottom: 20px; }
+        .tab { padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; }
+        .tab.active { border-bottom-color: #007bff; color: #007bff; font-weight: bold; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .ai-insight { background: #f8f9fa; border-left: 4px solid #667eea; padding: 15px; margin: 10px 0; }
+        .ai-recommendation { background: linear-gradient(135deg, #667eea20, #764ba220); border: 1px solid #667eea; padding: 15px; border-radius: 8px; margin: 10px 0; }
+        .risk-warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; border-radius: 5px; margin: 10px 0; }
+        .confidence-bar { background: #e9ecef; height: 10px; border-radius: 5px; overflow: hidden; margin: 5px 0; }
+        .confidence-fill { background: linear-gradient(90deg, #28a745, #ffc107, #dc3545); height: 100%; transition: width 0.3s; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏆 퀸트프로젝트 AI 통합 백테스팅 시스템 <span class="ai-badge">🤖 AI v2.1</span></h1>
+            <p>🇺🇸 미국 + 🇯🇵 일본 + 🇮🇳 인도 + 💰 암호화폐 + 🤖 OpenAI 통합 백테스팅</p>
+        </div>
+
+        <div class="ai-section">
+            <h3>🤖 AI 분석 설정</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div class="form-group">
+                    <label style="color: white;">AI 분석 사용</label>
+                    <label style="color: white;"><input type="checkbox" id="use_openai" checked> OpenAI 기반 AI 분석 활성화</label>
+                    <small style="color: #f8f9fa;">환경변수 OPENAI_API_KEY 설정 필요</small>
+                </div>
+                <div class="form-group">
+                    <label style="color: white;">AI 모델</label>
+                    <select id="openai_model" style="background: white;">
+                        <option value="gpt-4">GPT-4 (고급 분석)</option>
+                        <option value="gpt-3.5-turbo">GPT-3.5 Turbo (빠른 분석)</option>
+                    </select>
+                </div>
+            </div>
+            <div style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+                <h4 style="margin-top: 0;">🧠 AI 분석 기능:</h4>
+                <ul style="margin-bottom: 0;">
+                    <li>실시간 시장 데이터 AI 분석</li>
+                    <li>포트폴리오 성과 AI 평가</li>
+                    <li>투자 전략 AI 추천</li>
+                    <li>리스크 관리 AI 조언</li>
+                    <li>시장 전망 AI 예측</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="config-section">
+            <h3>⚙️ 백테스트 설정</h3>
+            <form id="backtest-form">
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
+                    <div class="form-group">
+                        <label>시작일자</label>
+                        <input type="date" id="start_date" value="2023-01-01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>종료일자</label>
+                        <input type="date" id="end_date" value="2024-12-31" required>
+                    </div>
+                    <div class="form-group">
+                        <label>초기자본 (원)</label>
+                        <input type="number" id="initial_capital" value="1000000000" min="1000000" step="1000000" required>
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
+                    <div class="form-group">
+                        <label>수수료 (%)</label>
+                        <input type="number" id="commission" value="0.25" min="0" max="5" step="0.01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>슬리피지 (%)</label>
+                        <input type="number" id="slippage" value="0.1" min="0" max="2" step="0.01" required>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <div class="config-section">
+            <h3>📊 전략 선택</h3>
+            <div class="strategy-grid">
+                <div class="strategy-card enabled">
+                    <h4>🇺🇸 미국 주식 전략 <span class="ai-badge">AI</span></h4>
+                    <p>서머타임 연동 + 5가지 융합 전략 + AI 분석</p>
+                    <label><input type="checkbox" id="us_strategy" checked> 활성화 (40% 배분)</label>
+                </div>
+                <div class="strategy-card enabled">
+                    <h4>🇯
