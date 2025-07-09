@@ -1345,7 +1345,7 @@ def main():
         # 백테스팅 모드
         print("\n🔬 백테스팅 모드 시작...")
         sample_df = strategy.create_sample_data()
-        results = strategy.run_strategy(sample_df, enable_trading=False)
+        results = await strategy.run_strategy(sample_df, enable_trading=False)
         
     elif choice == "2":
         # 실제 거래 모드
@@ -1355,7 +1355,7 @@ def main():
         
         if confirm.lower() == 'yes':
             sample_df = strategy.create_sample_data()
-            results = strategy.run_strategy(sample_df, enable_trading=True)
+            results = await strategy.run_strategy(sample_df, enable_trading=True)
         else:
             print("❌ 취소되었습니다")
             return
@@ -1375,7 +1375,7 @@ def main():
     else:
         print("❌ 잘못된 선택 - 백테스팅 모드로 진행")
         sample_df = strategy.create_sample_data()
-        results = strategy.run_strategy(sample_df, enable_trading=False)
+        results = await strategy.run_strategy(sample_df, enable_trading=False)
     
     # 결과 상세 출력 - 안정형 월 5~7% 버전
     print("\n🎯 === 안정형 월 5~7% 인도 투자전략 결과 ===")
@@ -1439,7 +1439,7 @@ def main():
         print(f"📈 월간 예상 수익률: {monthly_projection:+5.1f}% (목표: 5~7%)")
         
         if monthly_projection >= 5:
-            print("🎊 월간 목표 달성 가능! 훌륭합니다! 🎯")
+            print("🎊 월간 목표 달성 가능! 훌륭습니다! 🎯")
         else:
             needed = 5 - monthly_projection
             print(f"📊 목표까지 {needed:+4.1f}%p 더 필요")
@@ -1516,4 +1516,5 @@ def main():
     print("="*70)
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
