@@ -1278,10 +1278,10 @@ class LegendaryIndiaStrategy:
     # ================== 메인 실행 함수 (원본 + IBKR 추가) ==================
     
     def run_strategy(self, df=None, enable_trading=False):
-    """전체 전략 실행 - 안정형 월 5~7% 시스템"""
-    if df is None:
-        df = self.create_sample_data()
-    return self.run_conservative_strategy(df, enable_trading)
+        """전체 전략 실행 - 안정형 월 5~7% 시스템"""
+        if df is None:
+            df = self.create_sample_data()
+        return self.run_conservative_strategy(df, enable_trading)
     
     # ================== 포트폴리오 관리 (원본) ==================
     
