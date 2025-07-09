@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-인도 전설 투자전략 완전판 - 레전드 에디션 + IBKR 연동
+인도 전설 투자전략 완전판 - 레전드 에디션 + IBKR 연동 + OpenAI 분석
 ================================================================
 
-5대 투자 거장 철학 + 고급 기술지표 + 자동선별 시스템 + IBKR 자동매매
+5대 투자 거장 철학 + 고급 기술지표 + 자동선별 시스템 + IBKR 자동매매 + OpenAI 분석
 - 실시간 자동 매매 신호 생성 + 손절/익절 시스템
 - 백테스팅 + 포트폴리오 관리 + 리스크 제어
+- OpenAI 기반 시장 분석 및 투자 의사결정 지원
 - 혼자 운용 가능한 완전 자동화 전략 + IBKR API 연동
 
-전설의 비밀 공식들과 숨겨진 지표들 모두 구현 + 실제 거래
+전설의 비밀 공식들과 숨겨진 지표들 모두 구현 + 실제 거래 + AI 분석
 """
 
 import pandas as pd
@@ -20,6 +21,8 @@ import time
 import json
 import logging
 import threading
+import os
+import asyncio
 warnings.filterwarnings('ignore')
 
 # IBKR API 임포트 (선택사항)
@@ -34,7 +37,360 @@ except ImportError:
     EClient = None
     EWrapper = None
 
-# ================== IBKR 연동 클래스 (추가 기능) ==================
+# OpenAI API 임포트 (새로 추가)
+try:
+    import openai
+    print("✅ OpenAI API 준비완료")
+    OPENAI_AVAILABLE = True
+except ImportError:
+    print("ℹ️ OpenAI API 없음 (pip install openai 필요)")
+    OPENAI_AVAILABLE = False
+    openai = None
+
+# ================== OpenAI 연동 클래스 (새로 추가) ==================
+
+class OpenAIAnalyzer:
+    """OpenAI 기반 투자 분석 시스템"""
+    
+    def __init__(self, api_key=None):
+        self.client = None
+        self.api_key = api_key or os.getenv('OPENAI_API_KEY')
+        self.connected = False
+        self.logger = self.setup_logging()
+        
+        if OPENAI_AVAILABLE and self.api_key:
+            try:
+                openai.api_key = self.api_key
+                self.client = openai
+                self.connected = True
+                self.logger.info("✅ OpenAI 연결 성공!")
+            except Exception as e:
+                self.logger.error(f"❌ OpenAI 연결 실패: {e}")
+        else:
+            self.logger.warning("⚠️ OpenAI API 키가 없습니다")
+    
+    def setup_logging(self):
+        logging.basicConfig(level=logging.INFO)
+        return logging.getLogger(__name__)
+    
+    def analyze_market_sentiment(self, stock_data):
+        """AI 기반 시장 심리 분석"""
+        if not self.connected:
+            return {"sentiment": "neutral", "confidence": 0.5, "reasoning": "OpenAI 연결 없음"}
+        
+        try:
+            # 주요 지표 요약
+            indicators_summary = self._prepare_indicators_summary(stock_data)
+            
+            prompt = f"""
+            당신은 인도 주식시장 전문 애널리스트입니다. 다음 기술지표 데이터를 분석하여 시장 심리를 평가해주세요:
+            
+            {indicators_summary}
+            
+            다음 형식으로 답변해주세요:
+            1. 전체적인 시장 심리 (bullish/bearish/neutral)
+            2. 신뢰도 (0-1)
+            3. 핵심 근거 3가지
+            4. 주의사항
+            
+            간결하고 명확하게 답변해주세요.
+            """
+            
+            response = self.client.ChatCompletion.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "당신은 인도 주식시장 전문가입니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                temperature=0.3
+            )
+            
+            analysis = response.choices[0].message.content
+            sentiment = self._extract_sentiment(analysis)
+            
+            return {
+                "sentiment": sentiment,
+                "confidence": 0.8,
+                "analysis": analysis,
+                "reasoning": "OpenAI GPT-4 분석"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ 시장 심리 분석 실패: {e}")
+            return {"sentiment": "neutral", "confidence": 0.5, "reasoning": f"분석 오류: {str(e)}"}
+    
+    def generate_investment_insights(self, selected_stocks, market_data):
+        """AI 기반 투자 인사이트 생성"""
+        if not self.connected:
+            return ["OpenAI 연결이 필요합니다"]
+        
+        try:
+            stocks_summary = self._prepare_stocks_summary(selected_stocks)
+            
+            prompt = f"""
+            인도 주식시장 투자 전문가로서 다음 선별된 종목들을 분석해주세요:
+            
+            {stocks_summary}
+            
+            다음 관점에서 분석해주세요:
+            1. 각 종목의 투자 매력도
+            2. 포트폴리오 구성 시 주의사항
+            3. 현재 시장 상황에서의 리스크 요인
+            4. 단기 투자 전략 권장사항
+            
+            실용적이고 구체적인 조언을 해주세요.
+            """
+            
+            response = self.client.ChatCompletion.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "당신은 20년 경력의 인도 주식시장 전문가입니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=800,
+                temperature=0.4
+            )
+            
+            insights = response.choices[0].message.content
+            return insights.split('\n')
+            
+        except Exception as e:
+            self.logger.error(f"❌ 투자 인사이트 생성 실패: {e}")
+            return [f"인사이트 생성 오류: {str(e)}"]
+    
+    def risk_assessment_ai(self, portfolio, market_conditions):
+        """AI 기반 리스크 평가"""
+        if not self.connected:
+            return {"risk_level": "medium", "warnings": ["OpenAI 연결 필요"]}
+        
+        try:
+            portfolio_summary = self._prepare_portfolio_summary(portfolio)
+            
+            prompt = f"""
+            다음 포트폴리오의 리스크를 전문적으로 평가해주세요:
+            
+            {portfolio_summary}
+            
+            평가 기준:
+            1. 섹터 집중도 리스크
+            2. 시장 변동성 리스크
+            3. 개별 종목 리스크
+            4. 유동성 리스크
+            
+            리스크 레벨 (low/medium/high)과 구체적인 경고사항을 제시해주세요.
+            """
+            
+            response = self.client.ChatCompletion.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "당신은 리스크 관리 전문가입니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=600,
+                temperature=0.2
+            )
+            
+            assessment = response.choices[0].message.content
+            risk_level = self._extract_risk_level(assessment)
+            warnings = self._extract_warnings(assessment)
+            
+            return {
+                "risk_level": risk_level,
+                "warnings": warnings,
+                "full_assessment": assessment
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ AI 리스크 평가 실패: {e}")
+            return {"risk_level": "medium", "warnings": [f"평가 오류: {str(e)}"]}
+    
+    def optimize_entry_timing(self, stock_ticker, technical_data):
+        """AI 기반 진입 타이밍 최적화"""
+        if not self.connected:
+            return {"timing": "wait", "confidence": 0.5}
+        
+        try:
+            tech_summary = self._prepare_technical_summary(technical_data)
+            
+            prompt = f"""
+            {stock_ticker} 종목의 기술적 분석 데이터를 보고 최적의 진입 타이밍을 판단해주세요:
+            
+            {tech_summary}
+            
+            결론:
+            1. 진입 권장도 (buy_now/wait/avoid)
+            2. 신뢰도 (0-1)
+            3. 핵심 근거
+            4. 예상 목표가
+            
+            간결하게 답변해주세요.
+            """
+            
+            response = self.client.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "당신은 기술적 분석 전문가입니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=400,
+                temperature=0.3
+            )
+            
+            timing_analysis = response.choices[0].message.content
+            timing = self._extract_timing_decision(timing_analysis)
+            
+            return {
+                "timing": timing,
+                "confidence": 0.75,
+                "analysis": timing_analysis
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ 진입 타이밍 분석 실패: {e}")
+            return {"timing": "wait", "confidence": 0.5}
+    
+    def generate_daily_report(self, strategy_results):
+        """AI 기반 일일 투자 리포트 생성"""
+        if not self.connected:
+            return "일일 리포트 생성을 위해 OpenAI 연결이 필요합니다."
+        
+        try:
+            results_summary = self._prepare_results_summary(strategy_results)
+            
+            prompt = f"""
+            오늘의 인도 주식 투자전략 실행 결과를 바탕으로 전문적인 일일 리포트를 작성해주세요:
+            
+            {results_summary}
+            
+            리포트 구성:
+            1. 오늘의 주요 성과 요약
+            2. 선별된 종목들의 투자 포인트
+            3. 포트폴리오 현황 평가
+            4. 내일의 투자 전략 방향
+            5. 주의사항 및 리스크 경고
+            
+            전문적이면서도 이해하기 쉽게 작성해주세요.
+            """
+            
+            response = self.client.ChatCompletion.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "당신은 인도 주식 투자 전문가이자 애널리스트입니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1000,
+                temperature=0.4
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            self.logger.error(f"❌ 일일 리포트 생성 실패: {e}")
+            return f"리포트 생성 중 오류 발생: {str(e)}"
+    
+    # 보조 메서드들
+    def _prepare_indicators_summary(self, stock_data):
+        """기술지표 요약 준비"""
+        if stock_data.empty:
+            return "데이터 없음"
+        
+        summary = f"""
+        주요 기술지표 현황:
+        - RSI: {stock_data.get('rsi', 'N/A').iloc[-1] if 'rsi' in stock_data.columns else 'N/A'}
+        - MACD: {stock_data.get('macd_histogram', 'N/A').iloc[-1] if 'macd_histogram' in stock_data.columns else 'N/A'}
+        - ADX: {stock_data.get('adx', 'N/A').iloc[-1] if 'adx' in stock_data.columns else 'N/A'}
+        - 볼린저밴드 위치: {'상단' if stock_data.get('close', 0).iloc[-1] > stock_data.get('bb_upper', 0).iloc[-1] else '하단' if stock_data.get('close', 0).iloc[-1] < stock_data.get('bb_lower', 0).iloc[-1] else '중간' if 'close' in stock_data.columns and 'bb_upper' in stock_data.columns else 'N/A'}
+        - 거래량 급증: {'예' if stock_data.get('volume_spike', False).iloc[-1] else '아니오' if 'volume_spike' in stock_data.columns else 'N/A'}
+        """
+        return summary
+    
+    def _prepare_stocks_summary(self, selected_stocks):
+        """선별 종목 요약 준비"""
+        if selected_stocks.empty:
+            return "선별된 종목 없음"
+        
+        summary = "선별된 종목들:\n"
+        for _, stock in selected_stocks.head(5).iterrows():
+            summary += f"- {stock.get('ticker', 'N/A')}: 점수 {stock.get('final_score', 'N/A')}, 주가 ₹{stock.get('close', 'N/A')}\n"
+        
+        return summary
+    
+    def _prepare_portfolio_summary(self, portfolio):
+        """포트폴리오 요약 준비"""
+        if not portfolio:
+            return "포트폴리오 없음"
+        
+        summary = "포트폴리오 구성:\n"
+        for ticker, details in portfolio.items():
+            summary += f"- {ticker}: ₹{details.get('allocation', 'N/A'):,.0f} ({details.get('weight_pct', 'N/A'):.1f}%)\n"
+        
+        return summary
+    
+    def _prepare_technical_summary(self, technical_data):
+        """기술적 분석 요약 준비"""
+        return f"""
+        기술적 지표:
+        - 추세: {'상승' if technical_data.get('trend', 'neutral') == 'bullish' else '하락' if technical_data.get('trend', 'neutral') == 'bearish' else '중립'}
+        - 모멘텀: {technical_data.get('momentum', 'N/A')}
+        - 지지/저항: {technical_data.get('support_resistance', 'N/A')}
+        """
+    
+    def _prepare_results_summary(self, results):
+        """전략 결과 요약 준비"""
+        selected_count = len(results.get('selected_stocks', pd.DataFrame()))
+        portfolio_count = len(results.get('portfolio', {}))
+        alerts_count = len(results.get('alerts', []))
+        
+        return f"""
+        투자전략 실행 결과:
+        - 선별된 종목 수: {selected_count}개
+        - 포트폴리오 구성: {portfolio_count}개 종목
+        - 생성된 알림: {alerts_count}개
+        - IBKR 연결: {'성공' if results.get('ibkr_connected') else '실패'}
+        - 수요일 거래 가능: {'예' if results.get('wednesday_status', {}).get('is_wednesday') else '아니오'}
+        """
+    
+    def _extract_sentiment(self, analysis):
+        """분석에서 감정 추출"""
+        analysis_lower = analysis.lower()
+        if 'bullish' in analysis_lower or '상승' in analysis_lower:
+            return 'bullish'
+        elif 'bearish' in analysis_lower or '하락' in analysis_lower:
+            return 'bearish'
+        else:
+            return 'neutral'
+    
+    def _extract_risk_level(self, assessment):
+        """평가에서 리스크 레벨 추출"""
+        assessment_lower = assessment.lower()
+        if 'high' in assessment_lower or '높' in assessment_lower:
+            return 'high'
+        elif 'low' in assessment_lower or '낮' in assessment_lower:
+            return 'low'
+        else:
+            return 'medium'
+    
+    def _extract_warnings(self, assessment):
+        """평가에서 경고사항 추출"""
+        lines = assessment.split('\n')
+        warnings = []
+        for line in lines:
+            if '경고' in line or '주의' in line or 'warning' in line.lower():
+                warnings.append(line.strip())
+        return warnings[:3]  # 최대 3개
+    
+    def _extract_timing_decision(self, analysis):
+        """분석에서 타이밍 결정 추출"""
+        analysis_lower = analysis.lower()
+        if 'buy_now' in analysis_lower or '즉시' in analysis_lower:
+            return 'buy_now'
+        elif 'avoid' in analysis_lower or '회피' in analysis_lower:
+            return 'avoid'
+        else:
+            return 'wait'
+
+# ================== IBKR 연동 클래스 (기존) ==================
 
 class IBKRConnector:
     """간단한 IBKR 연결 클래스"""
@@ -108,17 +464,20 @@ class IBKRConnector:
         }
 
 class LegendaryIndiaStrategy:
-    """인도 전설 투자자 5인방 통합 전략 (원본 + IBKR 연동)"""
+    """인도 전설 투자자 5인방 통합 전략 (원본 + IBKR + OpenAI 연동)"""
     
-    def __init__(self):
+    def __init__(self, openai_api_key=None):
         self.portfolio = {}
         self.signals = {}
         self.risk_metrics = {}
         
-        # IBKR 연결 (새로 추가)
+        # IBKR 연결 (기존)
         self.ibkr = IBKRConnector()
         
-    # ================== 기본 + 전설급 기술지표 라이브러리 (원본) ==================
+        # OpenAI 연결 (새로 추가)
+        self.ai_analyzer = OpenAIAnalyzer(openai_api_key)
+        
+    # ================== 기본 + 전설급 기술지표 라이브러리 (기존) ==================
     
     def bollinger_bands(self, df, period=20, std_dev=2):
         """볼린저 밴드 + 스퀴즈 감지"""
@@ -287,7 +646,7 @@ class LegendaryIndiaStrategy:
         print("✅ 전설급 기술지표 계산 완료!")
         return df
     
-    # ================== 전설 투자자 전략 구현 (원본) ==================
+    # ================== 전설 투자자 전략 구현 (기존) ==================
     
     def rakesh_jhunjhunwala_strategy(self, df):
         """라케시 준준왈라 - 워런 버핏 킬러 전략"""
@@ -353,7 +712,7 @@ class LegendaryIndiaStrategy:
         df['karnik_score'] = 2  # 기본 점수
         return df
     
-    # ================== 자동 선별 시스템 (원본) ==================
+    # ================== 자동 선별 시스템 (기존) ==================
     
     def calculate_all_indicators(self, df):
         """모든 전설급 기술지표 계산"""
@@ -434,7 +793,159 @@ class LegendaryIndiaStrategy:
         
         return selected_stocks[available_columns] if available_columns else selected_stocks
     
-    # ================== 2주 스윙 손익절 시스템 (추가) ==================
+    # ================== OpenAI 기반 AI 분석 기능 (새로 추가) ==================
+    
+    def ai_enhanced_stock_selection(self, df, top_n=10):
+        """AI 강화 종목 선별"""
+        print("🤖 OpenAI 기반 AI 종목 선별 시작...")
+        
+        # 기본 선별
+        basic_selected = self.auto_stock_selection(df, top_n * 2)  # 더 많이 선별
+        
+        if basic_selected.empty or not self.ai_analyzer.connected:
+            print("ℹ️ AI 분석 없이 기본 선별 결과 반환")
+            return basic_selected.head(top_n)
+        
+        # AI 기반 시장 심리 분석
+        market_sentiment = self.ai_analyzer.analyze_market_sentiment(df)
+        print(f"🧠 AI 시장 심리: {market_sentiment['sentiment']} (신뢰도: {market_sentiment['confidence']:.1f})")
+        
+        # 각 종목별 AI 타이밍 분석
+        ai_scores = []
+        for _, stock in basic_selected.iterrows():
+            ticker = stock['ticker']
+            
+            # 해당 종목의 기술적 데이터 준비
+            stock_tech_data = {
+                'trend': 'bullish' if stock.get('final_score', 0) > 15 else 'neutral',
+                'momentum': stock.get('macd_histogram', 0),
+                'support_resistance': f"지지: {stock.get('bb_lower', 0):.2f}, 저항: {stock.get('bb_upper', 0):.2f}"
+            }
+            
+            # AI 타이밍 분석
+            timing_result = self.ai_analyzer.optimize_entry_timing(ticker, stock_tech_data)
+            
+            # AI 점수 계산
+            ai_bonus = 0
+            if timing_result['timing'] == 'buy_now':
+                ai_bonus = 5
+            elif timing_result['timing'] == 'wait':
+                ai_bonus = 0
+            else:  # avoid
+                ai_bonus = -10
+            
+            ai_bonus *= timing_result['confidence']
+            
+            ai_scores.append({
+                'ticker': ticker,
+                'ai_timing_score': ai_bonus,
+                'ai_confidence': timing_result['confidence'],
+                'ai_recommendation': timing_result['timing']
+            })
+        
+        # AI 점수를 DataFrame에 추가
+        ai_df = pd.DataFrame(ai_scores)
+        enhanced_selection = basic_selected.merge(ai_df, on='ticker', how='left')
+        
+        # 최종 점수에 AI 점수 반영
+        enhanced_selection['ai_enhanced_score'] = (
+            enhanced_selection['final_score'] + 
+            enhanced_selection['ai_timing_score'].fillna(0)
+        )
+        
+        # AI 강화 점수로 재정렬
+        final_selection = enhanced_selection.nlargest(top_n, 'ai_enhanced_score')
+        
+        print(f"✅ AI 강화 종목 선별 완료: {len(final_selection)}개 종목")
+        return final_selection
+    
+    def ai_risk_assessment(self, portfolio, selected_stocks):
+        """AI 기반 리스크 평가"""
+        if not self.ai_analyzer.connected:
+            return self.risk_management(pd.DataFrame())  # 기본 리스크 평가로 fallback
+        
+        print("🛡️ AI 기반 리스크 평가 시작...")
+        
+        # 시장 조건 준비
+        market_conditions = {
+            'volatility': 'medium',
+            'sector_rotation': 'active',
+            'liquidity': 'good'
+        }
+        
+        # AI 리스크 평가
+        ai_risk = self.ai_analyzer.risk_assessment_ai(portfolio, market_conditions)
+        
+        # 기존 리스크 메트릭과 결합
+        traditional_risk = self.risk_management(pd.DataFrame())
+        
+        # AI 강화 리스크 메트릭
+        enhanced_risk = {
+            **traditional_risk,
+            'ai_risk_level': ai_risk['risk_level'],
+            'ai_warnings': ai_risk['warnings'],
+            'ai_assessment': ai_risk.get('full_assessment', ''),
+            'overall_risk_score': self._calculate_overall_risk_score(ai_risk, traditional_risk)
+        }
+        
+        print(f"🛡️ AI 리스크 레벨: {ai_risk['risk_level']}")
+        print(f"⚠️ AI 경고 수: {len(ai_risk['warnings'])}")
+        
+        return enhanced_risk
+    
+    def _calculate_overall_risk_score(self, ai_risk, traditional_risk):
+        """전체 리스크 점수 계산"""
+        risk_mapping = {'low': 1, 'medium': 2, 'high': 3}
+        
+        ai_score = risk_mapping.get(ai_risk['risk_level'], 2)
+        traditional_score = 2  # 기본값
+        
+        # 가중 평균 (AI 60%, 전통적 40%)
+        overall_score = (ai_score * 0.6) + (traditional_score * 0.4)
+        
+        if overall_score <= 1.5:
+            return 'low'
+        elif overall_score <= 2.5:
+            return 'medium'
+        else:
+            return 'high'
+    
+    def generate_ai_insights(self, strategy_results):
+        """AI 기반 투자 인사이트 생성"""
+        if not self.ai_analyzer.connected:
+            return ["AI 연결이 필요합니다"]
+        
+        print("🧠 AI 투자 인사이트 생성 중...")
+        
+        selected_stocks = strategy_results.get('selected_stocks', pd.DataFrame())
+        portfolio = strategy_results.get('portfolio', {})
+        
+        # 시장 데이터 준비 (간단한 버전)
+        market_data = {
+            'trend': 'bullish',
+            'volatility': 'medium',
+            'volume': 'above_average'
+        }
+        
+        # AI 인사이트 생성
+        insights = self.ai_analyzer.generate_investment_insights(selected_stocks, market_data)
+        
+        print("✅ AI 투자 인사이트 생성 완료")
+        return insights if isinstance(insights, list) else [insights]
+    
+    def create_ai_daily_report(self, strategy_results):
+        """AI 기반 일일 투자 리포트"""
+        if not self.ai_analyzer.connected:
+            return "AI 일일 리포트 생성을 위해 OpenAI 연결이 필요합니다."
+        
+        print("📊 AI 일일 리포트 생성 중...")
+        
+        report = self.ai_analyzer.generate_daily_report(strategy_results)
+        
+        print("✅ AI 일일 리포트 생성 완료")
+        return report
+    
+    # ================== 2주 스윙 손익절 시스템 (기존) ==================
     
     def calculate_swing_stops(self, df):
         """2주 스윙용 동적 손익절가 계산"""
@@ -726,7 +1237,7 @@ class LegendaryIndiaStrategy:
         
         return df
     
-    # ================== IBKR 자동매매 시스템 (새로 추가) ==================
+    # ================== IBKR 자동매매 시스템 (기존) ==================
     
     def connect_ibkr(self):
         """IBKR 연결"""
@@ -1232,9 +1743,13 @@ class LegendaryIndiaStrategy:
         df = self.calculate_conservative_weekly_stops(df)
         print("✅ 안정형 1주 스윙 손익절 시스템 적용 완료")
         
-        # 6. 안정형 종목 선별 (엄격한 기준)
-        selected_stocks = self.conservative_stock_selection(df, max_stocks=4)
-        print(f"✅ 안정형 {len(selected_stocks)}개 종목 선별 완료")
+        # 6. AI 강화 종목 선별 (새로 추가!)
+        if self.ai_analyzer.connected:
+            selected_stocks = self.ai_enhanced_stock_selection(df, max_stocks=4)
+            print("✅ AI 강화 종목 선별 완료")
+        else:
+            selected_stocks = self.conservative_stock_selection(df, max_stocks=4)
+            print("✅ 안정형 종목 선별 완료 (AI 없이)")
         
         # 7. 수요일 IBKR 자동매매
         if enable_trading and wednesday_status['is_wednesday']:
@@ -1251,9 +1766,9 @@ class LegendaryIndiaStrategy:
         portfolio = self.calculate_position_sizing_conservative(selected_stocks)
         print("✅ 안정형 포트폴리오 구성 완료")
         
-        # 9. 리스크 평가
-        risk_metrics = self.risk_management(df)
-        print("✅ 리스크 평가 완료")
+        # 9. AI 강화 리스크 평가 (새로 추가!)
+        risk_metrics = self.ai_risk_assessment(portfolio, selected_stocks)
+        print("✅ AI 강화 리스크 평가 완료")
         
         # 10. 주간 포지션 추적
         position_status = self.weekly_position_tracker()
@@ -1263,27 +1778,39 @@ class LegendaryIndiaStrategy:
         alerts = self.conservative_alerts()
         print("✅ 안정형 알림 시스템 완료")
         
-        return {
+        # 12. AI 인사이트 생성 (새로 추가!)
+        strategy_results = {
             'selected_stocks': selected_stocks,
             'portfolio': portfolio,
             'risk_metrics': risk_metrics,
             'position_status': position_status,
             'alerts': alerts,
             'wednesday_status': wednesday_status,
-            'conservative_data': df[['ticker', 'close', 'weekly_stop_pct', 'weekly_profit_pct', 
-                                   'conservative_stop_loss', 'conservative_take_profit']].head(10) if all(col in df.columns for col in ['ticker', 'close', 'weekly_stop_pct', 'weekly_profit_pct', 'conservative_stop_loss', 'conservative_take_profit']) else pd.DataFrame(),
             'ibkr_connected': getattr(self.ibkr, 'connected', False)
         }
+        
+        ai_insights = self.generate_ai_insights(strategy_results)
+        ai_daily_report = self.create_ai_daily_report(strategy_results)
+        print("✅ AI 인사이트 및 일일 리포트 생성 완료")
+        
+        return {
+            **strategy_results,
+            'conservative_data': df[['ticker', 'close', 'weekly_stop_pct', 'weekly_profit_pct', 
+                                   'conservative_stop_loss', 'conservative_take_profit']].head(10) if all(col in df.columns for col in ['ticker', 'close', 'weekly_stop_pct', 'weekly_profit_pct', 'conservative_stop_loss', 'conservative_take_profit']) else pd.DataFrame(),
+            'ai_insights': ai_insights,
+            'ai_daily_report': ai_daily_report,
+            'ai_connected': self.ai_analyzer.connected
+        }
     
-    # ================== 메인 실행 함수 (원본 + IBKR 추가) ==================
+    # ================== 메인 실행 함수 (OpenAI 추가) ==================
 
     async def run_strategy(self, df=None, enable_trading=False):
-        """전체 전략 실행 - 안정형 월 5~7% 시스템"""
+        """전체 전략 실행 - AI 강화 안정형 월 5~7% 시스템"""
         if df is None:
             df = self.create_sample_data()
         return self.run_conservative_strategy(df, enable_trading)
     
-    # ================== 포트폴리오 관리 (원본) ==================
+    # ================== 포트폴리오 관리 (기존) ==================
     
     def portfolio_management(self, selected_stocks, total_capital=10000000):
         """포트폴리오 관리 (1천만원 기준)"""
@@ -1320,24 +1847,37 @@ class LegendaryIndiaStrategy:
         
         return risk_metrics
 
-# ================== 실제 실행 및 데모 (원본 + IBKR 추가) ==================
+# ================== 실제 실행 및 데모 (OpenAI 추가) ==================
 
 async def main():
     """메인 실행 함수"""
-    print("🇮🇳 인도 전설 투자전략 + IBKR 자동매매 시스템")
-    print("=" * 70)
-    print("⚡ 추가된 IBKR 기능:")
+    print("🇮🇳 인도 전설 투자전략 + IBKR 자동매매 + OpenAI 분석 시스템")
+    print("=" * 80)
+    print("⚡ 추가된 기능들:")
     print("🔥 실시간 자동매매 | 💰 스마트 손익절 | 📊 포지션 관리")
-    print("=" * 70)
+    print("🤖 OpenAI 시장분석 | 🧠 AI 투자인사이트 | 📈 AI 리스크평가")
+    print("=" * 80)
     
-    # 전략 시스템 초기화
-    strategy = LegendaryIndiaStrategy()
+    # OpenAI API 키 설정 안내
+    openai_key = os.getenv('OPENAI_API_KEY')
+    if not openai_key and OPENAI_AVAILABLE:
+        print("\n💡 OpenAI 기능을 사용하려면 API 키를 설정하세요:")
+        print("   export OPENAI_API_KEY='your-api-key-here'")
+        print("   또는 코드에서 직접 설정 가능")
+        
+        user_key = input("\nOpenAI API 키를 입력하세요 (Enter로 건너뛰기): ").strip()
+        if user_key:
+            openai_key = user_key
+    
+    # 전략 시스템 초기화 (OpenAI 키 포함)
+    strategy = LegendaryIndiaStrategy(openai_api_key=openai_key)
     
     # 실행 모드 선택
     print("\n실행 모드를 선택하세요:")
     print("1. 📊 백테스팅만 (IBKR 없이)")
     print("2. 🚀 실제 거래 (IBKR 연동)")
     print("3. 📈 포지션 확인 (IBKR)")
+    print("4. 🤖 AI 분석 테스트")
     
     choice = input("\n번호 입력 (기본값: 1): ").strip() or "1"
     
@@ -1371,15 +1911,48 @@ async def main():
         else:
             print("❌ IBKR 연결 실패")
         return
+        
+    elif choice == "4":
+        # AI 분석 테스트 모드
+        print("\n🤖 AI 분석 테스트 모드...")
+        if not strategy.ai_analyzer.connected:
+            print("❌ OpenAI 연결이 필요합니다")
+            return
+            
+        # 샘플 데이터로 AI 분석 테스트
+        sample_df = strategy.create_sample_data()
+        
+        # 기본 분석 실행
+        df = strategy.calculate_all_indicators(sample_df)
+        df = strategy.apply_all_strategies(df)
+        df = strategy.generate_master_score(df)
+        
+        # AI 분석 테스트
+        print("\n🧠 AI 시장 심리 분석 테스트...")
+        sentiment = strategy.ai_analyzer.analyze_market_sentiment(df)
+        print(f"결과: {sentiment}")
+        
+        # AI 종목 선별 테스트
+        print("\n🎯 AI 종목 선별 테스트...")
+        ai_stocks = strategy.ai_enhanced_stock_selection(df, 3)
+        print(f"선별된 종목: {len(ai_stocks)}개")
+        
+        return
     
     else:
         print("❌ 잘못된 선택 - 백테스팅 모드로 진행")
         sample_df = strategy.create_sample_data()
         results = await strategy.run_strategy(sample_df, enable_trading=False)
     
-    # 결과 상세 출력 - 안정형 월 5~7% 버전
-    print("\n🎯 === 안정형 월 5~7% 인도 투자전략 결과 ===")
-    print("="*80)
+    # 결과 상세 출력 - AI 강화 안정형 월 5~7% 버전
+    print("\n🎯 === AI 강화 안정형 월 5~7% 인도 투자전략 결과 ===")
+    print("="*90)
+    
+    # AI 연결 상태
+    if results.get('ai_connected'):
+        print("🤖 OpenAI 분석: 활성화 ✅")
+    else:
+        print("🤖 OpenAI 분석: 비활성화 ❌")
     
     # 수요일 거래 가능 여부
     wednesday_status = results.get('wednesday_status', {})
@@ -1391,12 +1964,19 @@ async def main():
     
     selected = results['selected_stocks']
     if not selected.empty:
-        print(f"\n📊 엄격한 기준으로 {len(selected)}개 안정형 종목 선별!")
-        print("-" * 80)
+        print(f"\n📊 AI 강화 엄격한 기준으로 {len(selected)}개 안정형 종목 선별!")
+        print("-" * 90)
         
         for idx, (_, stock) in enumerate(selected.iterrows(), 1):
             print(f"🥇 #{idx:2d} | {stock['ticker']:12} | {stock.get('company_name', 'N/A')[:20]:20}")
-            print(f"    💰 주가: ₹{stock['close']:8.2f} | 🎯 점수: {stock['final_score']:6.1f}/30")
+            print(f"    💰 주가: ₹{stock['close']:8.2f} | 🎯 점수: {stock.get('final_score', 0):6.1f}/30")
+            
+            # AI 추가 정보
+            if 'ai_enhanced_score' in stock:
+                ai_score = stock.get('ai_enhanced_score', 0)
+                ai_rec = stock.get('ai_recommendation', 'N/A')
+                ai_conf = stock.get('ai_confidence', 0)
+                print(f"    🤖 AI점수: {ai_score:6.1f} | 추천: {ai_rec} | 신뢰도: {ai_conf:.1f}")
             
             # 안정형 손익절 정보
             stop_pct = stock.get('weekly_stop_pct', 3)
@@ -1405,14 +1985,23 @@ async def main():
             profit_price = stock.get('conservative_take_profit', 0)
             
             print(f"    🛑 손절: ₹{stop_price:7.2f} (-{stop_pct:3.1f}%) | 🎯 익절: ₹{profit_price:7.2f} (+{profit_pct:3.1f}%)")
-            print("-" * 80)
+            print("-" * 90)
     else:
         print("❌ 안정성 기준을 만족하는 종목이 없습니다")
-        print("   (점수 20+ & 대형주 & 구름위 & 과매수아님 등)")
+        print("   (점수 20+ & 대형주 & 구름위 & 과매수아님 & AI 검증 등)")
+    
+    # AI 인사이트 출력
+    if results.get('ai_connected') and results.get('ai_insights'):
+        print("\n🧠 === AI 투자 인사이트 ===")
+        print("="*90)
+        
+        insights = results.get('ai_insights', [])
+        for i, insight in enumerate(insights[:5], 1):  # 최대 5개
+            print(f"{i}. {insight}")
     
     # 주간 포지션 현황
     print("\n📊 === 현재 주간 포지션 현황 ===")
-    print("="*80)
+    print("="*90)
     
     positions = results.get('position_status', [])
     if positions:
@@ -1420,7 +2009,7 @@ async def main():
         avg_performance = sum([pos['pnl_pct'] for pos in positions]) / len(positions)
         
         print(f"📈 총 포지션: {len(positions)}개 | 평균 수익률: {avg_performance:+5.1f}% | 총 손익: ₹{total_pnl:,.0f}")
-        print("-" * 80)
+        print("-" * 90)
         
         for pos in positions:
             status_icon = pos['status']
@@ -1432,28 +2021,28 @@ async def main():
             
             print(f"{status_icon} {ticker:12} | {days_held}일차 | {pnl_pct:+5.1f}% | ₹{pnl_amount:+8,.0f}")
             print(f"    📊 목표달성률: {target_achieve:5.1f}% | 진입: ₹{pos['entry_price']:,.0f} → 현재: ₹{pos['current_price']:,.0f}")
-            print("-" * 80)
+            print("-" * 90)
         
         # 월간 수익률 예상
         monthly_projection = avg_performance * 4  # 주 4회
         print(f"📈 월간 예상 수익률: {monthly_projection:+5.1f}% (목표: 5~7%)")
         
         if monthly_projection >= 5:
-            print("🎊 월간 목표 달성 가능! 훌륭습니다! 🎯")
+            print("🎊 월간 목표 달성 가능! 훌륭합니다! 🎯")
         else:
             needed = 5 - monthly_projection
             print(f"📊 목표까지 {needed:+4.1f}%p 더 필요")
     else:
         print("📭 현재 보유 포지션 없음")
     
-    # 안정형 포트폴리오 구성
-    print("\n💼 === 안정형 포트폴리오 구성 ===")
-    print("="*80)
+    # AI 강화 포트폴리오 구성
+    print("\n💼 === AI 강화 안정형 포트폴리오 구성 ===")
+    print("="*90)
     
     portfolio = results['portfolio']
     if portfolio:
-        print("💎 리스크 제한 투자 배분:")
-        print("-" * 80)
+        print("💎 AI 검증 + 리스크 제한 투자 배분:")
+        print("-" * 90)
         
         total_investment = 0
         total_risk = 0
@@ -1473,22 +2062,40 @@ async def main():
             total_investment += investment
             total_risk += risk_amount
         
-        print("-" * 80)
+        print("-" * 90)
         print(f"💰 총 투자금액: ₹{total_investment:10,.0f}")
         print(f"🛡️ 총 리스크:   ₹{total_risk:10,.0f} ({(total_risk/total_investment)*100:4.1f}%)")
         print(f"💵 현금 보유:   ₹{10000000 - total_investment:10,.0f}")
     
+    # AI 강화 리스크 평가
+    print("\n🛡️ === AI 강화 리스크 평가 ===")
+    print("="*90)
+    
+    risk_metrics = results.get('risk_metrics', {})
+    if risk_metrics:
+        ai_risk_level = risk_metrics.get('ai_risk_level', 'N/A')
+        overall_risk = risk_metrics.get('overall_risk_score', 'N/A')
+        ai_warnings = risk_metrics.get('ai_warnings', [])
+        
+        print(f"🤖 AI 리스크 레벨: {ai_risk_level}")
+        print(f"📊 종합 리스크 점수: {overall_risk}")
+        print(f"⚠️ AI 경고사항: {len(ai_warnings)}개")
+        
+        if ai_warnings:
+            for warning in ai_warnings[:3]:  # 최대 3개
+                print(f"   • {warning}")
+    
     # 핵심 알림
     print("\n🚨 === 핵심 알림 ===")
-    print("="*70)
+    print("="*80)
     
     alerts = results.get('alerts', [])
     for alert in alerts:
         print(f"• {alert}")
     
-    # IBKR 연결 상태
-    print("\n🔗 === IBKR 연결 상태 ===")
-    print("="*70)
+    # 연결 상태 종합
+    print("\n🔗 === 시스템 연결 상태 ===")
+    print("="*80)
     
     if results.get('ibkr_connected'):
         print("✅ IBKR 연결 성공 - 자동매매 활성화")
@@ -1500,20 +2107,41 @@ async def main():
         print("❌ IBKR 연결 없음 - 분석만 진행")
         print("🔧 실제 거래를 원하면 IBKR API 설정 필요")
     
+    if results.get('ai_connected'):
+        print("✅ OpenAI 연결 성공 - AI 분석 활성화")
+        print("🧠 시장심리, 인사이트, 리스크평가 AI 지원")
+    else:
+        print("❌ OpenAI 연결 없음 - 기본 분석만")
+        print("🔧 AI 기능을 원하면 OpenAI API 키 설정 필요")
+    
+    # AI 일일 리포트
+    if results.get('ai_connected') and results.get('ai_daily_report'):
+        print("\n📋 === AI 일일 투자 리포트 ===")
+        print("="*90)
+        
+        daily_report = results.get('ai_daily_report', '')
+        # 리포트를 적절한 길이로 나누어 출력
+        report_lines = daily_report.split('\n')
+        for line in report_lines[:15]:  # 최대 15줄
+            if line.strip():
+                print(line)
+    
     # 안정형 전략 가이드
-    print("\n🎯 === 안정형 월 5~7% 투자 가이드 ===")
-    print("="*70)
+    print("\n🎯 === AI 강화 안정형 월 5~7% 투자 가이드 ===")
+    print("="*90)
     print("📅 수요일만 거래: 매주 수요일에만 신규 진입")
     print("🎯 목표 수익률: 주간 1~2% → 월간 5~7%")
     print("🛡️ 리스크 관리: 종목당 최대 -3~5% 손절")
     print("📊 엄격한 선별: 점수 20+ & 대형주 위주")
+    print("🤖 AI 검증: OpenAI 기반 시장분석 및 타이밍 최적화")
     print("⚖️ 분산 투자: 최대 4종목, 섹터별 분산")
     print("💰 포지션 크기: 총 자산의 20% 이하/종목")
     print("📈 승률 목표: 80%+ (안정성 우선)")
+    print("🧠 AI 지원: 실시간 시장심리, 리스크평가, 투자인사이트")
     
-    print("\n🇮🇳 안정형 월 5~7% 인도 투자전략 완료! 🎯")
-    print("💎 꾸준함이 부의 지름길입니다! 💰")
-    print("="*70)
+    print("\n🇮🇳 AI 강화 안정형 월 5~7% 인도 투자전략 완료! 🎯")
+    print("💎 AI와 함께하는 스마트한 투자의 새로운 경험! 🤖💰")
+    print("="*90)
 
 if __name__ == "__main__":
     import asyncio
