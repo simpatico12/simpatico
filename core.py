@@ -8,6 +8,7 @@
 ✨ 핵심 기능:
 - 4대 전략 통합 관리 시스템
 - IBKR 자동 환전 기능 (달러 ↔ 엔/루피)
+- OpenAI GPT-4 기반 AI 매매 분석
 - 네트워크 모니터링 + 끊김 시 전량 매도
 - 통합 포지션 관리 + 리스크 제어
 - 실시간 모니터링 + 알림 시스템
@@ -15,7 +16,7 @@
 - 🚨 응급 오류 감지 시스템
 
 Author: 퀸트마스터팀
-Version: 1.1.0 (IBKR 자동환전 + 응급 오류 감지)
+Version: 1.2.0 (OpenAI 연동 + AI 자동매매)
 """
 
 import asyncio
@@ -38,6 +39,17 @@ import sqlite3
 import shutil
 import subprocess
 import signal
+import yfinance as yf
+import pandas as pd
+import numpy as np
+
+# OpenAI 연동
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    print("⚠️ OpenAI 모듈 없음 - pip install openai 필요")
 
 # 전략 모듈 임포트
 try:
@@ -109,6 +121,12 @@ class CoreConfig:
         self.CRYPTO_ALLOCATION = float(os.getenv('CRYPTO_STRATEGY_ALLOCATION', 0.20))
         self.INDIA_ALLOCATION = float(os.getenv('INDIA_STRATEGY_ALLOCATION', 0.15))
         
+        # OpenAI 설정
+        self.OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+        self.OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4')
+        self.AI_ANALYSIS_ENABLED = os.getenv('AI_ANALYSIS_ENABLED', 'true').lower() == 'true'
+        self.AI_AUTO_TRADE = os.getenv('AI_AUTO_TRADE', 'false').lower() == 'true'
+        
         # IBKR 설정
         self.IBKR_HOST = os.getenv('IBKR_HOST', '127.0.0.1')
         self.IBKR_PORT = int(os.getenv('IBKR_PORT', 7497))
@@ -148,349 +166,766 @@ class EmergencyErrorDetector:
     
     def __init__(self, config: CoreConfig):
         self.config = config
-        self.error_count = 0
-        self.last_error_time = None
-        self.consecutive_errors = 0
-        self.cpu_high_start = None
-        self.memory_alerts = []
-        self.emergency_triggered = False
+        self.error_counts = {}
+        self.last_check_time = time.time()
         
         self.logger = logging.getLogger('EmergencyDetector')
     
-    def check_system_health(self) -> Dict[str, Any]:
-        """시스템 상태 종합 체크"""
-        health_status = {
-            'healthy': True,
-            'warnings': [],
-            'errors': [],
-            'emergency_needed': False
-        }
-        
-        try:
-            # 메모리 체크
-            memory_percent = psutil.virtual_memory().percent
-            if memory_percent >= self.config.EMERGENCY_MEMORY_THRESHOLD:
-                health_status['emergency_needed'] = True
-                health_status['errors'].append(f'메모리 위험: {memory_percent:.1f}%')
-            elif memory_percent >= 85:
-                health_status['warnings'].append(f'메모리 경고: {memory_percent:.1f}%')
-            
-            # CPU 체크
-            cpu_percent = psutil.cpu_percent(interval=1)
-            if cpu_percent >= self.config.EMERGENCY_CPU_THRESHOLD:
-                if self.cpu_high_start is None:
-                    self.cpu_high_start = time.time()
-                elif time.time() - self.cpu_high_start > 300:  # 5분 연속
-                    health_status['emergency_needed'] = True
-                    health_status['errors'].append(f'CPU 위험: {cpu_percent:.1f}% (5분 연속)')
-            else:
-                self.cpu_high_start = None
-            
-            # 디스크 체크
-            disk_usage = psutil.disk_usage('/')
-            free_gb = disk_usage.free / (1024**3)
-            if free_gb < self.config.EMERGENCY_DISK_THRESHOLD:
-                health_status['emergency_needed'] = True
-                health_status['errors'].append(f'디스크 위험: {free_gb:.1f}GB 남음')
-            elif free_gb < 10:
-                health_status['warnings'].append(f'디스크 경고: {free_gb:.1f}GB 남음')
-            
-            # 네트워크 체크
-            network_status = self._check_network()
-            if not network_status['connected']:
-                health_status['emergency_needed'] = True
-                health_status['errors'].append('네트워크 연결 실패')
-            
-            # 프로세스 체크
-            process_status = self._check_processes()
-            if process_status['zombie_count'] > 5:
-                health_status['warnings'].append(f'좀비 프로세스 {process_status["zombie_count"]}개')
-            
-            health_status['healthy'] = not health_status['errors']
-            
-            return health_status
-            
-        except Exception as e:
-            self.logger.error(f"시스템 상태 체크 실패: {e}")
-            return {
-                'healthy': False,
-                'warnings': [],
-                'errors': [f'상태 체크 실패: {str(e)}'],
-                'emergency_needed': True
-            }
-    
-    def record_error(self, error_type: str, error_msg: str, critical: bool = False):
+    def record_error(self, error_type: str, error_message: str, critical: bool = False) -> bool:
         """오류 기록 및 응급 상황 판단"""
         current_time = time.time()
         
-        self.error_count += 1
+        if error_type not in self.error_counts:
+            self.error_counts[error_type] = []
         
-        # 연속 오류 체크
-        if self.last_error_time and current_time - self.last_error_time < 60:
-            self.consecutive_errors += 1
-        else:
-            self.consecutive_errors = 1
+        self.error_counts[error_type].append({
+            'timestamp': current_time,
+            'message': error_message,
+            'critical': critical
+        })
         
-        self.last_error_time = current_time
-        
-        self.logger.error(f"오류 기록: {error_type} - {error_msg}")
-        
-        # 응급 상황 판단
-        emergency_conditions = [
-            critical,
-            self.consecutive_errors >= self.config.EMERGENCY_ERROR_COUNT,
-            error_type in ['network_failure', 'api_failure', 'system_crash']
+        # 1시간 이전 오류 제거
+        cutoff_time = current_time - 3600
+        self.error_counts[error_type] = [
+            error for error in self.error_counts[error_type] 
+            if error['timestamp'] > cutoff_time
         ]
         
-        if any(emergency_conditions) and not self.emergency_triggered:
-            self.emergency_triggered = True
-            self.logger.critical(f"🚨 응급 상황 감지: {error_type}")
+        # 치명적 오류 즉시 응급 처리
+        if critical:
+            self.logger.critical(f"🚨 치명적 오류 감지: {error_type} - {error_message}")
+            return True
+        
+        # 일반 오류 누적 체크
+        recent_errors = len(self.error_counts[error_type])
+        if recent_errors >= self.config.EMERGENCY_ERROR_COUNT:
+            self.logger.critical(f"🚨 오류 임계치 초과: {error_type} ({recent_errors}회)")
             return True
         
         return False
     
-    def _check_network(self) -> Dict[str, Any]:
-        """네트워크 연결 상태 체크"""
+    def check_system_health(self) -> Dict[str, Any]:
+        """시스템 건강 상태 체크"""
         try:
-            response = requests.get('https://www.google.com', timeout=5)
-            return {'connected': response.status_code == 200, 'response_time': response.elapsed.total_seconds()}
-        except:
-            return {'connected': False, 'response_time': None}
-    
-    def _check_processes(self) -> Dict[str, Any]:
-        """프로세스 상태 체크"""
-        try:
-            processes = list(psutil.process_iter())
-            zombie_count = sum(1 for p in processes if p.status() == psutil.STATUS_ZOMBIE)
+            # CPU 사용률
+            cpu_percent = psutil.cpu_percent(interval=1)
             
-            return {
-                'total_processes': len(processes),
-                'zombie_count': zombie_count
+            # 메모리 사용률
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+            
+            # 디스크 사용률
+            disk = psutil.disk_usage('/')
+            disk_free_percent = (disk.free / disk.total) * 100
+            
+            # 응급 상황 판단
+            emergency_needed = (
+                cpu_percent > self.config.EMERGENCY_CPU_THRESHOLD or
+                memory_percent > self.config.EMERGENCY_MEMORY_THRESHOLD or
+                disk_free_percent < self.config.EMERGENCY_DISK_THRESHOLD
+            )
+            
+            health_status = {
+                'cpu_percent': cpu_percent,
+                'memory_percent': memory_percent,
+                'disk_free_percent': disk_free_percent,
+                'emergency_needed': emergency_needed,
+                'timestamp': datetime.now().isoformat()
             }
-        except:
-            return {'total_processes': 0, 'zombie_count': 0}
+            
+            if emergency_needed:
+                self.logger.critical(
+                    f"🚨 시스템 리소스 위험: CPU={cpu_percent}%, "
+                    f"메모리={memory_percent}%, 디스크여유={disk_free_percent}%"
+                )
+            
+            return health_status
+            
+        except Exception as e:
+            self.logger.error(f"시스템 건강 체크 실패: {e}")
+            return {'emergency_needed': False, 'error': str(e)}
 
 # ============================================================================
-# 🔗 IBKR 통합 연결 + 자동환전
+# 🏦 IBKR 통합 관리자
 # ============================================================================
 class IBKRManager:
-    """IBKR 통합 관리 + 자동환전 기능"""
+    """IBKR 연결 및 거래 관리"""
     
     def __init__(self, config: CoreConfig):
         self.config = config
         self.ib = None
         self.connected = False
-        self.account_id = None
+        self.account_info = {}
         self.positions = {}
-        self.balances = {}
         
         self.logger = logging.getLogger('IBKRManager')
     
-    async def connect(self) -> bool:
+    async def connect(self):
         """IBKR 연결"""
         if not IBKR_AVAILABLE:
-            self.logger.error("IBKR 모듈이 설치되지 않았습니다")
+            self.logger.warning("IBKR 모듈 없음 - 암호화폐 전용 모드")
             return False
         
         try:
             self.ib = IB()
             await self.ib.connectAsync(
-                self.config.IBKR_HOST,
-                self.config.IBKR_PORT,
-                self.config.IBKR_CLIENT_ID
+                host=self.config.IBKR_HOST,
+                port=self.config.IBKR_PORT,
+                clientId=self.config.IBKR_CLIENT_ID
             )
             
-            if self.ib.isConnected():
-                self.connected = True
-                await self._update_account_info()
-                self.logger.info("✅ IBKR 연결 성공")
-                return True
-            else:
-                self.logger.error("IBKR 연결 실패")
-                return False
-                
+            self.connected = True
+            self.logger.info("✅ IBKR 연결 성공")
+            
+            # 계좌 정보 업데이트
+            await self._update_account_info()
+            
+            return True
+            
         except Exception as e:
-            self.logger.error(f"IBKR 연결 오류: {e}")
+            self.logger.error(f"IBKR 연결 실패: {e}")
+            self.connected = False
             return False
     
     async def _update_account_info(self):
         """계좌 정보 업데이트"""
+        if not self.connected:
+            return
+        
         try:
-            # 계좌 정보
-            accounts = self.ib.managedAccounts()
-            if accounts:
-                self.account_id = accounts[0]
+            # 계좌 요약 정보
+            account_summary = self.ib.accountSummary()
+            self.account_info = {item.tag: item.value for item in account_summary}
             
             # 포지션 정보
-            portfolio = self.ib.portfolio()
+            positions = self.ib.positions()
             self.positions = {}
-            for pos in portfolio:
-                if pos.position != 0:
-                    self.positions[pos.contract.symbol] = {
-                        'position': pos.position,
-                        'avgCost': pos.avgCost,
-                        'marketPrice': pos.marketPrice,
-                        'unrealizedPNL': pos.unrealizedPNL,
-                        'currency': pos.contract.currency
-                    }
             
-            # 잔고 정보
-            account_values = self.ib.accountValues()
-            self.balances = {}
-            for av in account_values:
-                if av.tag == 'CashBalance':
-                    self.balances[av.currency] = float(av.value)
+            for position in positions:
+                symbol = position.contract.symbol
+                self.positions[symbol] = {
+                    'position': position.position,
+                    'avgCost': position.avgCost,
+                    'marketPrice': position.marketPrice,
+                    'marketValue': position.marketValue,
+                    'currency': position.contract.currency,
+                    'unrealizedPNL': position.unrealizedPNL
+                }
+            
+            self.logger.debug(f"계좌 정보 업데이트: {len(self.positions)}개 포지션")
             
         except Exception as e:
             self.logger.error(f"계좌 정보 업데이트 실패: {e}")
     
-    async def auto_currency_exchange(self, target_currency: str, required_amount: float) -> bool:
-        """자동 환전 기능"""
+    async def auto_currency_exchange(self, target_currency: str, amount: float):
+        """자동 환전"""
         if not self.connected:
-            return False
+            return
         
         try:
-            # 현재 잔고 확인
-            await self._update_account_info()
+            base_currency = 'USD'
             
-            current_balance = self.balances.get(target_currency, 0)
+            if target_currency == base_currency:
+                return  # 같은 통화면 환전 불필요
             
-            if current_balance >= required_amount:
-                self.logger.info(f"✅ {target_currency} 잔고 충분: {current_balance:,.2f}")
-                return True
+            # 환율 확인
+            forex_contract = Forex(f"{base_currency}{target_currency}")
+            ticker = self.ib.reqMktData(forex_contract)
             
-            # 환전 필요 금액 계산
-            needed_amount = required_amount - current_balance
+            await asyncio.sleep(2)  # 데이터 수신 대기
             
-            # USD 잔고 확인
-            usd_balance = self.balances.get('USD', 0)
-            
-            if target_currency == 'JPY':
-                # 달러 → 엔화 환전
-                exchange_rate = await self._get_exchange_rate('USD', 'JPY')
-                usd_needed = needed_amount / exchange_rate
+            if ticker.last:
+                exchange_rate = ticker.last
+                target_amount = amount / exchange_rate
                 
-                if usd_balance >= usd_needed:
-                    success = await self._execute_currency_exchange('USD', 'JPY', usd_needed)
-                    if success:
-                        self.logger.info(f"✅ 환전 완료: ${usd_needed:,.2f} → ¥{needed_amount:,.0f}")
-                        return True
+                # 환전 주문
+                order = MarketOrder('BUY', target_amount)
+                trade = self.ib.placeOrder(forex_contract, order)
                 
-            elif target_currency == 'INR':
-                # 달러 → 루피 환전
-                exchange_rate = await self._get_exchange_rate('USD', 'INR')
-                usd_needed = needed_amount / exchange_rate
+                self.logger.info(f"💱 환전 주문: {amount} {base_currency} → {target_amount:.2f} {target_currency}")
                 
-                if usd_balance >= usd_needed:
-                    success = await self._execute_currency_exchange('USD', 'INR', usd_needed)
-                    if success:
-                        self.logger.info(f"✅ 환전 완료: ${usd_needed:,.2f} → ₹{needed_amount:,.0f}")
-                        return True
-            
-            self.logger.warning(f"⚠️ 환전 실패: {target_currency} {needed_amount:,.2f} 부족")
-            return False
+                return trade
             
         except Exception as e:
-            self.logger.error(f"자동 환전 실패: {e}")
-            return False
+            self.logger.error(f"환전 실패 {target_currency}: {e}")
     
-    async def _get_exchange_rate(self, from_currency: str, to_currency: str) -> float:
-        """환율 조회"""
-        try:
-            # IBKR에서 환율 조회
-            contract = Forex(f'{from_currency}{to_currency}')
-            ticker = self.ib.reqMktData(contract)
-            await asyncio.sleep(1)
-            
-            if ticker.marketPrice():
-                rate = float(ticker.marketPrice())
-                self.ib.cancelMktData(contract)
-                return rate
-            
-            # 백업: 외부 API 사용
-            api_key = os.getenv('EXCHANGE_RATE_API_KEY')
-            if api_key:
-                url = f"https://api.exchangerate-api.com/v4/latest/{from_currency}"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as response:
-                        data = await response.json()
-                        return data['rates'][to_currency]
-            
-            # 기본값
-            default_rates = {'USDJPY': 110.0, 'USDINR': 75.0}
-            return default_rates.get(f'{from_currency}{to_currency}', 1.0)
-            
-        except Exception as e:
-            self.logger.error(f"환율 조회 실패: {e}")
-            return 1.0
-    
-    async def _execute_currency_exchange(self, from_currency: str, to_currency: str, amount: float) -> bool:
-        """환전 실행"""
-        try:
-            contract = Forex(f'{from_currency}{to_currency}')
-            order = MarketOrder('BUY', amount)
-            
-            trade = self.ib.placeOrder(contract, order)
-            
-            # 주문 완료 대기
-            for _ in range(30):  # 30초 대기
-                await asyncio.sleep(1)
-                if trade.isDone():
-                    break
-            
-            if trade.isDone() and trade.orderStatus.status == 'Filled':
-                self.logger.info(f"✅ 환전 주문 완료: {from_currency} → {to_currency}")
-                return True
-            else:
-                self.logger.error(f"❌ 환전 주문 실패: {trade.orderStatus.status}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"환전 실행 오류: {e}")
-            return False
-    
-    async def emergency_sell_all(self) -> Dict[str, bool]:
+    async def emergency_sell_all(self) -> Dict[str, Any]:
         """응급 전량 매도"""
         if not self.connected:
-            return {}
-        
-        self.logger.critical("🚨 응급 전량 매도 시작!")
-        
-        results = {}
+            return {'error': 'IBKR 미연결'}
         
         try:
-            await self._update_account_info()
+            self.logger.critical("🚨 응급 전량 매도 시작!")
             
-            for symbol, pos_info in self.positions.items():
-                if pos_info['position'] > 0:  # 매수 포지션만
-                    try:
-                        # 계약 생성
-                        if pos_info['currency'] == 'USD':
+            await self._update_account_info()
+            sell_results = {}
+            
+            for symbol, position_info in self.positions.items():
+                try:
+                    quantity = abs(position_info['position'])
+                    
+                    if quantity > 0:
+                        # 계약 생성 (통화별)
+                        currency = position_info['currency']
+                        
+                        if currency == 'USD':
                             contract = Stock(symbol, 'SMART', 'USD')
-                        elif pos_info['currency'] == 'JPY':
+                        elif currency == 'JPY':
                             contract = Stock(symbol, 'TSE', 'JPY')
-                        elif pos_info['currency'] == 'INR':
+                        elif currency == 'INR':
                             contract = Stock(symbol, 'NSE', 'INR')
                         else:
-                            continue
+                            contract = Stock(symbol, 'SMART', currency)
                         
                         # 시장가 매도 주문
-                        order = MarketOrder('SELL', abs(pos_info['position']))
+                        order = MarketOrder('SELL', quantity)
                         trade = self.ib.placeOrder(contract, order)
                         
-                        results[symbol] = True
-                        self.logger.info(f"🚨 응급 매도: {symbol} {abs(pos_info['position'])}주")
+                        sell_results[symbol] = {
+                            'quantity': quantity,
+                            'trade_id': trade.order.orderId
+                        }
                         
-                    except Exception as e:
-                        results[symbol] = False
-                        self.logger.error(f"응급 매도 실패 {symbol}: {e}")
+                        self.logger.info(f"응급 매도: {symbol} {quantity}주")
+                
+                except Exception as e:
+                    self.logger.error(f"응급 매도 실패 {symbol}: {e}")
+                    sell_results[symbol] = {'error': str(e)}
             
-            self.logger.critical(f"🚨 응급 매도 완료: {len(results)}개 종목")
-            return results
+            self.logger.critical(f"🚨 응급 전량 매도 완료: {len(sell_results)}개 종목")
+            return sell_results
             
         except Exception as e:
-            self.logger.error(f"응급 매도 전체 실패: {e}")
+            self.logger.error(f"응급 전량 매도 실패: {e}")
+            return {'error': str(e)}
+
+# ============================================================================
+# 🤖 OpenAI AI 분석 엔진
+# ============================================================================
+class AIAnalysisEngine:
+    """OpenAI GPT-4 기반 AI 매매 분석 엔진"""
+    
+    def __init__(self, config: CoreConfig):
+        self.config = config
+        self.client = None
+        
+        if OPENAI_AVAILABLE and config.OPENAI_API_KEY:
+            openai.api_key = config.OPENAI_API_KEY
+            self.client = openai
+        
+        self.logger = logging.getLogger('AIEngine')
+        
+        # AI 분석 프롬프트 템플릿
+        self.analysis_prompts = {
+            'market_analysis': """
+당신은 세계적인 퀀트 전문가입니다. 다음 시장 데이터를 분석하고 매매 방향을 제시해주세요.
+
+=== 시장 데이터 ===
+{market_data}
+
+=== 현재 포지션 ===
+{current_positions}
+
+=== 분석 요청 ===
+1. 시장 트렌드 분석 (강세/약세/횡보)
+2. 주요 리스크 요인
+3. 매매 추천 (BUY/SELL/HOLD)
+4. 목표가 및 손절가
+5. 포지션 크기 추천
+6. 신뢰도 점수 (1-100)
+
+응답은 JSON 형식으로 해주세요:
+{
+    "trend_analysis": "분석 내용",
+    "risk_factors": ["리스크1", "리스크2"],
+    "recommendation": "BUY/SELL/HOLD",
+    "target_price": 목표가,
+    "stop_loss": 손절가,
+    "position_size": 포지션_크기_퍼센트,
+    "confidence": 신뢰도_점수,
+    "reasoning": "판단 근거"
+}
+            """,
+            
+            'portfolio_optimization': """
+당신은 포트폴리오 최적화 전문가입니다. 현재 포트폴리오를 분석하고 개선방안을 제시해주세요.
+
+=== 현재 포트폴리오 ===
+{portfolio_data}
+
+=== 시장 상황 ===
+{market_conditions}
+
+=== 분석 요청 ===
+1. 포트폴리오 균형도 평가
+2. 리스크 분산 분석
+3. 리밸런싱 필요 여부
+4. 매도 추천 종목
+5. 매수 추천 종목
+6. 전체적인 포트폴리오 점수
+
+응답은 JSON 형식으로 해주세요.
+            """,
+            
+            'risk_assessment': """
+당신은 리스크 관리 전문가입니다. 현재 상황의 리스크를 평가해주세요.
+
+=== 포지션 데이터 ===
+{position_data}
+
+=== 시장 변동성 ===
+{volatility_data}
+
+위험도를 1-10으로 평가하고 대응방안을 제시해주세요.
+            """
+        }
+    
+    async def analyze_market_trend(self, symbol: str, market: str = 'US') -> Dict[str, Any]:
+        """시장 트렌드 AI 분석"""
+        if not self.client or not self.config.AI_ANALYSIS_ENABLED:
+            return {'error': 'AI 분석 비활성화'}
+        
+        try:
+            # 시장 데이터 수집
+            market_data = await self._collect_market_data(symbol, market)
+            
+            # 현재 포지션 정보
+            current_positions = await self._get_position_info(symbol)
+            
+            # AI 분석 요청
+            prompt = self.analysis_prompts['market_analysis'].format(
+                market_data=json.dumps(market_data, indent=2),
+                current_positions=json.dumps(current_positions, indent=2)
+            )
+            
+            response = await self._call_openai_api(prompt)
+            
+            # JSON 파싱
+            try:
+                analysis_result = json.loads(response)
+                analysis_result['timestamp'] = datetime.now().isoformat()
+                analysis_result['symbol'] = symbol
+                analysis_result['market'] = market
+                
+                self.logger.info(f"🤖 AI 분석 완료: {symbol} - {analysis_result.get('recommendation', 'N/A')}")
+                return analysis_result
+                
+            except json.JSONDecodeError:
+                self.logger.error(f"AI 응답 JSON 파싱 실패: {response}")
+                return {'error': 'JSON 파싱 실패', 'raw_response': response}
+                
+        except Exception as e:
+            self.logger.error(f"AI 시장 분석 실패: {e}")
+            return {'error': str(e)}
+    
+    async def analyze_portfolio_optimization(self, portfolio_data: Dict) -> Dict[str, Any]:
+        """포트폴리오 최적화 AI 분석"""
+        if not self.client or not self.config.AI_ANALYSIS_ENABLED:
+            return {'error': 'AI 분석 비활성화'}
+        
+        try:
+            # 시장 상황 수집
+            market_conditions = await self._collect_market_conditions()
+            
+            prompt = self.analysis_prompts['portfolio_optimization'].format(
+                portfolio_data=json.dumps(portfolio_data, indent=2),
+                market_conditions=json.dumps(market_conditions, indent=2)
+            )
+            
+            response = await self._call_openai_api(prompt)
+            
+            try:
+                result = json.loads(response)
+                result['timestamp'] = datetime.now().isoformat()
+                
+                self.logger.info("🤖 포트폴리오 최적화 분석 완료")
+                return result
+                
+            except json.JSONDecodeError:
+                return {'error': 'JSON 파싱 실패', 'raw_response': response}
+                
+        except Exception as e:
+            self.logger.error(f"포트폴리오 최적화 분석 실패: {e}")
+            return {'error': str(e)}
+    
+    async def assess_risk(self, position_data: Dict, volatility_data: Dict) -> Dict[str, Any]:
+        """리스크 평가 AI 분석"""
+        if not self.client or not self.config.AI_ANALYSIS_ENABLED:
+            return {'error': 'AI 분석 비활성화'}
+        
+        try:
+            prompt = self.analysis_prompts['risk_assessment'].format(
+                position_data=json.dumps(position_data, indent=2),
+                volatility_data=json.dumps(volatility_data, indent=2)
+            )
+            
+            response = await self._call_openai_api(prompt)
+            
+            try:
+                result = json.loads(response)
+                result['timestamp'] = datetime.now().isoformat()
+                
+                self.logger.info("🤖 리스크 평가 완료")
+                return result
+                
+            except json.JSONDecodeError:
+                return {'error': 'JSON 파싱 실패', 'raw_response': response}
+                
+        except Exception as e:
+            self.logger.error(f"리스크 평가 실패: {e}")
+            return {'error': str(e)}
+    
+    async def _call_openai_api(self, prompt: str) -> str:
+        """OpenAI API 호출"""
+        try:
+            response = await asyncio.to_thread(
+                self.client.ChatCompletion.create,
+                model=self.config.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "당신은 세계 최고의 퀀트 투자 전문가입니다. 정확하고 실용적인 분석을 제공해주세요."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2000,
+                temperature=0.3
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            self.logger.error(f"OpenAI API 호출 실패: {e}")
+            raise
+    
+    async def _collect_market_data(self, symbol: str, market: str) -> Dict[str, Any]:
+        """시장 데이터 수집"""
+        try:
+            # 야후 파이낸스에서 데이터 수집
+            if market == 'US':
+                ticker = symbol
+            elif market == 'JAPAN':
+                ticker = f"{symbol}.T"
+            elif market == 'INDIA':
+                ticker = f"{symbol}.NS"
+            else:
+                ticker = symbol
+            
+            stock = yf.Ticker(ticker)
+            
+            # 기본 정보
+            info = stock.info
+            
+            # 가격 데이터 (최근 30일)
+            hist = stock.history(period="1mo")
+            
+            # 기술적 지표 계산
+            current_price = hist['Close'].iloc[-1]
+            sma_20 = hist['Close'].rolling(20).mean().iloc[-1]
+            sma_50 = hist['Close'].rolling(50).mean().iloc[-1] if len(hist) >= 50 else None
+            
+            volatility = hist['Close'].pct_change().std() * np.sqrt(252)  # 연간 변동성
+            
+            # RSI 계산
+            delta = hist['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs)).iloc[-1]
+            
+            market_data = {
+                'symbol': symbol,
+                'current_price': float(current_price),
+                'sma_20': float(sma_20) if not pd.isna(sma_20) else None,
+                'sma_50': float(sma_50) if sma_50 and not pd.isna(sma_50) else None,
+                'rsi': float(rsi) if not pd.isna(rsi) else None,
+                'volatility': float(volatility),
+                'volume_avg': float(hist['Volume'].mean()),
+                'price_change_1d': float((current_price - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2] * 100),
+                'price_change_7d': float((current_price - hist['Close'].iloc[-7]) / hist['Close'].iloc[-7] * 100) if len(hist) >= 7 else None,
+                'market_cap': info.get('marketCap'),
+                'pe_ratio': info.get('trailingPE'),
+                'sector': info.get('sector'),
+                'industry': info.get('industry')
+            }
+            
+            return market_data
+            
+        except Exception as e:
+            self.logger.error(f"시장 데이터 수집 실패 {symbol}: {e}")
+            return {'error': str(e)}
+    
+    async def _get_position_info(self, symbol: str) -> Dict[str, Any]:
+        """현재 포지션 정보 조회"""
+        # 실제 구현에서는 포지션 매니저에서 정보를 가져옴
+        return {
+            'symbol': symbol,
+            'quantity': 0,
+            'avg_cost': 0,
+            'current_value': 0,
+            'unrealized_pnl': 0
+        }
+    
+    async def _collect_market_conditions(self) -> Dict[str, Any]:
+        """전체 시장 상황 수집"""
+        try:
+            # 주요 지수들
+            indices = {
+                'SPY': '^GSPC',    # S&P 500
+                'QQQ': '^IXIC',    # NASDAQ
+                'VTI': '^GSPC',    # Total Stock Market
+                'NIKKEI': '^N225', # 니케이
+                'SENSEX': '^BSESN' # 인도 센섹스
+            }
+            
+            market_conditions = {}
+            
+            for name, ticker in indices.items():
+                try:
+                    stock = yf.Ticker(ticker)
+                    hist = stock.history(period="5d")
+                    
+                    if len(hist) > 0:
+                        current = hist['Close'].iloc[-1]
+                        prev = hist['Close'].iloc[-2] if len(hist) > 1 else current
+                        
+                        market_conditions[name] = {
+                            'price': float(current),
+                            'change_pct': float((current - prev) / prev * 100)
+                        }
+                except:
+                    continue
+            
+            # VIX (공포지수)
+            try:
+                vix = yf.Ticker('^VIX')
+                vix_hist = vix.history(period="1d")
+                if len(vix_hist) > 0:
+                    market_conditions['VIX'] = float(vix_hist['Close'].iloc[-1])
+            except:
+                pass
+            
+            return market_conditions
+            
+        except Exception as e:
+            self.logger.error(f"시장 상황 수집 실패: {e}")
             return {}
+
+# ============================================================================
+# 🎯 AI 기반 자동매매 실행기
+# ============================================================================
+class AITradingExecutor:
+    """AI 분석 기반 자동매매 실행"""
+    
+    def __init__(self, config: CoreConfig, ai_engine: AIAnalysisEngine, ibkr_manager):
+        self.config = config
+        self.ai_engine = ai_engine
+        self.ibkr_manager = ibkr_manager
+        
+        self.logger = logging.getLogger('AITrader')
+        
+        # 매매 실행 설정
+        self.min_confidence = 70  # 최소 신뢰도
+        self.max_position_size = 0.1  # 최대 포지션 크기 (10%)
+        self.stop_loss_pct = 0.05  # 손절 비율 (5%)
+        
+    async def execute_ai_trading(self, symbol: str, market: str = 'US') -> Dict[str, Any]:
+        """AI 분석 기반 자동매매 실행"""
+        if not self.config.AI_AUTO_TRADE:
+            return {'message': 'AI 자동매매 비활성화'}
+        
+        try:
+            self.logger.info(f"🤖 AI 자동매매 시작: {symbol}")
+            
+            # AI 분석 실행
+            analysis = await self.ai_engine.analyze_market_trend(symbol, market)
+            
+            if 'error' in analysis:
+                return {'error': f'AI 분석 실패: {analysis["error"]}'}
+            
+            # 신뢰도 체크
+            confidence = analysis.get('confidence', 0)
+            if confidence < self.min_confidence:
+                self.logger.info(f"신뢰도 부족 ({confidence}% < {self.min_confidence}%), 거래 건너뜀")
+                return {'message': f'신뢰도 부족: {confidence}%'}
+            
+            # 매매 실행
+            recommendation = analysis.get('recommendation', 'HOLD')
+            
+            if recommendation == 'BUY':
+                result = await self._execute_buy_order(symbol, analysis, market)
+            elif recommendation == 'SELL':
+                result = await self._execute_sell_order(symbol, analysis, market)
+            else:
+                result = {'message': 'HOLD - 거래 없음'}
+            
+            # 결과 로깅
+            self.logger.info(f"🤖 AI 매매 완료: {symbol} - {recommendation} (신뢰도: {confidence}%)")
+            
+            return {
+                'symbol': symbol,
+                'analysis': analysis,
+                'execution_result': result,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"AI 자동매매 실패: {e}")
+            return {'error': str(e)}
+    
+    async def _execute_buy_order(self, symbol: str, analysis: Dict, market: str) -> Dict[str, Any]:
+        """매수 주문 실행"""
+        try:
+            if not self.ibkr_manager.connected:
+                return {'error': 'IBKR 미연결'}
+            
+            # 포지션 크기 계산
+            recommended_size = min(analysis.get('position_size', 5), self.max_position_size * 100)
+            portfolio_value = self.config.TOTAL_PORTFOLIO_VALUE
+            
+            if market == 'US':
+                allocation = self.config.US_ALLOCATION
+                currency = 'USD'
+            elif market == 'JAPAN':
+                allocation = self.config.JAPAN_ALLOCATION
+                currency = 'JPY'
+            elif market == 'INDIA':
+                allocation = self.config.INDIA_ALLOCATION
+                currency = 'INR'
+            else:
+                allocation = 0.1
+                currency = 'USD'
+            
+            max_investment = portfolio_value * allocation * (recommended_size / 100)
+            
+            # 환전 실행 (필요시)
+            if currency != 'USD':
+                await self.ibkr_manager.auto_currency_exchange(currency, max_investment)
+            
+            # 현재가 조회
+            current_price = analysis.get('target_price', 0)
+            if current_price <= 0:
+                return {'error': '유효하지 않은 가격'}
+            
+            # 매수 수량 계산
+            quantity = int(max_investment / current_price)
+            
+            if quantity <= 0:
+                return {'error': '매수 수량 부족'}
+            
+            # IBKR 주문 실행
+            try:
+                # 계약 생성
+                if market == 'US':
+                    contract = Stock(symbol, 'SMART', 'USD')
+                elif market == 'JAPAN':
+                    contract = Stock(symbol, 'TSE', 'JPY')
+                elif market == 'INDIA':
+                    contract = Stock(symbol, 'NSE', 'INR')
+                else:
+                    contract = Stock(symbol, 'SMART', 'USD')
+                
+                # 시장가 매수 주문
+                order = MarketOrder('BUY', quantity)
+                trade = self.ibkr_manager.ib.placeOrder(contract, order)
+                
+                # 주문 완료 대기
+                for _ in range(30):
+                    await asyncio.sleep(1)
+                    if trade.isDone():
+                        break
+                
+                if trade.isDone() and trade.orderStatus.status == 'Filled':
+                    self.logger.info(f"✅ AI 매수 완료: {symbol} {quantity}주")
+                    
+                    # 손절 주문 설정
+                    stop_loss_price = current_price * (1 - self.stop_loss_pct)
+                    stop_order = StopOrder('SELL', quantity, stop_loss_price)
+                    self.ibkr_manager.ib.placeOrder(contract, stop_order)
+                    
+                    return {
+                        'status': 'success',
+                        'action': 'BUY',
+                        'symbol': symbol,
+                        'quantity': quantity,
+                        'price': trade.orderStatus.avgFillPrice,
+                        'total_cost': quantity * trade.orderStatus.avgFillPrice,
+                        'stop_loss': stop_loss_price
+                    }
+                else:
+                    return {'error': f'주문 실패: {trade.orderStatus.status}'}
+                    
+            except Exception as e:
+                return {'error': f'IBKR 주문 실패: {e}'}
+            
+        except Exception as e:
+            self.logger.error(f"매수 주문 실행 실패: {e}")
+            return {'error': str(e)}
+    
+    async def _execute_sell_order(self, symbol: str, analysis: Dict, market: str) -> Dict[str, Any]:
+        """매도 주문 실행"""
+        try:
+            if not self.ibkr_manager.connected:
+                return {'error': 'IBKR 미연결'}
+            
+            # 현재 포지션 확인
+            await self.ibkr_manager._update_account_info()
+            
+            if symbol not in self.ibkr_manager.positions:
+                return {'error': '보유 포지션 없음'}
+            
+            position_info = self.ibkr_manager.positions[symbol]
+            quantity = int(abs(position_info['position']))
+            
+            if quantity <= 0:
+                return {'error': '매도할 수량 없음'}
+            
+            try:
+                # 계약 생성
+                if market == 'US':
+                    contract = Stock(symbol, 'SMART', 'USD')
+                elif market == 'JAPAN':
+                    contract = Stock(symbol, 'TSE', 'JPY')
+                elif market == 'INDIA':
+                    contract = Stock(symbol, 'NSE', 'INR')
+                else:
+                    contract = Stock(symbol, 'SMART', 'USD')
+                
+                # 시장가 매도 주문
+                order = MarketOrder('SELL', quantity)
+                trade = self.ibkr_manager.ib.placeOrder(contract, order)
+                
+                # 주문 완료 대기
+                for _ in range(30):
+                    await asyncio.sleep(1)
+                    if trade.isDone():
+                        break
+                
+                if trade.isDone() and trade.orderStatus.status == 'Filled':
+                    # 손익 계산
+                    avg_cost = position_info['avgCost']
+                    sell_price = trade.orderStatus.avgFillPrice
+                    profit_loss = (sell_price - avg_cost) * quantity
+                    profit_pct = (sell_price - avg_cost) / avg_cost * 100
+                    
+                    self.logger.info(f"✅ AI 매도 완료: {symbol} {quantity}주 (손익: {profit_loss:+.2f})")
+                    
+                    return {
+                        'status': 'success',
+                        'action': 'SELL',
+                        'symbol': symbol,
+                        'quantity': quantity,
+                        'price': sell_price,
+                        'total_revenue': quantity * sell_price,
+                        'profit_loss': profit_loss,
+                        'profit_pct': profit_pct
+                    }
+                else:
+                    return {'error': f'주문 실패: {trade.orderStatus.status}'}
+                    
+            except Exception as e:
+                return {'error': f'IBKR 주문 실패: {e}'}
+            
+        except Exception as e:
+            self.logger.error(f"매도 주문 실행 실패: {e}")
+            return {'error': str(e)}
 
 # ============================================================================
 # 📊 통합 포지션 관리자
@@ -803,7 +1238,25 @@ class PerformanceTracker:
                     timestamp DATETIME,
                     profit_loss REAL,
                     profit_percent REAL,
-                    fees REAL
+                    fees REAL,
+                    ai_confidence REAL,
+                    ai_reasoning TEXT
+                )
+            ''')
+            
+            # AI 분석 결과 테이블
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ai_analysis (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT,
+                    market TEXT,
+                    timestamp DATETIME,
+                    recommendation TEXT,
+                    confidence REAL,
+                    target_price REAL,
+                    stop_loss REAL,
+                    reasoning TEXT,
+                    executed BOOLEAN
                 )
             ''')
             
@@ -838,9 +1291,36 @@ class PerformanceTracker:
         except Exception as e:
             self.logger.error(f"데이터베이스 초기화 실패: {e}")
     
+    def record_ai_analysis(self, symbol: str, market: str, analysis: Dict):
+        """AI 분석 결과 기록"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO ai_analysis 
+                (symbol, market, timestamp, recommendation, confidence, target_price, stop_loss, reasoning, executed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                symbol, market, datetime.now().isoformat(),
+                analysis.get('recommendation', 'HOLD'),
+                analysis.get('confidence', 0),
+                analysis.get('target_price', 0),
+                analysis.get('stop_loss', 0),
+                analysis.get('reasoning', ''),
+                False
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            self.logger.error(f"AI 분석 기록 실패: {e}")
+    
     def record_trade(self, strategy: str, symbol: str, action: str, quantity: float, 
-                    price: float, currency: str, profit_loss: float = 0, fees: float = 0):
-        """거래 기록"""
+                    price: float, currency: str, profit_loss: float = 0, fees: float = 0,
+                    ai_confidence: float = 0, ai_reasoning: str = ''):
+        """거래 기록 (AI 정보 포함)"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -851,15 +1331,15 @@ class PerformanceTracker:
             
             cursor.execute('''
                 INSERT INTO trades 
-                (strategy, symbol, action, quantity, price, currency, timestamp, profit_loss, profit_percent, fees)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (strategy, symbol, action, quantity, price, currency, timestamp, profit_loss, profit_percent, fees, ai_confidence, ai_reasoning)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (strategy, symbol, action, quantity, price, currency, 
-                  datetime.now().isoformat(), profit_loss, profit_percent, fees))
+                  datetime.now().isoformat(), profit_loss, profit_percent, fees, ai_confidence, ai_reasoning))
             
             conn.commit()
             conn.close()
             
-            self.logger.info(f"거래 기록: {strategy} {symbol} {action} {quantity}")
+            self.logger.info(f"거래 기록: {strategy} {symbol} {action} {quantity} (AI신뢰도: {ai_confidence}%)")
             
         except Exception as e:
             self.logger.error(f"거래 기록 실패: {e}")
@@ -888,18 +1368,19 @@ class PerformanceTracker:
             self.logger.error(f"일일 성과 기록 실패: {e}")
     
     def get_performance_summary(self, days: int = 30) -> Dict[str, Any]:
-        """성과 요약 조회"""
+        """성과 요약 조회 (AI 성과 포함)"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
             start_date = (datetime.now() - timedelta(days=days)).date()
             
-            # 기간별 수익률
+            # 전략별 성과
             cursor.execute('''
                 SELECT strategy, SUM(profit_loss) as total_profit, COUNT(*) as trade_count,
                        AVG(profit_percent) as avg_profit_pct, 
-                       SUM(CASE WHEN profit_loss > 0 THEN 1 ELSE 0 END) as winning_trades
+                       SUM(CASE WHEN profit_loss > 0 THEN 1 ELSE 0 END) as winning_trades,
+                       AVG(ai_confidence) as avg_ai_confidence
                 FROM trades 
                 WHERE date(timestamp) >= ? AND action = 'SELL'
                 GROUP BY strategy
@@ -907,19 +1388,40 @@ class PerformanceTracker:
             
             strategy_performance = {}
             for row in cursor.fetchall():
-                strategy, total_profit, trade_count, avg_profit_pct, winning_trades = row
+                strategy, total_profit, trade_count, avg_profit_pct, winning_trades, avg_ai_confidence = row
                 win_rate = (winning_trades / trade_count * 100) if trade_count > 0 else 0
                 
                 strategy_performance[strategy] = {
-                    'total_profit': total_profit,
-                    'trade_count': trade_count,
-                    'avg_profit_pct': avg_profit_pct,
+                    'total_profit': total_profit or 0,
+                    'trade_count': trade_count or 0,
+                    'avg_profit_pct': avg_profit_pct or 0,
                     'win_rate': win_rate,
-                    'winning_trades': winning_trades
+                    'winning_trades': winning_trades or 0,
+                    'avg_ai_confidence': avg_ai_confidence or 0
+                }
+            
+            # AI 분석 성과
+            cursor.execute('''
+                SELECT recommendation, COUNT(*) as count, AVG(confidence) as avg_confidence
+                FROM ai_analysis 
+                WHERE date(timestamp) >= ?
+                GROUP BY recommendation
+            ''', (start_date.isoformat(),))
+            
+            ai_performance = {}
+            for row in cursor.fetchall():
+                recommendation, count, avg_confidence = row
+                ai_performance[recommendation] = {
+                    'count': count,
+                    'avg_confidence': avg_confidence or 0
                 }
             
             conn.close()
-            return strategy_performance
+            
+            return {
+                'strategy_performance': strategy_performance,
+                'ai_performance': ai_performance
+            }
             
         except Exception as e:
             self.logger.error(f"성과 요약 조회 실패: {e}")
@@ -999,7 +1501,7 @@ class BackupManager:
 # 🏆 퀸트프로젝트 통합 코어 시스템
 # ============================================================================
 class QuantProjectCore:
-    """퀸트프로젝트 통합 코어 시스템"""
+    """퀸트프로젝트 통합 코어 시스템 (AI 기반)"""
     
     def __init__(self):
         # 설정 로드
@@ -1014,6 +1516,8 @@ class QuantProjectCore:
         # 핵심 컴포넌트 초기화
         self.emergency_detector = EmergencyErrorDetector(self.config)
         self.ibkr_manager = IBKRManager(self.config)
+        self.ai_engine = AIAnalysisEngine(self.config)
+        self.ai_trader = AITradingExecutor(self.config, self.ai_engine, self.ibkr_manager)
         self.position_manager = UnifiedPositionManager(self.config, self.ibkr_manager)
         self.network_monitor = NetworkMonitor(self.config, self.ibkr_manager)
         self.notification_manager = NotificationManager(self.config)
@@ -1027,6 +1531,13 @@ class QuantProjectCore:
         # 시스템 상태
         self.running = False
         self.start_time = None
+        
+        # AI 매매 대상 종목 리스트
+        self.ai_watchlist = {
+            'US': ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META'],
+            'JAPAN': ['7203', '6098', '9984', '6758', '8058'],  # 도요타, 렌고, 소프트뱅크 등
+            'INDIA': ['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'HINDUNILVR']
+        }
     
     def _setup_logging(self):
         """로깅 설정"""
@@ -1081,7 +1592,7 @@ class QuantProjectCore:
     async def start_system(self):
         """시스템 시작"""
         try:
-            self.logger.info("🏆 퀸트프로젝트 통합 시스템 시작!")
+            self.logger.info("🏆 퀸트프로젝트 통합 시스템 시작! (AI 기반)")
             self.start_time = datetime.now()
             self.running = True
             
@@ -1089,11 +1600,16 @@ class QuantProjectCore:
             if IBKR_AVAILABLE:
                 await self.ibkr_manager.connect()
             
+            # OpenAI 연결 확인
+            ai_status = "✅" if OPENAI_AVAILABLE and self.config.OPENAI_API_KEY else "❌"
+            
             # 시작 알림
             await self.notification_manager.send_notification(
-                f"🚀 퀸트프로젝트 시스템 시작\n"
+                f"🚀 퀸트프로젝트 AI 시스템 시작\n"
                 f"활성 전략: {', '.join(self.strategies.keys())}\n"
                 f"IBKR 연결: {'✅' if self.ibkr_manager.connected else '❌'}\n"
+                f"AI 분석: {ai_status}\n"
+                f"자동매매: {'✅' if self.config.AI_AUTO_TRADE else '❌'}\n"
                 f"포트폴리오: {self.config.TOTAL_PORTFOLIO_VALUE:,.0f}원",
                 'success'
             )
@@ -1101,6 +1617,7 @@ class QuantProjectCore:
             # 백그라운드 태스크 시작
             tasks = [
                 asyncio.create_task(self._main_trading_loop()),
+                asyncio.create_task(self._ai_analysis_loop()),
                 asyncio.create_task(self._monitoring_loop()),
                 asyncio.create_task(self.network_monitor.start_monitoring()),
                 asyncio.create_task(self._backup_loop())
@@ -1148,6 +1665,54 @@ class QuantProjectCore:
             except Exception as e:
                 self.logger.error(f"메인 루프 오류: {e}")
                 await asyncio.sleep(60)
+    
+    async def _ai_analysis_loop(self):
+        """AI 분석 루프 (독립적으로 실행)"""
+        while self.running:
+            try:
+                if not self.config.AI_ANALYSIS_ENABLED:
+                    await asyncio.sleep(1800)  # AI 비활성화시 30분 대기
+                    continue
+                
+                # 각 시장별 AI 분석 실행
+                for market, symbols in self.ai_watchlist.items():
+                    if market in self.strategies:  # 해당 전략이 활성화된 경우만
+                        for symbol in symbols:
+                            try:
+                                # AI 분석 실행
+                                analysis = await self.ai_engine.analyze_market_trend(symbol, market)
+                                
+                                if 'error' not in analysis:
+                                    # 분석 결과 저장
+                                    self.performance_tracker.record_ai_analysis(symbol, market, analysis)
+                                    
+                                    # 자동매매 실행 (설정된 경우)
+                                    if self.config.AI_AUTO_TRADE:
+                                        trade_result = await self.ai_trader.execute_ai_trading(symbol, market)
+                                        
+                                        if 'error' not in trade_result:
+                                            # 성공적인 거래 알림
+                                            await self.notification_manager.send_notification(
+                                                f"🤖 AI 자동매매 실행\n"
+                                                f"종목: {symbol} ({market})\n"
+                                                f"액션: {trade_result.get('execution_result', {}).get('action', 'N/A')}\n"
+                                                f"신뢰도: {analysis.get('confidence', 0)}%",
+                                                'info'
+                                            )
+                                
+                                # 과부하 방지를 위한 대기
+                                await asyncio.sleep(10)
+                                
+                            except Exception as e:
+                                self.logger.error(f"AI 분석 실패 {symbol}: {e}")
+                                continue
+                
+                # AI 분석은 30분마다 실행
+                await asyncio.sleep(1800)
+                
+            except Exception as e:
+                self.logger.error(f"AI 분석 루프 오류: {e}")
+                await asyncio.sleep(300)
     
     def _should_run_strategy(self, strategy_name: str, weekday: int) -> bool:
         """전략 실행 여부 판단"""
@@ -1241,12 +1806,16 @@ class QuantProjectCore:
                 await asyncio.sleep(3600)  # 1시간 대기
     
     async def _send_status_report(self, portfolio_summary: Dict):
-        """상태 보고서 전송"""
+        """상태 보고서 전송 (AI 정보 포함)"""
         try:
             uptime = datetime.now() - self.start_time if self.start_time else timedelta(0)
             
+            # 최근 AI 성과 조회
+            performance_data = self.performance_tracker.get_performance_summary(7)  # 최근 7일
+            ai_performance = performance_data.get('ai_performance', {})
+            
             report = (
-                f"📊 퀸트프로젝트 상태 보고\n\n"
+                f"📊 퀸트프로젝트 AI 상태 보고\n\n"
                 f"🕐 가동시간: {uptime}\n"
                 f"💼 총 포지션: {portfolio_summary['total_positions']}개\n"
                 f"💰 미실현 손익: {portfolio_summary['total_unrealized_pnl']:+,.0f}원\n"
@@ -1258,10 +1827,42 @@ class QuantProjectCore:
             for strategy, data in portfolio_summary['by_strategy'].items():
                 report += f"  {strategy}: {data['count']}개 ({data['pnl']:+,.0f}원)\n"
             
+            # AI 성과 추가
+            if ai_performance:
+                report += f"\n🤖 AI 분석 현황 (최근 7일):\n"
+                for recommendation, data in ai_performance.items():
+                    report += f"  {recommendation}: {data['count']}회 (평균신뢰도: {data['avg_confidence']:.1f}%)\n"
+            
             await self.notification_manager.send_notification(report, 'info')
             
         except Exception as e:
             self.logger.error(f"상태 보고서 전송 실패: {e}")
+    
+    async def emergency_shutdown(self, reason: str):
+        """응급 종료"""
+        try:
+            self.logger.critical(f"🚨 응급 종료: {reason}")
+            
+            # 응급 알림
+            await self.notification_manager.send_notification(
+                f"🚨 시스템 응급 종료\n"
+                f"사유: {reason}\n"
+                f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                'emergency'
+            )
+            
+            # 응급 매도 (설정된 경우)
+            if self.config.EMERGENCY_SELL_ON_ERROR:
+                if self.ibkr_manager.connected:
+                    await self.ibkr_manager.emergency_sell_all()
+            
+            # 응급 백업
+            await self.backup_manager.perform_backup()
+            
+            self.running = False
+            
+        except Exception as e:
+            self.logger.error(f"응급 종료 실패: {e}")
     
     async def graceful_shutdown(self):
         """정상 종료"""
@@ -1305,6 +1906,8 @@ async def get_system_status():
     return {
         'strategies': list(core.strategies.keys()),
         'ibkr_connected': core.ibkr_manager.connected,
+        'ai_enabled': core.config.AI_ANALYSIS_ENABLED,
+        'auto_trade': core.config.AI_AUTO_TRADE,
         'total_positions': summary['total_positions'],
         'total_unrealized_pnl': summary['total_unrealized_pnl'],
         'by_strategy': summary['by_strategy']
@@ -1320,6 +1923,23 @@ async def emergency_sell_all():
         return results
     else:
         return {}
+
+async def run_ai_analysis(symbol: str, market: str = 'US'):
+    """단일 종목 AI 분석 실행"""
+    core = QuantProjectCore()
+    analysis = await core.ai_engine.analyze_market_trend(symbol, market)
+    return analysis
+
+async def execute_ai_trade(symbol: str, market: str = 'US'):
+    """단일 종목 AI 자동매매 실행"""
+    core = QuantProjectCore()
+    await core.ibkr_manager.connect()
+    
+    if core.ibkr_manager.connected:
+        result = await core.ai_trader.execute_ai_trading(symbol, market)
+        return result
+    else:
+        return {'error': 'IBKR 연결 실패'}
 
 # ============================================================================
 # 🏁 메인 실행부
@@ -1339,15 +1959,27 @@ async def main():
     
     try:
         print("🏆" + "="*70)
-        print("🏆 퀸트프로젝트 통합 코어 시스템 v1.1.0")
+        print("🏆 퀸트프로젝트 통합 코어 시스템 v1.2.0 (AI 기반)")
         print("🏆" + "="*70)
         print("✨ 4대 전략 통합 관리")
         print("✨ IBKR 자동 환전")
+        print("✨ OpenAI GPT-4 AI 분석")
+        print("✨ AI 기반 자동매매")
         print("✨ 네트워크 모니터링")
         print("✨ 응급 오류 감지")
         print("✨ 통합 포지션 관리")
         print("✨ 실시간 알림")
         print("✨ 자동 백업")
+        print("🏆" + "="*70)
+        
+        # OpenAI 상태 확인
+        if OPENAI_AVAILABLE and core.config.OPENAI_API_KEY:
+            print("🤖 OpenAI 연동: ✅")
+            print(f"🤖 AI 분석: {'✅' if core.config.AI_ANALYSIS_ENABLED else '❌'}")
+            print(f"🤖 자동매매: {'✅' if core.config.AI_AUTO_TRADE else '❌'}")
+        else:
+            print("🤖 OpenAI 연동: ❌ (API 키 확인 필요)")
+        
         print("🏆" + "="*70)
         
         # 시스템 시작
