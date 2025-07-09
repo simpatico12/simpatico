@@ -211,12 +211,21 @@ class OpenAIAnalyzer:
         
         if OPENAI_AVAILABLE and self.api_key:
             try:
-                openai.api_key = self.api_key
-                self.client = openai
+                # OpenAI 최신 버전 지원
+                from openai import OpenAI
+                self.client = OpenAI(api_key=self.api_key)
                 self.enabled = True
                 logging.info("✅ OpenAI GPT 분석기 활성화")
             except Exception as e:
                 logging.warning(f"⚠️ OpenAI 초기화 실패: {e}")
+                # 구버전 OpenAI 지원
+                try:
+                    openai.api_key = self.api_key
+                    self.client = openai
+                    self.enabled = True
+                    logging.info("✅ OpenAI GPT 분석기 활성화 (구버전)")
+                except Exception as e2:
+                    logging.warning(f"⚠️ OpenAI 구버전도 실패: {e2}")
         else:
             logging.warning("⚠️ OpenAI API 키 없음 또는 모듈 없음")
     
@@ -349,8 +358,8 @@ class OpenAIAnalyzer:
             if not self.client:
                 return "GPT 클라이언트 없음"
             
-            response = await asyncio.to_thread(
-                self.client.chat.completions.create,
+            # OpenAI 최신 API 방식으로 수정
+            response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": "당신은 전문적인 주식 투자 분석가입니다. 정확하고 간결한 분석을 제공합니다."},
@@ -364,7 +373,7 @@ class OpenAIAnalyzer:
             
         except Exception as e:
             logging.error(f"GPT API 요청 실패: {e}")
-            return "GPT API 요청 실패"
+            return f"GPT API 오류: {str(e)}"
 
 # ========================================================================================
 # 🔧 설정 관리자
