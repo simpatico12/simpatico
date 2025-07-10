@@ -1968,118 +1968,117 @@ if __name__ == "__main__":
             print("  • 기술분석 전용 (뉴스/심리분석 제거)")
             print("  • 월 5-7% 수익 최적화")
             
-   else:
-    if holding_days >= 16:  # 2주 초과시 무조건
+   elif holding_days >= 16:  # 2주 초과시 무조건
+    return {
+        'action': 'sell_all',
+        'reason': 'time_limit_force',
+        'price': current_price,
+        'quantity': position.total_quantity,
+        'details': f'강제매도: {holding_days}일 초과'
+    }
+
+# 3. 익절 체크 (0차 익절 추가)
+profit_flags = self.profit_taken_flags.get(symbol, [False, False, False])
+
+# 0차 익절 (4-6% 수익시 20-25% 매도)
+if (len(position.target_take_profits) >= 1 and 
+    current_price >= position.target_take_profits[0] and 
+    profit_ratio >= 0.04 and not profit_flags[0]):
+    
+    sell_ratio = 0.25 if profit_ratio < 0.05 else 0.20
+    sell_quantity = position.total_quantity * sell_ratio
+    
+    # 익절 플래그 설정
+    if symbol not in self.profit_taken_flags:
+        self.profit_taken_flags[symbol] = [False, False, False]
+    self.profit_taken_flags[symbol][0] = True
+    
+    return {
+        'action': 'sell_partial',
+        'reason': 'take_profit_0',
+        'price': current_price,
+        'quantity': sell_quantity,
+        'details': f'0차 익절: {profit_ratio*100:.1f}% 수익으로 {sell_ratio*100:.0f}% 매도'
+    }
+
+# 1차 익절 (10-15% 수익시 30-35% 매도)
+if (len(position.target_take_profits) >= 2 and
+    current_price >= position.target_take_profits[1] and 
+    profit_ratio >= 0.10 and not profit_flags[1]):
+    
+    sell_ratio = 0.35 if profit_ratio < 0.12 else 0.30
+    sell_quantity = position.total_quantity * sell_ratio
+    
+    self.profit_taken_flags[symbol][1] = True
+    
+    return {
+        'action': 'sell_partial',
+        'reason': 'take_profit_1',
+        'price': current_price,
+        'quantity': sell_quantity,
+        'details': f'1차 익절: {profit_ratio*100:.1f}% 수익으로 {sell_ratio*100:.0f}% 매도'
+    }
+
+# 2차 익절 (15-25% 수익시 40-50% 매도)
+if (len(position.target_take_profits) >= 3 and
+    current_price >= position.target_take_profits[2] and 
+    profit_ratio >= 0.15 and not profit_flags[2]):
+    
+    sell_ratio = 0.50 if profit_ratio < 0.20 else 0.40
+    sell_quantity = position.total_quantity * sell_ratio
+    
+    self.profit_taken_flags[symbol][2] = True
+    
+    return {
+        'action': 'sell_partial',
+        'reason': 'take_profit_2',
+        'price': current_price,
+        'quantity': sell_quantity,
+        'details': f'2차 익절: {profit_ratio*100:.1f}% 수익으로 {sell_ratio*100:.0f}% 매도'
+    }
+
+# 3차 익절 삭제됨 - 무제한 홀딩!
+
+# 4. 사이클 변화 매도
+if profit_ratio > 0.03 and current_cycle in ['strong_bear', 'reversal_phase']:
+    return {
+        'action': 'sell_all',
+        'reason': 'cycle_change',
+        'price': current_price,
+        'quantity': position.total_quantity,
+        'details': f'사이클 변화 매도: {current_cycle}'
+    }
+
+# 5. 강화된 트레일링 스톱 (40% 이후)
+if profit_ratio > 0.40:  # 40% 이상 수익시 20% 트레일링 스톱
+    dynamic_stop = position.avg_price * (1 + profit_ratio - 0.20)
+    if current_price <= dynamic_stop:
         return {
             'action': 'sell_all',
-            'reason': 'time_limit_force',
+            'reason': 'trailing_stop_40',
             'price': current_price,
             'quantity': position.total_quantity,
-            'details': f'강제매도: {holding_days}일 초과'
+            'details': f'40%+ 트레일링 스톱: {current_price} <= {dynamic_stop}'
         }
-        
-        # 3. 익절 체크 (0차 익절 추가)
-        profit_flags = self.profit_taken_flags.get(symbol, [False, False, False])
-        
-        # 0차 익절 (4-6% 수익시 20-25% 매도)
-        if (len(position.target_take_profits) >= 1 and 
-            current_price >= position.target_take_profits[0] and 
-            profit_ratio >= 0.04 and not profit_flags[0]):
-            
-            sell_ratio = 0.25 if profit_ratio < 0.05 else 0.20
-            sell_quantity = position.total_quantity * sell_ratio
-            
-            # 익절 플래그 설정
-            if symbol not in self.profit_taken_flags:
-                self.profit_taken_flags[symbol] = [False, False, False]
-            self.profit_taken_flags[symbol][0] = True
-            
-            return {
-                'action': 'sell_partial',
-                'reason': 'take_profit_0',
-                'price': current_price,
-                'quantity': sell_quantity,
-                'details': f'0차 익절: {profit_ratio*100:.1f}% 수익으로 {sell_ratio*100:.0f}% 매도'
-            }
-        
-        # 1차 익절 (10-15% 수익시 30-35% 매도)
-        if (len(position.target_take_profits) >= 2 and
-            current_price >= position.target_take_profits[1] and 
-            profit_ratio >= 0.10 and not profit_flags[1]):
-            
-            sell_ratio = 0.35 if profit_ratio < 0.12 else 0.30
-            sell_quantity = position.total_quantity * sell_ratio
-            
-            self.profit_taken_flags[symbol][1] = True
-            
-            return {
-                'action': 'sell_partial',
-                'reason': 'take_profit_1',
-                'price': current_price,
-                'quantity': sell_quantity,
-                'details': f'1차 익절: {profit_ratio*100:.1f}% 수익으로 {sell_ratio*100:.0f}% 매도'
-            }
-        
-        # 2차 익절 (15-25% 수익시 40-50% 매도)
-        if (len(position.target_take_profits) >= 3 and
-            current_price >= position.target_take_profits[2] and 
-            profit_ratio >= 0.15 and not profit_flags[2]):
-            
-            sell_ratio = 0.50 if profit_ratio < 0.20 else 0.40
-            sell_quantity = position.total_quantity * sell_ratio
-            
-            self.profit_taken_flags[symbol][2] = True
-            
-            return {
-                'action': 'sell_partial',
-                'reason': 'take_profit_2',
-                'price': current_price,
-                'quantity': sell_quantity,
-                'details': f'2차 익절: {profit_ratio*100:.1f}% 수익으로 {sell_ratio*100:.0f}% 매도'
-            }
-        
-        # 3차 익절 삭제됨 - 무제한 홀딩!
-        
-        # 4. 사이클 변화 매도
-        if profit_ratio > 0.03 and current_cycle in ['strong_bear', 'reversal_phase']:
-            return {
-                'action': 'sell_all',
-                'reason': 'cycle_change',
-                'price': current_price,
-                'quantity': position.total_quantity,
-                'details': f'사이클 변화 매도: {current_cycle}'
-            }
-        
-        # 5. 강화된 트레일링 스톱 (40% 이후)
-        if profit_ratio > 0.40:  # 40% 이상 수익시 20% 트레일링 스톱
-            dynamic_stop = position.avg_price * (1 + profit_ratio - 0.20)
-            if current_price <= dynamic_stop:
-                return {
-                    'action': 'sell_all',
-                    'reason': 'trailing_stop_40',
-                    'price': current_price,
-                    'quantity': position.total_quantity,
-                    'details': f'40%+ 트레일링 스톱: {current_price} <= {dynamic_stop}'
-                }
-        elif profit_ratio > 0.20:  # 20% 이상 수익시 15% 트레일링 스톱
-            dynamic_stop = position.avg_price * (1 + profit_ratio - 0.15)
-            if current_price <= dynamic_stop:
-                return {
-                    'action': 'sell_all',
-                    'reason': 'trailing_stop_20',
-                    'price': current_price,
-                    'quantity': position.total_quantity,
-                    'details': f'20%+ 트레일링 스톱: {current_price} <= {dynamic_stop}'
-                }
-        elif profit_ratio > 0.08:  # 8% 이상 수익시 기본 10% 트레일링 스톱
-            dynamic_stop = position.avg_price * (1 + profit_ratio - self.trailing_stop_ratio)
-            if current_price <= dynamic_stop:
-                return {
-                    'action': 'sell_all',
-                    'reason': 'trailing_stop',
-                    'price': current_price,
-                    'quantity': position.total_quantity,
-                    'details': f'트레일링 스톱: {current_price} <= {dynamic_stop}'
-                }
-        
-        return {'action': 'hold', 'reason': 'no_exit_condition'}
+elif profit_ratio > 0.20:  # 20% 이상 수익시 15% 트레일링 스톱
+    dynamic_stop = position.avg_price * (1 + profit_ratio - 0.15)
+    if current_price <= dynamic_stop:
+        return {
+            'action': 'sell_all',
+            'reason': 'trailing_stop_20',
+            'price': current_price,
+            'quantity': position.total_quantity,
+            'details': f'20%+ 트레일링 스톱: {current_price} <= {dynamic_stop}'
+        }
+elif profit_ratio > 0.08:  # 8% 이상 수익시 기본 10% 트레일링 스톱
+    dynamic_stop = position.avg_price * (1 + profit_ratio - self.trailing_stop_ratio)
+    if current_price <= dynamic_stop:
+        return {
+            'action': 'sell_all',
+            'reason': 'trailing_stop',
+            'price': current_price,
+            'quantity': position.total_quantity,
+            'details': f'트레일링 스톱: {current_price} <= {dynamic_stop}'
+        }
+
+return {'action': 'hold', 'reason': 'no_exit_condition'}
