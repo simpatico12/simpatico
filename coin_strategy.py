@@ -1968,16 +1968,15 @@ if __name__ == "__main__":
             print("  • 기술분석 전용 (뉴스/심리분석 제거)")
             print("  • 월 5-7% 수익 최적화")
     else:
-        # 기본 실행: 전체 전략
-         'details': f'2주 완료: {holding_days}일, {profit_ratio*100:.1f}% 수익으로 매도'
-        elif holding_days >= 16:  # 2주 초과시 무조건
-            return {
-                'action': 'sell_all',
-                'reason': 'time_limit_force',
-                'price': current_price,
-                'quantity': position.total_quantity,
-                'details': f'강제매도: {holding_days}일 초과'
-            }
+    # 기본 실행: 전체 전략
+    if holding_days >= 16:  # 2주 초과시 무조건
+        return {
+            'action': 'sell_all',
+            'reason': 'time_limit_force',
+            'price': current_price,
+            'quantity': position.total_quantity,
+            'details': f'강제매도: {holding_days}일 초과'
+        }
         
         # 3. 익절 체크 (0차 익절 추가)
         profit_flags = self.profit_taken_flags.get(symbol, [False, False, False])
