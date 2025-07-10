@@ -296,7 +296,7 @@ async def neural_quality_score(self, symbol: str, market_data: Dict, volume_rank
                 'ai_result': ai_result,
                 'explanation': explanation,
                 'confidence_source': confidence_explanation,
-                'ai_enhanced': ai_result and ai_result.get('ai_used', False)
+                'ai_enhanced': bool(ai_result and ai_result.get('ai_used', False)) if 'ai_result' in locals() else False,
             }
             
         except Exception as e:
