@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🏆 퀸트프로젝트 통합 거래 시스템 (trading.py)
+🏆 퀸트프로젝트 최적화 거래 시스템 (trading_optimized.py)
 ================================================
-🇺🇸 미국주식 + 🇯🇵 일본주식 + 🇮🇳 인도주식 + 💰 암호화폐 + 🤖 OpenAI (5대 전략 통합)
+🇺🇸 미국주식 + 🇯🇵 일본주식 + 🇮🇳 인도주식 + 💰 암호화폐 (4대 전략)
 
-✨ 핵심 기능:
-- 5대 전략 통합 관리 시스템
-- OpenAI GPT-4 기반 AI 분석 시스템
-- IBKR 자동 환전 + 실시간 매매
-- 서머타임 자동 처리 + 화목 매매
-- 월 5-7% 최적화 손익절 시스템
-- 통합 알림 시스템 (텔레그램/이메일/SMS)
-- 응급 오류 감지 + 네트워크 모니터링
-- 포지션 관리 + 성과 추적
-- AI 기반 시장 분석 및 종목 추천
+✨ 최적화 기능:
+- AI는 기술적 분석만 수행 (뉴스/시장심리 제거)
+- 애매한 신호(0.4-0.7)에서만 AI 호출로 비용 절약
+- 월 AI 사용료 5천원 이하 최적화
+- trend_analysis 오류 해결
+- 4대 전략 통합 관리
 
-Author: 퀸트마스터팀
-Version: 2.1.0 (OpenAI 통합 거래 시스템)
+Author: 퀸트마스터팀 (최적화 버전)
+Version: 3.0.0 (비용 최적화 + 기술적 분석 전용)
 """
 
 import asyncio
@@ -30,7 +26,6 @@ import warnings
 import traceback
 import signal
 import psutil
-import shutil
 import hashlib
 import smtplib
 from datetime import datetime, timedelta
@@ -50,7 +45,7 @@ import requests
 import aiohttp
 from dotenv import load_dotenv
 
-# OpenAI 라이브러리
+# OpenAI 라이브러리 (최적화 버전)
 try:
     import openai
     OPENAI_AVAILABLE = True
@@ -90,31 +85,29 @@ except ImportError:
 warnings.filterwarnings('ignore')
 
 # ============================================================================
-# 🎯 통합 설정 관리자
+# 🎯 최적화 설정 관리자
 # ============================================================================
-class TradingConfig:
-    """통합 거래 시스템 설정"""
+class OptimizedTradingConfig:
+    """최적화된 거래 시스템 설정"""
     
     def __init__(self):
         load_dotenv()
         
         # 포트폴리오 설정
-        self.TOTAL_PORTFOLIO_VALUE = float(os.getenv('TOTAL_PORTFOLIO_VALUE', '1000000000'))
+        self.TOTAL_PORTFOLIO_VALUE = float(os.getenv('TOTAL_PORTFOLIO_VALUE', '10000000'))
         self.MAX_PORTFOLIO_RISK = float(os.getenv('MAX_PORTFOLIO_RISK', '0.05'))
         
-        # 전략별 활성화
+        # 4대 전략 활성화
         self.US_ENABLED = os.getenv('US_STRATEGY_ENABLED', 'true').lower() == 'true'
         self.JAPAN_ENABLED = os.getenv('JAPAN_STRATEGY_ENABLED', 'true').lower() == 'true'
         self.INDIA_ENABLED = os.getenv('INDIA_STRATEGY_ENABLED', 'true').lower() == 'true'
         self.CRYPTO_ENABLED = os.getenv('CRYPTO_STRATEGY_ENABLED', 'true').lower() == 'true'
-        self.OPENAI_ENABLED = os.getenv('OPENAI_STRATEGY_ENABLED', 'true').lower() == 'true'
         
-        # 전략별 자원 배분
+        # 4대 전략 자원 배분
         self.US_ALLOCATION = float(os.getenv('US_STRATEGY_ALLOCATION', '0.35'))
-        self.JAPAN_ALLOCATION = float(os.getenv('JAPAN_STRATEGY_ALLOCATION', '0.20'))
+        self.JAPAN_ALLOCATION = float(os.getenv('JAPAN_STRATEGY_ALLOCATION', '0.25'))
+        self.INDIA_ALLOCATION = float(os.getenv('INDIA_STRATEGY_ALLOCATION', '0.20'))
         self.CRYPTO_ALLOCATION = float(os.getenv('CRYPTO_STRATEGY_ALLOCATION', '0.20'))
-        self.INDIA_ALLOCATION = float(os.getenv('INDIA_STRATEGY_ALLOCATION', '0.15'))
-        self.OPENAI_ALLOCATION = float(os.getenv('OPENAI_STRATEGY_ALLOCATION', '0.10'))
         
         # IBKR 설정
         self.IBKR_HOST = os.getenv('IBKR_HOST', '127.0.0.1')
@@ -127,12 +120,18 @@ class TradingConfig:
         self.UPBIT_SECRET_KEY = os.getenv('UPBIT_SECRET_KEY', '')
         self.UPBIT_DEMO_MODE = os.getenv('CRYPTO_DEMO_MODE', 'true').lower() == 'true'
         
-        # OpenAI 설정
+        # OpenAI 최적화 설정 (비용 절약)
         self.OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
-        self.OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4')
-        self.OPENAI_MAX_TOKENS = int(os.getenv('OPENAI_MAX_TOKENS', '2000'))
-        self.OPENAI_TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', '0.7'))
-        self.OPENAI_ANALYSIS_ENABLED = os.getenv('OPENAI_ANALYSIS_ENABLED', 'true').lower() == 'true'
+        self.OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')  # 비용 절약
+        self.OPENAI_MAX_TOKENS = int(os.getenv('OPENAI_MAX_TOKENS', '300'))  # 토큰 제한
+        self.OPENAI_TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', '0.3'))  # 일관성 중시
+        
+        # AI 사용 최적화 설정
+        self.AI_CONFIDENCE_THRESHOLD_MIN = 0.4  # 이하면 AI 호출 안함
+        self.AI_CONFIDENCE_THRESHOLD_MAX = 0.7  # 이상이면 AI 호출 안함
+        self.AI_DAILY_CALL_LIMIT = 20  # 일일 호출 제한
+        self.AI_CALL_COUNTER = 0  # 일일 호출 카운터
+        self.AI_LAST_RESET_DATE = datetime.now().date()  # 카운터 리셋 날짜
         
         # 알림 설정
         self.TELEGRAM_ENABLED = os.getenv('TELEGRAM_ENABLED', 'false').lower() == 'true'
@@ -149,37 +148,34 @@ class TradingConfig:
         
         # 시스템 모니터링
         self.NETWORK_MONITORING = os.getenv('NETWORK_MONITORING_ENABLED', 'true').lower() == 'true'
-        self.NETWORK_CHECK_INTERVAL = int(os.getenv('NETWORK_CHECK_INTERVAL', '30'))
+        self.NETWORK_CHECK_INTERVAL = int(os.getenv('NETWORK_CHECK_INTERVAL', '60'))
         self.EMERGENCY_SELL_ON_ERROR = os.getenv('EMERGENCY_SELL_ON_ERROR', 'true').lower() == 'true'
         
         # 데이터베이스
-        self.DB_PATH = os.getenv('DATABASE_PATH', './data/trading_system.db')
+        self.DB_PATH = os.getenv('DATABASE_PATH', './data/trading_optimized.db')
         self.BACKUP_PATH = os.getenv('BACKUP_PATH', './backups/')
 
 # ============================================================================
-# 🤖 OpenAI 분석 시스템
+# 🤖 최적화된 AI 분석 엔진 (기술적 분석 전용)
 # ============================================================================
 @dataclass
-class AIAnalysisResult:
-    """AI 분석 결과"""
+class TechnicalAnalysisResult:
+    """기술적 분석 결과"""
     symbol: str
     action: str  # BUY, SELL, HOLD
     confidence: float  # 0.0 ~ 1.0
     reasoning: str
     target_price: float
     risk_level: str  # LOW, MEDIUM, HIGH
-    time_horizon: str  # SHORT, MEDIUM, LONG
-    market_sentiment: str  # BULLISH, BEARISH, NEUTRAL
     technical_score: float
-    fundamental_score: float
     timestamp: datetime = field(default_factory=datetime.now)
 
-class OpenAIAnalysisEngine:
-    """OpenAI 기반 투자 분석 엔진"""
+class OptimizedAIEngine:
+    """최적화된 AI 분석 엔진 (기술적 분석 전용, 비용 절약)"""
     
-    def __init__(self, config: TradingConfig):
+    def __init__(self, config: OptimizedTradingConfig):
         self.config = config
-        self.logger = logging.getLogger('OpenAIAnalysisEngine')
+        self.logger = logging.getLogger('OptimizedAIEngine')
         
         # OpenAI 클라이언트 초기화
         if OPENAI_AVAILABLE and self.config.OPENAI_API_KEY:
@@ -189,212 +185,162 @@ class OpenAIAnalysisEngine:
             self.client_available = False
             self.logger.warning("OpenAI API 키가 설정되지 않았습니다")
         
-        # 분석 캐시
+        # 분석 캐시 (API 호출 절약)
         self.analysis_cache = {}
-        self.cache_duration = timedelta(hours=1)  # 1시간 캐시
-        
-        # 시장 컨텍스트
-        self.market_context = {
-            'economic_indicators': {},
-            'market_sentiment': 'NEUTRAL',
-            'volatility_index': 0.5,
-            'last_updated': None
-        }
+        self.cache_duration = timedelta(hours=2)  # 2시간 캐시
     
-    async def analyze_symbol(self, symbol: str, market_data: Dict[str, Any], 
-                           strategy_context: str = '') -> Optional[AIAnalysisResult]:
-        """개별 종목 AI 분석"""
-        if not self.client_available:
-            return None
+    def _should_use_ai(self, technical_confidence: float) -> bool:
+        """AI 사용 여부 판단 (비용 최적화)"""
+        # 일일 호출 제한 체크
+        current_date = datetime.now().date()
+        if current_date != self.config.AI_LAST_RESET_DATE:
+            self.config.AI_CALL_COUNTER = 0
+            self.config.AI_LAST_RESET_DATE = current_date
+        
+        # 호출 제한 초과시 AI 사용 안함
+        if self.config.AI_CALL_COUNTER >= self.config.AI_DAILY_CALL_LIMIT:
+            self.logger.info(f"AI 일일 호출 제한 초과 ({self.config.AI_CALL_COUNTER}/{self.config.AI_DAILY_CALL_LIMIT})")
+            return False
+        
+        # 신뢰도가 너무 높거나 낮으면 AI 사용 안함 (비용 절약)
+        if (technical_confidence < self.config.AI_CONFIDENCE_THRESHOLD_MIN or 
+            technical_confidence > self.config.AI_CONFIDENCE_THRESHOLD_MAX):
+            return False
+        
+        return True
+    
+    async def analyze_technical_signal(self, symbol: str, technical_data: Dict[str, Any], 
+                                     strategy_context: str = '') -> Optional[TechnicalAnalysisResult]:
+        """기술적 신호의 확신도 체크 (AI 사용 최적화)"""
+        
+        technical_confidence = technical_data.get('confidence', 0.5)
+        
+        # AI 사용 필요성 판단
+        if not self.client_available or not self._should_use_ai(technical_confidence):
+            # AI 없이 기술적 분석만 반환
+            return TechnicalAnalysisResult(
+                symbol=symbol,
+                action=technical_data.get('action', 'HOLD'),
+                confidence=technical_confidence,
+                reasoning=technical_data.get('reason', '기술적 분석'),
+                target_price=technical_data.get('price', 0.0),
+                risk_level='MEDIUM',
+                technical_score=technical_confidence
+            )
         
         try:
             # 캐시 확인
-            cache_key = f"{symbol}_{hash(str(market_data))}"
+            cache_key = f"{symbol}_{hash(str(technical_data))}"
             if cache_key in self.analysis_cache:
                 cached_time, cached_result = self.analysis_cache[cache_key]
                 if datetime.now() - cached_time < self.cache_duration:
                     return cached_result
             
-            # 시장 컨텍스트 업데이트
-            await self._update_market_context()
+            # AI 분석 수행 (호출 카운터 증가)
+            self.config.AI_CALL_COUNTER += 1
             
-            # AI 분석 수행
-            analysis_result = await self._perform_ai_analysis(
-                symbol, market_data, strategy_context
+            analysis_result = await self._perform_technical_ai_analysis(
+                symbol, technical_data, strategy_context
             )
             
             # 캐시 저장
             self.analysis_cache[cache_key] = (datetime.now(), analysis_result)
             
+            self.logger.info(f"AI 호출 {self.config.AI_CALL_COUNTER}/{self.config.AI_DAILY_CALL_LIMIT}: {symbol}")
+            
             return analysis_result
             
         except Exception as e:
             self.logger.error(f"AI 분석 실패 {symbol}: {e}")
-            return None
+            # AI 실패시 기술적 분석 결과 반환
+            return TechnicalAnalysisResult(
+                symbol=symbol,
+                action=technical_data.get('action', 'HOLD'),
+                confidence=technical_confidence * 0.8,  # 신뢰도 약간 감소
+                reasoning=f"AI 분석 실패, 기술적 분석만: {technical_data.get('reason', '')}",
+                target_price=technical_data.get('price', 0.0),
+                risk_level='MEDIUM',
+                technical_score=technical_confidence
+            )
     
-    async def _update_market_context(self):
-        """시장 컨텍스트 업데이트"""
+    async def _perform_technical_ai_analysis(self, symbol: str, technical_data: Dict[str, Any], 
+                                           strategy_context: str) -> TechnicalAnalysisResult:
+        """기술적 분석 전용 AI 분석 (간단하고 비용 효율적)"""
         try:
-            if self.market_context['last_updated'] and \
-               datetime.now() - self.market_context['last_updated'] < timedelta(hours=6):
-                return
-            
-            # 주요 경제 지표 수집
-            economic_data = await self._collect_economic_indicators()
-            
-            # 시장 심리 분석
-            market_sentiment = await self._analyze_market_sentiment()
-            
-            self.market_context.update({
-                'economic_indicators': economic_data,
-                'market_sentiment': market_sentiment,
-                'last_updated': datetime.now()
-            })
-            
-        except Exception as e:
-            self.logger.error(f"시장 컨텍스트 업데이트 실패: {e}")
-    
-    async def _collect_economic_indicators(self) -> Dict[str, Any]:
-        """경제 지표 수집"""
-        try:
-            indicators = {}
-            
-            # VIX 지수 (공포 지수)
-            if YAHOO_AVAILABLE:
-                try:
-                    vix = yf.Ticker("^VIX")
-                    vix_data = vix.history(period="5d")
-                    if not vix_data.empty:
-                        indicators['vix'] = float(vix_data['Close'].iloc[-1])
-                except:
-                    indicators['vix'] = 20.0  # 기본값
-            
-            # 달러 인덱스
-            try:
-                dxy = yf.Ticker("DX-Y.NYB")
-                dxy_data = dxy.history(period="5d")
-                if not dxy_data.empty:
-                    indicators['dollar_index'] = float(dxy_data['Close'].iloc[-1])
-            except:
-                indicators['dollar_index'] = 100.0  # 기본값
-            
-            # 10년 국채 수익률
-            try:
-                tnx = yf.Ticker("^TNX")
-                tnx_data = tnx.history(period="5d")
-                if not tnx_data.empty:
-                    indicators['treasury_10y'] = float(tnx_data['Close'].iloc[-1])
-            except:
-                indicators['treasury_10y'] = 4.0  # 기본값
-            
-            return indicators
-            
-        except Exception as e:
-            self.logger.error(f"경제 지표 수집 실패: {e}")
-            return {}
-    
-    async def _analyze_market_sentiment(self) -> str:
-        """시장 심리 분석"""
-        try:
-            # 간단한 시장 심리 분석
-            if 'vix' in self.market_context['economic_indicators']:
-                vix = self.market_context['economic_indicators']['vix']
-                if vix > 30:
-                    return 'BEARISH'
-                elif vix < 15:
-                    return 'BULLISH'
-                else:
-                    return 'NEUTRAL'
-            
-            return 'NEUTRAL'
-            
-        except Exception as e:
-            self.logger.error(f"시장 심리 분석 실패: {e}")
-            return 'NEUTRAL'
-    
-    async def _perform_ai_analysis(self, symbol: str, market_data: Dict[str, Any], 
-                                 strategy_context: str) -> AIAnalysisResult:
-        """AI 분석 수행"""
-        try:
-            # 시스템 프롬프트
+            # 시스템 프롬프트 (간단하고 명확)
             system_prompt = """
-당신은 전문 퀀트 투자 분석가입니다. 주어진 시장 데이터와 컨텍스트를 바탕으로 투자 분석을 수행하세요.
+당신은 기술적 분석 전문가입니다. 주어진 기술적 지표만을 바탕으로 간단명료하게 분석하세요.
 
 분석 기준:
-1. 기술적 분석 (차트 패턴, 지표)
-2. 시장 심리 및 거시경제 상황
-3. 리스크 관리 및 포지션 사이징
-4. 시간 축별 전략 (단기/중기/장기)
+1. 기술적 지표 (이동평균, RSI, 거래량)
+2. 차트 패턴
+3. 신뢰도 검증
 
-응답 형식 (JSON):
+응답 형식 (JSON, 150자 이내):
 {
     "action": "BUY/SELL/HOLD",
     "confidence": 0.0-1.0,
-    "reasoning": "분석 근거",
+    "reasoning": "간단한 분석 근거",
     "target_price": 목표가격,
     "risk_level": "LOW/MEDIUM/HIGH",
-    "time_horizon": "SHORT/MEDIUM/LONG",
-    "market_sentiment": "BULLISH/BEARISH/NEUTRAL",
-    "technical_score": 0.0-1.0,
-    "fundamental_score": 0.0-1.0
+    "technical_score": 0.0-1.0
 }
 """
             
-            # 사용자 프롬프트
+            # 사용자 프롬프트 (필수 정보만)
             user_prompt = f"""
 종목: {symbol}
-전략 컨텍스트: {strategy_context}
+현재가: {technical_data.get('price', 0)}
+기술적 신호: {technical_data.get('action', 'HOLD')}
+신뢰도: {technical_data.get('confidence', 0.5)}
+근거: {technical_data.get('reason', '')}
 
-시장 데이터:
-{json.dumps(market_data, indent=2, default=str)}
-
-현재 시장 컨텍스트:
-- 시장 심리: {self.market_context['market_sentiment']}
-- VIX: {self.market_context['economic_indicators'].get('vix', 'N/A')}
-- 달러 인덱스: {self.market_context['economic_indicators'].get('dollar_index', 'N/A')}
-- 10년 국채 수익률: {self.market_context['economic_indicators'].get('treasury_10y', 'N/A')}
-
-위 정보를 종합적으로 분석하여 투자 의견을 제시해주세요.
+위 기술적 분석의 확신도를 검증하고 간단히 분석해주세요.
 """
             
-            # OpenAI API 호출
+            # OpenAI API 호출 (최소 토큰)
             response = await self._call_openai_api(system_prompt, user_prompt)
             
             # 응답 파싱
-            analysis_data = json.loads(response)
+            try:
+                analysis_data = json.loads(response)
+            except json.JSONDecodeError:
+                # JSON 파싱 실패시 기본값
+                analysis_data = {
+                    "action": technical_data.get('action', 'HOLD'),
+                    "confidence": technical_data.get('confidence', 0.5) * 0.9,
+                    "reasoning": "AI 파싱 실패",
+                    "target_price": technical_data.get('price', 0.0),
+                    "risk_level": "MEDIUM",
+                    "technical_score": technical_data.get('confidence', 0.5)
+                }
             
-            return AIAnalysisResult(
+            return TechnicalAnalysisResult(
                 symbol=symbol,
                 action=analysis_data.get('action', 'HOLD'),
                 confidence=float(analysis_data.get('confidence', 0.5)),
-                reasoning=analysis_data.get('reasoning', '분석 결과 없음'),
-                target_price=float(analysis_data.get('target_price', 0.0)),
+                reasoning=analysis_data.get('reasoning', 'AI 분석'),
+                target_price=float(analysis_data.get('target_price', technical_data.get('price', 0.0))),
                 risk_level=analysis_data.get('risk_level', 'MEDIUM'),
-                time_horizon=analysis_data.get('time_horizon', 'MEDIUM'),
-                market_sentiment=analysis_data.get('market_sentiment', 'NEUTRAL'),
-                technical_score=float(analysis_data.get('technical_score', 0.5)),
-                fundamental_score=float(analysis_data.get('fundamental_score', 0.5))
+                technical_score=float(analysis_data.get('technical_score', 0.5))
             )
             
         except Exception as e:
-            self.logger.error(f"AI 분석 수행 실패 {symbol}: {e}")
+            self.logger.error(f"AI 기술적 분석 실패 {symbol}: {e}")
             
             # 기본 분석 결과 반환
-            return AIAnalysisResult(
+            return TechnicalAnalysisResult(
                 symbol=symbol,
-                action='HOLD',
-                confidence=0.5,
-                reasoning=f'AI 분석 실패: {str(e)}',
-                target_price=market_data.get('current_price', 0.0),
+                action=technical_data.get('action', 'HOLD'),
+                confidence=technical_data.get('confidence', 0.5) * 0.8,
+                reasoning=f'AI 분석 실패: {str(e)[:50]}',
+                target_price=technical_data.get('price', 0.0),
                 risk_level='MEDIUM',
-                time_horizon='MEDIUM',
-                market_sentiment='NEUTRAL',
-                technical_score=0.5,
-                fundamental_score=0.5
+                technical_score=technical_data.get('confidence', 0.5)
             )
     
     async def _call_openai_api(self, system_prompt: str, user_prompt: str) -> str:
-        """OpenAI API 호출"""
+        """OpenAI API 호출 (최적화 버전)"""
         try:
             response = await asyncio.to_thread(
                 openai.ChatCompletion.create,
@@ -412,83 +358,12 @@ class OpenAIAnalysisEngine:
         except Exception as e:
             self.logger.error(f"OpenAI API 호출 실패: {e}")
             raise
-    
-    async def generate_market_report(self) -> str:
-        """AI 기반 시장 보고서 생성"""
-        try:
-            if not self.client_available:
-                return "OpenAI API가 설정되지 않았습니다."
-            
-            await self._update_market_context()
-            
-            system_prompt = """
-당신은 전문 시장 분석가입니다. 현재 시장 상황을 종합하여 간결하고 명확한 시장 보고서를 작성하세요.
-보고서는 투자자가 이해하기 쉽게 작성하고, 구체적인 투자 방향성을 제시하세요.
-"""
-            
-            user_prompt = f"""
-현재 시장 지표:
-- 시장 심리: {self.market_context['market_sentiment']}
-- VIX (공포 지수): {self.market_context['economic_indicators'].get('vix', 'N/A')}
-- 달러 인덱스: {self.market_context['economic_indicators'].get('dollar_index', 'N/A')}
-- 10년 국채 수익률: {self.market_context['economic_indicators'].get('treasury_10y', 'N/A')}
-
-위 지표들을 종합하여 현재 시장 상황과 투자 전략을 500자 이내로 요약해주세요.
-"""
-            
-            response = await self._call_openai_api(system_prompt, user_prompt)
-            return response
-            
-        except Exception as e:
-            self.logger.error(f"시장 보고서 생성 실패: {e}")
-            return f"시장 보고서 생성 실패: {str(e)}"
-    
-    async def analyze_portfolio_risk(self, positions: Dict[str, Any]) -> Dict[str, Any]:
-        """포트폴리오 리스크 AI 분석"""
-        try:
-            if not self.client_available:
-                return {"risk_level": "UNKNOWN", "recommendations": []}
-            
-            system_prompt = """
-당신은 포트폴리오 리스크 관리 전문가입니다. 
-주어진 포트폴리오 구성을 분석하여 리스크를 평가하고 개선 방안을 제시하세요.
-"""
-            
-            user_prompt = f"""
-현재 포트폴리오:
-{json.dumps(positions, indent=2, default=str)}
-
-시장 컨텍스트:
-{json.dumps(self.market_context, indent=2, default=str)}
-
-포트폴리오의 리스크 수준과 개선 방안을 JSON 형태로 제시해주세요:
-{{
-    "overall_risk_level": "LOW/MEDIUM/HIGH",
-    "risk_score": 0.0-1.0,
-    "main_risks": ["리스크 요인들"],
-    "recommendations": ["개선 방안들"],
-    "diversification_score": 0.0-1.0
-}}
-"""
-            
-            response = await self._call_openai_api(system_prompt, user_prompt)
-            return json.loads(response)
-            
-        except Exception as e:
-            self.logger.error(f"포트폴리오 리스크 분석 실패: {e}")
-            return {
-                "overall_risk_level": "MEDIUM",
-                "risk_score": 0.5,
-                "main_risks": ["분석 실패"],
-                "recommendations": ["AI 분석을 다시 시도하세요"],
-                "diversification_score": 0.5
-            }
 
 # ============================================================================
-# 🕒 서머타임 관리자 (미국 전략용)
+# 🕒 서머타임 관리자 (수정된 버전)
 # ============================================================================
 class DaylightSavingManager:
-    """서머타임 자동 관리"""
+    """서머타임 자동 관리 (오류 수정)"""
     
     def __init__(self):
         if PYTZ_AVAILABLE:
@@ -507,17 +382,24 @@ class DaylightSavingManager:
         if date in self.cache:
             return self.cache[date]
         
-        year = date.year
-        # 3월 둘째주 일요일
-        march_first = datetime(year, 3, 1)
-        march_second_sunday = march_first + timedelta(days=(6 - march_first.weekday()) % 7 + 7)
-        # 11월 첫째주 일요일  
-        nov_first = datetime(year, 11, 1)
-        nov_first_sunday = nov_first + timedelta(days=(6 - nov_first.weekday()) % 7)
-        
-        is_dst = march_second_sunday.date() <= date < nov_first_sunday.date()
-        self.cache[date] = is_dst
-        return is_dst
+        try:
+            year = date.year
+            # 3월 둘째주 일요일
+            march_first = datetime(year, 3, 1)
+            days_to_add = (6 - march_first.weekday()) % 7 + 7
+            march_second_sunday = march_first + timedelta(days=days_to_add)
+            
+            # 11월 첫째주 일요일  
+            nov_first = datetime(year, 11, 1)
+            days_to_add = (6 - nov_first.weekday()) % 7
+            nov_first_sunday = nov_first + timedelta(days=days_to_add)
+            
+            is_dst = march_second_sunday.date() <= date < nov_first_sunday.date()
+            self.cache[date] = is_dst
+            return is_dst
+        except Exception as e:
+            # 오류 발생시 보수적으로 False 반환
+            return False
     
     def get_market_hours_kst(self, date=None) -> Tuple[datetime, datetime]:
         """미국 시장 시간 (한국시간)"""
@@ -530,20 +412,29 @@ class DaylightSavingManager:
                 datetime.combine(date, datetime.min.time().replace(hour=5, minute=0)) + timedelta(days=1)
             )
             
-        if date is None:
-            date = datetime.now().date()
-        
-        market_open_et = datetime.combine(date, datetime.min.time().replace(hour=9, minute=30))
-        market_close_et = datetime.combine(date, datetime.min.time().replace(hour=16, minute=0))
-        
-        if self.is_dst_active(date):
-            market_open_et = self.us_eastern.localize(market_open_et, is_dst=True)
-            market_close_et = self.us_eastern.localize(market_close_et, is_dst=True)
-        else:
-            market_open_et = self.us_eastern.localize(market_open_et, is_dst=False)
-            market_close_et = self.us_eastern.localize(market_close_et, is_dst=False)
-        
-        return market_open_et.astimezone(self.korea), market_close_et.astimezone(self.korea)
+        try:
+            if date is None:
+                date = datetime.now().date()
+            
+            market_open_et = datetime.combine(date, datetime.min.time().replace(hour=9, minute=30))
+            market_close_et = datetime.combine(date, datetime.min.time().replace(hour=16, minute=0))
+            
+            if self.is_dst_active(date):
+                market_open_et = self.us_eastern.localize(market_open_et, is_dst=True)
+                market_close_et = self.us_eastern.localize(market_close_et, is_dst=True)
+            else:
+                market_open_et = self.us_eastern.localize(market_open_et, is_dst=False)
+                market_close_et = self.us_eastern.localize(market_close_et, is_dst=False)
+            
+            return market_open_et.astimezone(self.korea), market_close_et.astimezone(self.korea)
+        except Exception as e:
+            # 오류 발생시 기본값 반환
+            if date is None:
+                date = datetime.now().date()
+            return (
+                datetime.combine(date, datetime.min.time().replace(hour=22, minute=30)),
+                datetime.combine(date, datetime.min.time().replace(hour=5, minute=0)) + timedelta(days=1)
+            )
 
 # ============================================================================
 # 🔔 통합 알림 시스템
@@ -554,17 +445,17 @@ class NotificationMessage:
     title: str
     content: str
     priority: str = 'info'  # emergency, warning, info, success, debug
-    category: str = 'general'  # trading, system, portfolio, error, ai
+    category: str = 'general'  # trading, system, portfolio, error
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 class NotificationManager:
     """통합 알림 관리 시스템"""
     
-    def __init__(self, config: TradingConfig):
+    def __init__(self, config: OptimizedTradingConfig):
         self.config = config
         self.logger = logging.getLogger('NotificationManager')
-        self.recent_notifications = deque(maxlen=100)
+        self.recent_notifications = deque(maxlen=50)  # 메모리 절약
     
     async def send_notification(self, message: Union[str, NotificationMessage], 
                               priority: str = 'info', title: str = '퀸트프로젝트 알림') -> bool:
@@ -578,7 +469,7 @@ class NotificationManager:
                     priority=priority
                 )
             
-            # 중복 체크
+            # 중복 체크 (비용 절약)
             message_hash = hashlib.md5(f"{message.title}_{message.content}".encode()).hexdigest()
             if any(notif.get('hash') == message_hash for notif in self.recent_notifications):
                 return False
@@ -631,7 +522,7 @@ class NotificationManager:
             emoji = priority_emojis.get(message.priority, '📊')
             
             formatted_text = (
-                f"{emoji} <b>퀸트프로젝트 알림</b>\n\n"
+                f"{emoji} <b>퀸트프로젝트</b>\n\n"
                 f"📋 <b>{message.title}</b>\n\n"
                 f"{message.content}\n\n"
                 f"🕐 {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -677,7 +568,7 @@ class NotificationManager:
             
             # 본문
             body = f"""
-퀸트프로젝트 알림
+퀸트프로젝트 최적화 알림
 
 제목: {message.title}
 
@@ -715,12 +606,12 @@ class NotificationManager:
             return False
 
 # ============================================================================
-# 🚨 응급 오류 감지 시스템
+# 🚨 응급 오류 감지 시스템 (간소화)
 # ============================================================================
 class EmergencyDetector:
-    """응급 상황 감지 및 대응"""
+    """응급 상황 감지 및 대응 (간소화)"""
     
-    def __init__(self, config: TradingConfig):
+    def __init__(self, config: OptimizedTradingConfig):
         self.config = config
         self.error_count = 0
         self.consecutive_errors = 0
@@ -729,7 +620,7 @@ class EmergencyDetector:
         self.logger = logging.getLogger('EmergencyDetector')
     
     def check_system_health(self) -> Dict[str, Any]:
-        """시스템 건강 상태 체크"""
+        """시스템 건강 상태 체크 (간소화)"""
         health_status = {
             'healthy': True,
             'warnings': [],
@@ -760,11 +651,6 @@ class EmergencyDetector:
             elif free_gb < 5:
                 health_status['warnings'].append(f'디스크 경고: {free_gb:.1f}GB 남음')
             
-            # 네트워크 체크
-            if not self._check_network():
-                health_status['emergency_needed'] = True
-                health_status['errors'].append('네트워크 연결 실패')
-            
             health_status['healthy'] = not health_status['errors']
             
         except Exception as e:
@@ -776,14 +662,6 @@ class EmergencyDetector:
             }
         
         return health_status
-    
-    def _check_network(self) -> bool:
-        """네트워크 연결 상태 체크"""
-        try:
-            response = requests.get('https://www.google.com', timeout=5)
-            return response.status_code == 200
-        except:
-            return False
     
     def record_error(self, error_type: str, error_msg: str, critical: bool = False) -> bool:
         """오류 기록 및 응급 상황 판단"""
@@ -816,12 +694,12 @@ class EmergencyDetector:
         return False
 
 # ============================================================================
-# 🔗 IBKR 통합 관리자
+# 🔗 IBKR 통합 관리자 (최적화)
 # ============================================================================
 class IBKRManager:
-    """IBKR 통합 관리"""
+    """IBKR 통합 관리 (최적화)"""
     
-    def __init__(self, config: TradingConfig):
+    def __init__(self, config: OptimizedTradingConfig):
         self.config = config
         self.ib = None
         self.connected = False
@@ -963,32 +841,9 @@ class IBKRManager:
         except Exception as e:
             self.logger.error(f"응급 매도 전체 실패: {e}")
             return {}
-    
-    async def auto_currency_exchange(self, target_currency: str, required_amount: float) -> bool:
-        """자동 환전"""
-        if not self.connected:
-            return False
-        
-        try:
-            await self._update_account_info()
-            
-            current_balance = self.balances.get(target_currency, 0)
-            
-            if current_balance >= required_amount:
-                self.logger.info(f"✅ {target_currency} 잔고 충분: {current_balance:,.2f}")
-                return True
-            
-            # 환전 로직 (간소화)
-            self.logger.info(f"💱 환전 시도: {target_currency} {required_amount:,.2f}")
-            # 실제 환전 로직은 복잡하므로 여기서는 성공으로 가정
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"자동 환전 실패: {e}")
-            return False
 
 # ============================================================================
-# 📊 포지션 데이터 클래스
+# 📊 포지션 데이터 클래스 (최적화)
 # ============================================================================
 @dataclass
 class Position:
@@ -1007,9 +862,9 @@ class Position:
     last_updated: datetime = field(default_factory=datetime.now)
 
 class PositionManager:
-    """통합 포지션 관리"""
+    """통합 포지션 관리 (최적화)"""
     
-    def __init__(self, config: TradingConfig, ibkr_manager: IBKRManager):
+    def __init__(self, config: OptimizedTradingConfig, ibkr_manager: IBKRManager):
         self.config = config
         self.ibkr_manager = ibkr_manager
         self.positions: Dict[str, Position] = {}
@@ -1056,7 +911,7 @@ class PositionManager:
                 )
             ''')
             
-            # AI 분석 결과 테이블 추가
+            # AI 분석 결과 테이블
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ai_analysis (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1117,7 +972,7 @@ class PositionManager:
         elif currency == 'KRW':
             return 'CRYPTO'
         else:
-            return 'OPENAI'
+            return 'UNKNOWN'
     
     def get_portfolio_summary(self) -> Dict[str, Any]:
         """포트폴리오 요약"""
@@ -1180,7 +1035,7 @@ class PositionManager:
         except Exception as e:
             self.logger.error(f"거래 기록 실패: {e}")
     
-    def record_ai_analysis(self, analysis_result: AIAnalysisResult, strategy: str):
+    def record_ai_analysis(self, analysis_result: TechnicalAnalysisResult, strategy: str):
         """AI 분석 결과 기록"""
         try:
             conn = sqlite3.connect(self.config.DB_PATH)
@@ -1204,14 +1059,14 @@ class PositionManager:
             self.logger.error(f"AI 분석 기록 실패: {e}")
 
 # ============================================================================
-# 📈 미국 전략 (서머타임 + 화목 + AI)
+# 📈 미국 전략 (최적화된 버전)
 # ============================================================================
 class USStrategy:
-    """미국 주식 전략 (서머타임 자동 처리 + AI 분석)"""
+    """미국 주식 전략 (AI 기술적 분석 최적화)"""
     
-    def __init__(self, config: TradingConfig, ibkr_manager: IBKRManager, 
+    def __init__(self, config: OptimizedTradingConfig, ibkr_manager: IBKRManager, 
                  position_manager: PositionManager, notification_manager: NotificationManager,
-                 ai_engine: OpenAIAnalysisEngine):
+                 ai_engine: OptimizedAIEngine):
         self.config = config
         self.ibkr_manager = ibkr_manager
         self.position_manager = position_manager
@@ -1221,11 +1076,11 @@ class USStrategy:
         
         self.logger = logging.getLogger('USStrategy')
         
-        # 미국 주식 유니버스
+        # 미국 주식 유니버스 (최적화)
         self.stock_universe = [
             'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'NFLX',
             'BRK-B', 'UNH', 'JNJ', 'V', 'PG', 'JPM', 'HD', 'MA', 'DIS', 'PYPL',
-            'ADBE', 'CRM', 'INTC', 'AMD', 'QCOM', 'CSCO', 'PEP', 'KO', 'T', 'VZ'
+            'ADBE', 'CRM', 'INTC', 'AMD', 'QCOM', 'CSCO', 'PEP', 'KO'
         ]
     
     def is_trading_day(self) -> bool:
@@ -1233,7 +1088,7 @@ class USStrategy:
         return datetime.now().weekday() in [1, 3]  # 화요일, 목요일
     
     async def run_strategy(self) -> Dict[str, Any]:
-        """미국 전략 실행"""
+        """미국 전략 실행 (최적화)"""
         try:
             if not self.is_trading_day():
                 self.logger.info("오늘은 미국 전략 비거래일")
@@ -1244,7 +1099,7 @@ class USStrategy:
             market_open, market_close = self.dst_manager.get_market_hours_kst()
             
             await self.notification_manager.send_notification(
-                f"🇺🇸 미국 전략 시작 (AI 분석 포함)\n"
+                f"🇺🇸 미국 전략 시작 (AI 기술적 분석)\n"
                 f"서머타임: {'EDT' if dst_active else 'EST'}\n"
                 f"시장시간: {market_open.strftime('%H:%M')}-{market_close.strftime('%H:%M')} KST",
                 'info', '미국 전략'
@@ -1264,13 +1119,15 @@ class USStrategy:
             for stock in selected_stocks:
                 try:
                     # 기술적 분석
-                    signal = await self._analyze_stock(stock)
+                    technical_signal = await self._analyze_stock(stock)
                     
-                    # AI 분석 추가
-                    ai_analysis = await self._get_ai_analysis(stock, signal)
+                    # AI 확신도 체크 (필요시에만)
+                    ai_analysis = await self.ai_engine.analyze_technical_signal(
+                        stock, technical_signal, "미국 주식 전략 - 화목 거래"
+                    )
                     
-                    # 통합 판단
-                    final_decision = self._combine_analysis(signal, ai_analysis)
+                    # 최종 판단
+                    final_decision = self._make_final_decision(technical_signal, ai_analysis)
                     
                     if final_decision['action'] == 'BUY' and final_decision['confidence'] > 0.7:
                         # 주문 수량 계산
@@ -1287,8 +1144,8 @@ class USStrategy:
                                     stock, 'US', 'BUY', quantity, final_decision['price'], 'USD'
                                 )
                                 
-                                # AI 분석 기록
-                                if ai_analysis:
+                                # AI 분석 기록 (사용된 경우)
+                                if ai_analysis and ai_analysis.confidence != technical_signal.get('confidence', 0.5):
                                     self.position_manager.record_ai_analysis(ai_analysis, 'US')
                                 
                                 buy_results.append({
@@ -1296,7 +1153,7 @@ class USStrategy:
                                     'quantity': quantity,
                                     'price': final_decision['price'],
                                     'confidence': final_decision['confidence'],
-                                    'ai_reasoning': ai_analysis.reasoning if ai_analysis else '기술적 분석만'
+                                    'ai_used': ai_analysis is not None and ai_analysis.confidence != technical_signal.get('confidence', 0.5)
                                 })
                                 
                                 self.logger.info(f"✅ 매수 완료: {stock} {quantity}주 @ ${final_decision['price']:.2f}")
@@ -1307,10 +1164,12 @@ class USStrategy:
             
             # 결과 알림
             if buy_results:
-                message = f"🇺🇸 미국 전략 매수 완료 (AI 분석)\n"
+                ai_used_count = sum(1 for r in buy_results if r['ai_used'])
+                message = f"🇺🇸 미국 전략 매수 완료\n"
+                message += f"AI 사용: {ai_used_count}/{len(buy_results)}건\n"
                 for result in buy_results:
-                    message += f"• {result['symbol']}: {result['quantity']}주 @ ${result['price']:.2f}\n"
-                    message += f"  AI 분석: {result['ai_reasoning'][:50]}...\n"
+                    ai_icon = "🤖" if result['ai_used'] else "📊"
+                    message += f"• {ai_icon} {result['symbol']}: {result['quantity']}주 @ ${result['price']:.2f}\n"
                 
                 await self.notification_manager.send_notification(
                     message, 'success', '미국 전략 매수'
@@ -1320,8 +1179,8 @@ class USStrategy:
                 'success': True,
                 'buy_count': len(buy_results),
                 'total_investment': sum(r['quantity'] * r['price'] for r in buy_results),
-                'dst_active': dst_active,
-                'ai_analysis_used': self.config.OPENAI_ANALYSIS_ENABLED
+                'ai_calls_used': sum(1 for r in buy_results if r['ai_used']),
+                'dst_active': dst_active
             }
             
         except Exception as e:
@@ -1332,20 +1191,20 @@ class USStrategy:
             return {'success': False, 'error': str(e)}
     
     async def _select_stocks(self) -> List[str]:
-        """종목 선별"""
+        """종목 선별 (최적화)"""
         try:
             scored_stocks = []
             
-            for symbol in self.stock_universe[:10]:  # 상위 10개만 분석
+            for symbol in self.stock_universe[:8]:  # 상위 8개만 분석 (비용 절약)
                 try:
                     if not YAHOO_AVAILABLE:
                         continue
                         
                     stock = yf.Ticker(symbol)
-                    data = stock.history(period="3mo")
+                    data = stock.history(period="2mo")  # 기간 단축
                     info = stock.info
                     
-                    if data.empty or len(data) < 50:
+                    if data.empty or len(data) < 30:
                         continue
                     
                     # 간단한 점수 계산
@@ -1358,9 +1217,9 @@ class USStrategy:
                     self.logger.debug(f"종목 분석 실패 {symbol}: {e}")
                     continue
             
-            # 점수순 정렬 후 상위 5개 선택
+            # 점수순 정렬 후 상위 4개 선택 (AI 비용 절약)
             scored_stocks.sort(key=lambda x: x[1], reverse=True)
-            selected = [stock[0] for stock in scored_stocks[:5]]
+            selected = [stock[0] for stock in scored_stocks[:4]]
             
             self.logger.info(f"미국 종목 선별: {selected}")
             return selected
@@ -1370,7 +1229,7 @@ class USStrategy:
             return []
     
     def _calculate_stock_score(self, data: pd.DataFrame, info: Dict) -> float:
-        """종목 점수 계산"""
+        """종목 점수 계산 (최적화)"""
         try:
             score = 0.0
             
@@ -1389,15 +1248,15 @@ class USStrategy:
                 score += 0.3
             
             # 이동평균
+            ma10 = closes.rolling(10).mean()
             ma20 = closes.rolling(20).mean()
-            ma50 = closes.rolling(50).mean()
             
-            if closes.iloc[-1] > ma20.iloc[-1] > ma50.iloc[-1]:
+            if closes.iloc[-1] > ma10.iloc[-1] > ma20.iloc[-1]:
                 score += 0.4
             
             # 거래량
-            volume_ratio = data['Volume'].iloc[-5:].mean() / data['Volume'].iloc[-20:-5].mean()
-            if volume_ratio > 1.2:
+            volume_ratio = data['Volume'].iloc[-3:].mean() / data['Volume'].iloc[-10:-3].mean()
+            if volume_ratio > 1.1:
                 score += 0.3
             
             return min(score, 1.0)
@@ -1407,7 +1266,7 @@ class USStrategy:
             return 0.0
     
     async def _analyze_stock(self, symbol: str) -> Dict[str, Any]:
-        """개별 종목 분석"""
+        """개별 종목 기술적 분석"""
         try:
             if not YAHOO_AVAILABLE:
                 return {
@@ -1430,22 +1289,29 @@ class USStrategy:
             
             current_price = float(data['Close'].iloc[-1])
             
-            # 간단한 시그널 생성
+            # 기술적 분석
             closes = data['Close']
             ma5 = closes.rolling(5).mean().iloc[-1]
-            ma20 = closes.rolling(20).mean().iloc[-1]
+            ma10 = closes.rolling(10).mean().iloc[-1]
             
-            if current_price > ma5 > ma20:
+            # 트렌드 분석 (오류 수정)
+            trend_strength = self._calculate_trend_strength(closes)
+            
+            if current_price > ma5 > ma10 and trend_strength > 0.6:
                 action = 'BUY'
                 confidence = 0.8
+                reason = '상승 추세 강화'
+            elif current_price > ma5 > ma10:
+                action = 'BUY'
+                confidence = 0.6  # 애매한 구간 (AI 호출 대상)
                 reason = '상승 추세'
-            elif current_price < ma5 < ma20:
+            elif current_price < ma5 < ma10:
                 action = 'SELL'
                 confidence = 0.7
                 reason = '하락 추세'
             else:
                 action = 'HOLD'
-                confidence = 0.5
+                confidence = 0.5  # 애매한 구간 (AI 호출 대상)
                 reason = '중립'
             
             return {
@@ -1454,7 +1320,8 @@ class USStrategy:
                 'price': current_price,
                 'reason': reason,
                 'ma5': ma5,
-                'ma20': ma20
+                'ma10': ma10,
+                'trend_strength': trend_strength
             }
             
         except Exception as e:
@@ -1466,83 +1333,51 @@ class USStrategy:
                 'reason': f'분석 실패: {str(e)}'
             }
     
-    async def _get_ai_analysis(self, symbol: str, technical_signal: Dict[str, Any]) -> Optional[AIAnalysisResult]:
-        """AI 분석 수행"""
-        if not self.config.OPENAI_ANALYSIS_ENABLED or not self.ai_engine.client_available:
-            return None
-        
+    def _calculate_trend_strength(self, closes: pd.Series) -> float:
+        """트렌드 강도 계산 (오류 수정)"""
         try:
-            # 시장 데이터 준비
-            market_data = {
-                'symbol': symbol,
-                'current_price': technical_signal['price'],
-                'technical_signal': technical_signal,
-                'ma5': technical_signal.get('ma5', 0),
-                'ma20': technical_signal.get('ma20', 0)
-            }
+            if len(closes) < 10:
+                return 0.5
             
-            # AI 분석 수행
-            ai_analysis = await self.ai_engine.analyze_symbol(
-                symbol, market_data, "미국 주식 전략 - 화목 거래"
-            )
+            # 최근 10일 동안의 상승/하락 일수
+            recent_changes = closes.tail(10).pct_change().dropna()
+            up_days = (recent_changes > 0).sum()
+            total_days = len(recent_changes)
             
-            return ai_analysis
+            if total_days == 0:
+                return 0.5
+            
+            trend_strength = up_days / total_days
+            return trend_strength
             
         except Exception as e:
-            self.logger.error(f"AI 분석 실패 {symbol}: {e}")
-            return None
+            return 0.5  # 오류시 중립값 반환
     
-    def _combine_analysis(self, technical_signal: Dict[str, Any], 
-                         ai_analysis: Optional[AIAnalysisResult]) -> Dict[str, Any]:
-        """기술적 분석과 AI 분석 통합"""
-        if not ai_analysis:
+    def _make_final_decision(self, technical_signal: Dict[str, Any], 
+                           ai_analysis: Optional[TechnicalAnalysisResult]) -> Dict[str, Any]:
+        """최종 매매 결정"""
+        if not ai_analysis or ai_analysis.confidence == technical_signal.get('confidence', 0.5):
+            # AI가 사용되지 않았거나 기술적 분석과 동일한 경우
             return technical_signal
         
-        # 신호 일치도 체크
-        tech_action = technical_signal['action']
-        ai_action = ai_analysis.action
-        
-        # 가중 평균으로 신뢰도 계산
-        tech_weight = 0.4
-        ai_weight = 0.6
-        
-        combined_confidence = (
-            technical_signal['confidence'] * tech_weight +
-            ai_analysis.confidence * ai_weight
-        )
-        
-        # 액션 결정
-        if tech_action == ai_action:
-            # 동일한 신호: 신뢰도 증가
-            final_action = tech_action
-            final_confidence = min(combined_confidence * 1.2, 1.0)
-        elif tech_action == 'HOLD' or ai_action == 'HOLD':
-            # 한쪽이 HOLD: 보수적 접근
-            final_action = 'HOLD'
-            final_confidence = combined_confidence * 0.8
-        else:
-            # 상반된 신호: 매우 보수적
-            final_action = 'HOLD'
-            final_confidence = 0.3
-        
+        # AI 분석이 사용된 경우
         return {
-            'action': final_action,
-            'confidence': final_confidence,
+            'action': ai_analysis.action,
+            'confidence': ai_analysis.confidence,
             'price': technical_signal['price'],
-            'reason': f"기술적: {technical_signal['reason']}, AI: {ai_analysis.reasoning[:30]}...",
-            'ai_target_price': ai_analysis.target_price,
-            'ai_risk_level': ai_analysis.risk_level
+            'reason': f"AI 확신도 체크: {ai_analysis.reasoning[:30]}...",
+            'ai_used': True
         }
 
 # ============================================================================
-# 🇯🇵 일본 전략 (화목 하이브리드 + AI)
+# 🇯🇵 일본 전략 (최적화된 버전)
 # ============================================================================
 class JapanStrategy:
-    """일본 주식 전략"""
+    """일본 주식 전략 (AI 기술적 분석 최적화)"""
     
-    def __init__(self, config: TradingConfig, ibkr_manager: IBKRManager, 
+    def __init__(self, config: OptimizedTradingConfig, ibkr_manager: IBKRManager, 
                  position_manager: PositionManager, notification_manager: NotificationManager,
-                 ai_engine: OpenAIAnalysisEngine):
+                 ai_engine: OptimizedAIEngine):
         self.config = config
         self.ibkr_manager = ibkr_manager
         self.position_manager = position_manager
@@ -1551,11 +1386,11 @@ class JapanStrategy:
         
         self.logger = logging.getLogger('JapanStrategy')
         
-        # 일본 주식 유니버스 (도쿄증권거래소)
+        # 일본 주식 유니버스 (최적화)
         self.stock_universe = [
             '7203.T', '6758.T', '9984.T', '6861.T', '8306.T',  # 도요타, 소니, 소프트뱅크, 키엔스, 미쓰비시
             '7974.T', '9432.T', '8316.T', '6367.T', '4063.T',  # 닌텐도, NTT, 미쓰비시UFJ, 다이킨, 신에츠화학
-            '9983.T', '8411.T', '6954.T', '7201.T', '6981.T'   # 패스트리테일링, 미즈호, 파나소닉, 닛산, 무라타
+            '9983.T', '8411.T', '6954.T', '7201.T'  # 패스트리테일링, 미즈호, 파나소닉, 닛산
         ]
     
     def is_trading_day(self) -> bool:
@@ -1563,19 +1398,15 @@ class JapanStrategy:
         return datetime.now().weekday() in [1, 3]  # 화요일, 목요일
     
     async def run_strategy(self) -> Dict[str, Any]:
-        """일본 전략 실행"""
+        """일본 전략 실행 (최적화)"""
         try:
             if not self.is_trading_day():
                 self.logger.info("오늘은 일본 전략 비거래일")
                 return {'success': False, 'reason': 'not_trading_day'}
             
-            # 엔화 환전
-            required_yen = self.config.TOTAL_PORTFOLIO_VALUE * self.config.JAPAN_ALLOCATION * 110  # 대략적인 환율
-            await self.ibkr_manager.auto_currency_exchange('JPY', required_yen)
-            
             await self.notification_manager.send_notification(
-                f"🇯🇵 일본 전략 시작 (AI 분석 포함)\n"
-                f"목표 투자금: ¥{required_yen:,.0f}",
+                f"🇯🇵 일본 전략 시작 (AI 기술적 분석)\n"
+                f"목표 투자금: {self.config.TOTAL_PORTFOLIO_VALUE * self.config.JAPAN_ALLOCATION:,.0f}원",
                 'info', '일본 전략'
             )
             
@@ -1591,17 +1422,20 @@ class JapanStrategy:
             
             # 매수 실행
             buy_results = []
+            required_yen = self.config.TOTAL_PORTFOLIO_VALUE * self.config.JAPAN_ALLOCATION * usd_jpy_rate
             allocation_per_stock = required_yen / len(selected_stocks)
             
             for stock in selected_stocks:
                 try:
-                    signal = await self._analyze_japanese_stock(stock, usd_jpy_rate)
+                    technical_signal = await self._analyze_japanese_stock(stock, usd_jpy_rate)
                     
-                    # AI 분석 추가
-                    ai_analysis = await self._get_ai_analysis(stock, signal, usd_jpy_rate)
+                    # AI 확신도 체크 (필요시에만)
+                    ai_analysis = await self.ai_engine.analyze_technical_signal(
+                        stock, technical_signal, "일본 주식 전략 - 화목 거래, 엔화 환전"
+                    )
                     
-                    # 통합 판단
-                    final_decision = self._combine_analysis(signal, ai_analysis)
+                    # 최종 판단
+                    final_decision = self._make_final_decision(technical_signal, ai_analysis)
                     
                     if final_decision['action'] == 'BUY' and final_decision['confidence'] > 0.65:
                         # 주문 수량 (100주 단위)
@@ -1617,8 +1451,8 @@ class JapanStrategy:
                                     stock, 'JAPAN', 'BUY', quantity, final_decision['price'], 'JPY'
                                 )
                                 
-                                # AI 분석 기록
-                                if ai_analysis:
+                                # AI 분석 기록 (사용된 경우)
+                                if ai_analysis and ai_analysis.confidence != technical_signal.get('confidence', 0.5):
                                     self.position_manager.record_ai_analysis(ai_analysis, 'JAPAN')
                                 
                                 buy_results.append({
@@ -1626,7 +1460,7 @@ class JapanStrategy:
                                     'quantity': quantity,
                                     'price': final_decision['price'],
                                     'confidence': final_decision['confidence'],
-                                    'ai_reasoning': ai_analysis.reasoning if ai_analysis else '기술적 분석만'
+                                    'ai_used': ai_analysis is not None and ai_analysis.confidence != technical_signal.get('confidence', 0.5)
                                 })
                                 
                                 self.logger.info(f"✅ 일본 매수: {stock} {quantity}주 @ ¥{final_decision['price']:,.0f}")
@@ -1637,10 +1471,13 @@ class JapanStrategy:
             
             # 결과 알림
             if buy_results:
-                message = f"🇯🇵 일본 전략 매수 완료 (AI 분석)\n"
+                ai_used_count = sum(1 for r in buy_results if r['ai_used'])
+                message = f"🇯🇵 일본 전략 매수 완료\n"
                 message += f"USD/JPY: {usd_jpy_rate:.2f}\n"
+                message += f"AI 사용: {ai_used_count}/{len(buy_results)}건\n"
                 for result in buy_results:
-                    message += f"• {result['symbol']}: {result['quantity']}주 @ ¥{result['price']:,.0f}\n"
+                    ai_icon = "🤖" if result['ai_used'] else "📊"
+                    message += f"• {ai_icon} {result['symbol']}: {result['quantity']}주 @ ¥{result['price']:,.0f}\n"
                 
                 await self.notification_manager.send_notification(
                     message, 'success', '일본 전략 매수'
@@ -1651,7 +1488,7 @@ class JapanStrategy:
                 'buy_count': len(buy_results),
                 'usd_jpy_rate': usd_jpy_rate,
                 'total_investment_jpy': sum(r['quantity'] * r['price'] for r in buy_results),
-                'ai_analysis_used': self.config.OPENAI_ANALYSIS_ENABLED
+                'ai_calls_used': sum(1 for r in buy_results if r['ai_used'])
             }
             
         except Exception as e:
@@ -1671,17 +1508,17 @@ class JapanStrategy:
                     return float(data['Close'].iloc[-1])
             
             # 기본값
-            return 110.0
+            return 150.0
             
         except Exception as e:
             self.logger.error(f"환율 조회 실패: {e}")
-            return 110.0
+            return 150.0
     
     async def _select_japanese_stocks(self) -> List[str]:
-        """일본 종목 선별"""
+        """일본 종목 선별 (최적화)"""
         try:
-            # 간단한 선별 로직
-            selected = self.stock_universe[:8]  # 상위 8개
+            # 상위 6개 선별 (AI 비용 절약)
+            selected = self.stock_universe[:6]
             self.logger.info(f"일본 종목 선별: {selected}")
             return selected
             
@@ -1690,10 +1527,45 @@ class JapanStrategy:
             return []
     
     async def _analyze_japanese_stock(self, symbol: str, usd_jpy_rate: float) -> Dict[str, Any]:
-        """일본 종목 분석"""
+        """일본 종목 기술적 분석"""
         try:
-            # 간단한 분석 로직
-            confidence = 0.7 + (hash(symbol) % 30) / 100  # 의사 랜덤
+            # 기본 분석 로직 (실제로는 Yahoo Finance로 데이터 수집)
+            if YAHOO_AVAILABLE:
+                try:
+                    ticker = yf.Ticker(symbol)
+                    data = ticker.history(period="1mo")
+                    
+                    if not data.empty:
+                        current_price = float(data['Close'].iloc[-1])
+                        closes = data['Close']
+                        ma5 = closes.rolling(5).mean().iloc[-1]
+                        ma10 = closes.rolling(10).mean().iloc[-1]
+                        
+                        if current_price > ma5 > ma10:
+                            action = 'BUY'
+                            confidence = 0.7
+                            reason = '상승 추세'
+                        elif current_price < ma5 < ma10:
+                            action = 'SELL'
+                            confidence = 0.6
+                            reason = '하락 추세'
+                        else:
+                            action = 'HOLD'
+                            confidence = 0.5  # 애매한 구간
+                            reason = '중립'
+                        
+                        return {
+                            'action': action,
+                            'confidence': confidence,
+                            'price': current_price,
+                            'usd_jpy_rate': usd_jpy_rate,
+                            'reason': reason
+                        }
+                except Exception:
+                    pass
+            
+            # 기본값 (데이터 없을 때)
+            confidence = 0.6 + (hash(symbol) % 30) / 100  # 의사 랜덤
             price = 1000 + (hash(symbol) % 5000)  # 의사 가격
             
             return {
@@ -1713,78 +1585,29 @@ class JapanStrategy:
                 'reason': f'분석 실패: {str(e)}'
             }
     
-    async def _get_ai_analysis(self, symbol: str, technical_signal: Dict[str, Any], 
-                             usd_jpy_rate: float) -> Optional[AIAnalysisResult]:
-        """AI 분석 수행"""
-        if not self.config.OPENAI_ANALYSIS_ENABLED or not self.ai_engine.client_available:
-            return None
-        
-        try:
-            # 시장 데이터 준비
-            market_data = {
-                'symbol': symbol,
-                'current_price': technical_signal['price'],
-                'currency': 'JPY',
-                'usd_jpy_rate': usd_jpy_rate,
-                'technical_signal': technical_signal
-            }
-            
-            # AI 분석 수행
-            ai_analysis = await self.ai_engine.analyze_symbol(
-                symbol, market_data, "일본 주식 전략 - 화목 거래, 엔화 환전 전략"
-            )
-            
-            return ai_analysis
-            
-        except Exception as e:
-            self.logger.error(f"AI 분석 실패 {symbol}: {e}")
-            return None
-    
-    def _combine_analysis(self, technical_signal: Dict[str, Any], 
-                         ai_analysis: Optional[AIAnalysisResult]) -> Dict[str, Any]:
-        """기술적 분석과 AI 분석 통합"""
-        if not ai_analysis:
+    def _make_final_decision(self, technical_signal: Dict[str, Any], 
+                           ai_analysis: Optional[TechnicalAnalysisResult]) -> Dict[str, Any]:
+        """최종 매매 결정"""
+        if not ai_analysis or ai_analysis.confidence == technical_signal.get('confidence', 0.5):
             return technical_signal
         
-        # 신호 일치도 체크
-        tech_action = technical_signal['action']
-        ai_action = ai_analysis.action
-        
-        # 가중 평균으로 신뢰도 계산
-        tech_weight = 0.5
-        ai_weight = 0.5
-        
-        combined_confidence = (
-            technical_signal['confidence'] * tech_weight +
-            ai_analysis.confidence * ai_weight
-        )
-        
-        # 액션 결정
-        if tech_action == ai_action:
-            final_action = tech_action
-            final_confidence = min(combined_confidence * 1.1, 1.0)
-        else:
-            final_action = 'HOLD'
-            final_confidence = combined_confidence * 0.7
-        
         return {
-            'action': final_action,
-            'confidence': final_confidence,
+            'action': ai_analysis.action,
+            'confidence': ai_analysis.confidence,
             'price': technical_signal['price'],
-            'reason': f"기술적: {technical_signal['reason']}, AI: {ai_analysis.reasoning[:20]}...",
-            'ai_target_price': ai_analysis.target_price,
-            'ai_risk_level': ai_analysis.risk_level
+            'reason': f"AI 확신도 체크: {ai_analysis.reasoning[:30]}...",
+            'ai_used': True
         }
 
 # ============================================================================
-# 🇮🇳 인도 전략 (수요일 + AI)
+# 🇮🇳 인도 전략 (최적화된 버전)
 # ============================================================================
 class IndiaStrategy:
-    """인도 주식 전략"""
+    """인도 주식 전략 (AI 기술적 분석 최적화)"""
     
-    def __init__(self, config: TradingConfig, ibkr_manager: IBKRManager, 
+    def __init__(self, config: OptimizedTradingConfig, ibkr_manager: IBKRManager, 
                  position_manager: PositionManager, notification_manager: NotificationManager,
-                 ai_engine: OpenAIAnalysisEngine):
+                 ai_engine: OptimizedAIEngine):
         self.config = config
         self.ibkr_manager = ibkr_manager
         self.position_manager = position_manager
@@ -1793,11 +1616,11 @@ class IndiaStrategy:
         
         self.logger = logging.getLogger('IndiaStrategy')
         
-        # 인도 주식 유니버스 (NSE)
+        # 인도 주식 유니버스 (최적화)
         self.stock_universe = [
             'RELIANCE', 'TCS', 'HDFCBANK', 'ICICIBANK', 'INFY',  # 릴라이언스, TCS, HDFC은행, ICICI은행, 인포시스
             'ITC', 'SBIN', 'BHARTIARTL', 'KOTAKBANK', 'LT',     # ITC, SBI, 바르티에어텔, 코탁은행, L&T
-            'HCLTECH', 'AXISBANK', 'BAJFINANCE', 'ASIANPAINT', 'MARUTI'  # HCL테크, 액시스은행, 바즈파이낸스, 아시안페인트, 마루티
+            'HCLTECH', 'AXISBANK'  # HCL테크, 액시스은행
         ]
     
     def is_trading_day(self) -> bool:
@@ -1805,19 +1628,15 @@ class IndiaStrategy:
         return datetime.now().weekday() == 2  # 수요일
     
     async def run_strategy(self) -> Dict[str, Any]:
-        """인도 전략 실행"""
+        """인도 전략 실행 (최적화)"""
         try:
             if not self.is_trading_day():
                 self.logger.info("오늘은 인도 전략 비거래일")
                 return {'success': False, 'reason': 'not_trading_day'}
             
-            # 루피 환전
-            required_inr = self.config.TOTAL_PORTFOLIO_VALUE * self.config.INDIA_ALLOCATION * 75  # 대략적인 환율
-            await self.ibkr_manager.auto_currency_exchange('INR', required_inr)
-            
             await self.notification_manager.send_notification(
-                f"🇮🇳 인도 전략 시작 (AI 분석 포함)\n"
-                f"목표 투자금: ₹{required_inr:,.0f}",
+                f"🇮🇳 인도 전략 시작 (AI 기술적 분석)\n"
+                f"목표 투자금: {self.config.TOTAL_PORTFOLIO_VALUE * self.config.INDIA_ALLOCATION:,.0f}원",
                 'info', '인도 전략'
             )
             
@@ -1833,17 +1652,20 @@ class IndiaStrategy:
             
             # 매수 실행
             buy_results = []
+            required_inr = self.config.TOTAL_PORTFOLIO_VALUE * self.config.INDIA_ALLOCATION * usd_inr_rate
             allocation_per_stock = required_inr / len(selected_stocks)
             
             for stock in selected_stocks:
                 try:
-                    signal = await self._analyze_indian_stock(stock, usd_inr_rate)
+                    technical_signal = await self._analyze_indian_stock(stock, usd_inr_rate)
                     
-                    # AI 분석 추가
-                    ai_analysis = await self._get_ai_analysis(stock, signal, usd_inr_rate)
+                    # AI 확신도 체크 (필요시에만)
+                    ai_analysis = await self.ai_engine.analyze_technical_signal(
+                        stock, technical_signal, "인도 주식 전략 - 수요일 보수적 거래"
+                    )
                     
-                    # 통합 판단
-                    final_decision = self._combine_analysis(signal, ai_analysis)
+                    # 최종 판단 (보수적)
+                    final_decision = self._make_final_decision(technical_signal, ai_analysis)
                     
                     if final_decision['action'] == 'BUY' and final_decision['confidence'] > 0.7:
                         # 주문 수량
@@ -1859,8 +1681,8 @@ class IndiaStrategy:
                                     stock, 'INDIA', 'BUY', quantity, final_decision['price'], 'INR'
                                 )
                                 
-                                # AI 분석 기록
-                                if ai_analysis:
+                                # AI 분석 기록 (사용된 경우)
+                                if ai_analysis and ai_analysis.confidence != technical_signal.get('confidence', 0.5):
                                     self.position_manager.record_ai_analysis(ai_analysis, 'INDIA')
                                 
                                 buy_results.append({
@@ -1868,7 +1690,7 @@ class IndiaStrategy:
                                     'quantity': quantity,
                                     'price': final_decision['price'],
                                     'confidence': final_decision['confidence'],
-                                    'ai_reasoning': ai_analysis.reasoning if ai_analysis else '기술적 분석만'
+                                    'ai_used': ai_analysis is not None and ai_analysis.confidence != technical_signal.get('confidence', 0.5)
                                 })
                                 
                                 self.logger.info(f"✅ 인도 매수: {stock} {quantity}주 @ ₹{final_decision['price']:,.2f}")
@@ -1879,10 +1701,13 @@ class IndiaStrategy:
             
             # 결과 알림
             if buy_results:
-                message = f"🇮🇳 인도 전략 매수 완료 (AI 분석)\n"
+                ai_used_count = sum(1 for r in buy_results if r['ai_used'])
+                message = f"🇮🇳 인도 전략 매수 완료\n"
                 message += f"USD/INR: {usd_inr_rate:.2f}\n"
+                message += f"AI 사용: {ai_used_count}/{len(buy_results)}건\n"
                 for result in buy_results:
-                    message += f"• {result['symbol']}: {result['quantity']}주 @ ₹{result['price']:,.2f}\n"
+                    ai_icon = "🤖" if result['ai_used'] else "📊"
+                    message += f"• {ai_icon} {result['symbol']}: {result['quantity']}주 @ ₹{result['price']:,.2f}\n"
                 
                 await self.notification_manager.send_notification(
                     message, 'success', '인도 전략 매수'
@@ -1893,7 +1718,7 @@ class IndiaStrategy:
                 'buy_count': len(buy_results),
                 'usd_inr_rate': usd_inr_rate,
                 'total_investment_inr': sum(r['quantity'] * r['price'] for r in buy_results),
-                'ai_analysis_used': self.config.OPENAI_ANALYSIS_ENABLED
+                'ai_calls_used': sum(1 for r in buy_results if r['ai_used'])
             }
             
         except Exception as e:
@@ -1913,17 +1738,17 @@ class IndiaStrategy:
                     return float(data['Close'].iloc[-1])
             
             # 기본값
-            return 75.0
+            return 83.0
             
         except Exception as e:
             self.logger.error(f"환율 조회 실패: {e}")
-            return 75.0
+            return 83.0
     
     async def _select_indian_stocks(self) -> List[str]:
-        """인도 종목 선별 (보수적)"""
+        """인도 종목 선별 (보수적, 최적화)"""
         try:
-            # 대형주 우선 선별
-            selected = self.stock_universe[:6]  # 상위 6개
+            # 대형주 우선 선별 (상위 4개, AI 비용 절약)
+            selected = self.stock_universe[:4]
             self.logger.info(f"인도 종목 선별: {selected}")
             return selected
             
@@ -1932,10 +1757,10 @@ class IndiaStrategy:
             return []
     
     async def _analyze_indian_stock(self, symbol: str, usd_inr_rate: float) -> Dict[str, Any]:
-        """인도 종목 분석"""
+        """인도 종목 기술적 분석"""
         try:
-            # 간단한 분석 로직
-            confidence = 0.65 + (hash(symbol) % 35) / 100  # 의사 랜덤
+            # 보수적 분석 로직
+            confidence = 0.65 + (hash(symbol) % 25) / 100  # 의사 랜덤 (보수적)
             price = 500 + (hash(symbol) % 3000)  # 의사 가격
             
             return {
@@ -1943,7 +1768,7 @@ class IndiaStrategy:
                 'confidence': confidence,
                 'price': price,
                 'usd_inr_rate': usd_inr_rate,
-                'reason': '보수적 분석'
+                'reason': '보수적 기술적 분석'
             }
             
         except Exception as e:
@@ -1955,77 +1780,32 @@ class IndiaStrategy:
                 'reason': f'분석 실패: {str(e)}'
             }
     
-    async def _get_ai_analysis(self, symbol: str, technical_signal: Dict[str, Any], 
-                             usd_inr_rate: float) -> Optional[AIAnalysisResult]:
-        """AI 분석 수행"""
-        if not self.config.OPENAI_ANALYSIS_ENABLED or not self.ai_engine.client_available:
-            return None
+    def _make_final_decision(self, technical_signal: Dict[str, Any], 
+                           ai_analysis: Optional[TechnicalAnalysisResult]) -> Dict[str, Any]:
+        """최종 매매 결정 (보수적)"""
+        if not ai_analysis or ai_analysis.confidence == technical_signal.get('confidence', 0.5):
+            # 보수적 조정
+            decision = technical_signal.copy()
+            decision['confidence'] *= 0.9  # 보수적으로 신뢰도 감소
+            return decision
         
-        try:
-            # 시장 데이터 준비
-            market_data = {
-                'symbol': symbol,
-                'current_price': technical_signal['price'],
-                'currency': 'INR',
-                'usd_inr_rate': usd_inr_rate,
-                'technical_signal': technical_signal
-            }
-            
-            # AI 분석 수행
-            ai_analysis = await self.ai_engine.analyze_symbol(
-                symbol, market_data, "인도 주식 전략 - 수요일 보수적 거래"
-            )
-            
-            return ai_analysis
-            
-        except Exception as e:
-            self.logger.error(f"AI 분석 실패 {symbol}: {e}")
-            return None
-    
-    def _combine_analysis(self, technical_signal: Dict[str, Any], 
-                         ai_analysis: Optional[AIAnalysisResult]) -> Dict[str, Any]:
-        """기술적 분석과 AI 분석 통합"""
-        if not ai_analysis:
-            return technical_signal
-        
-        # 보수적 접근 (인도 시장의 특성상)
-        tech_action = technical_signal['action']
-        ai_action = ai_analysis.action
-        
-        # 가중 평균으로 신뢰도 계산 (보수적)
-        tech_weight = 0.6
-        ai_weight = 0.4
-        
-        combined_confidence = (
-            technical_signal['confidence'] * tech_weight +
-            ai_analysis.confidence * ai_weight
-        ) * 0.9  # 보수적 조정
-        
-        # 액션 결정 (더 보수적)
-        if tech_action == ai_action == 'BUY':
-            final_action = 'BUY'
-            final_confidence = combined_confidence
-        else:
-            final_action = 'HOLD'
-            final_confidence = combined_confidence * 0.6
-        
+        # AI 분석 사용시에도 보수적
         return {
-            'action': final_action,
-            'confidence': final_confidence,
+            'action': ai_analysis.action if ai_analysis.confidence > 0.8 else 'HOLD',
+            'confidence': ai_analysis.confidence * 0.9,  # 보수적 조정
             'price': technical_signal['price'],
-            'reason': f"보수적 통합: {technical_signal['reason']}, AI: {ai_analysis.reasoning[:20]}...",
-            'ai_target_price': ai_analysis.target_price,
-            'ai_risk_level': ai_analysis.risk_level
+            'reason': f"AI 보수적 체크: {ai_analysis.reasoning[:30]}...",
+            'ai_used': True
         }
 
 # ============================================================================
-# 💰 암호화폐 전략 (월금 + AI)
+# 💰 암호화폐 전략 (최적화된 버전)
 # ============================================================================
 class CryptoStrategy:
-    """암호화폐 전략 (월 5-7% 최적화 + AI)"""
+    """암호화폐 전략 (AI 기술적 분석 최적화)"""
     
-    def __init__(self, config: TradingConfig, position_manager: PositionManager, 
-                 notification_manager: NotificationManager, ai_engine: OpenAIAnalysisEngine):
+    def __init__(self, config: OptimizedTradingConfig, position_manager: PositionManager, 
+                 notification_manager: NotificationManager, ai_engine: OptimizedAIEngine):
         self.config = config
         self.position_manager = position_manager
         self.notification_manager = notification_manager
@@ -2033,11 +1813,10 @@ class CryptoStrategy:
         
         self.logger = logging.getLogger('CryptoStrategy')
         
-        # 암호화폐 유니버스
+        # 암호화폐 유니버스 (최적화)
         self.crypto_universe = [
             'KRW-BTC', 'KRW-ETH', 'KRW-BNB', 'KRW-ADA', 'KRW-SOL',
-            'KRW-AVAX', 'KRW-DOT', 'KRW-MATIC', 'KRW-ATOM', 'KRW-NEAR',
-            'KRW-LINK', 'KRW-UNI', 'KRW-AAVE', 'KRW-ALGO', 'KRW-XRP'
+            'KRW-AVAX', 'KRW-DOT', 'KRW-MATIC', 'KRW-ATOM', 'KRW-NEAR'
         ]
         
         # 업비트 연결
@@ -2051,7 +1830,7 @@ class CryptoStrategy:
         return datetime.now().weekday() in [0, 4]  # 월요일, 금요일
     
     async def run_strategy(self) -> Dict[str, Any]:
-        """암호화폐 전략 실행"""
+        """암호화폐 전략 실행 (최적화)"""
         try:
             if not self.is_trading_day():
                 self.logger.info("오늘은 암호화폐 전략 비거래일")
@@ -2062,7 +1841,7 @@ class CryptoStrategy:
                 return {'success': False, 'reason': 'no_upbit_module'}
             
             await self.notification_manager.send_notification(
-                f"💰 암호화폐 전략 시작 (AI 분석 포함)\n"
+                f"💰 암호화폐 전략 시작 (AI 기술적 분석)\n"
                 f"투자 한도: {self.config.TOTAL_PORTFOLIO_VALUE * self.config.CRYPTO_ALLOCATION:,.0f}원",
                 'info', '암호화폐 전략'
             )
@@ -2084,13 +1863,15 @@ class CryptoStrategy:
             
             for crypto in selected_cryptos:
                 try:
-                    signal = await self._analyze_crypto(crypto, market_condition)
+                    technical_signal = await self._analyze_crypto(crypto, market_condition)
                     
-                    # AI 분석 추가
-                    ai_analysis = await self._get_ai_analysis(crypto, signal, market_condition)
+                    # AI 확신도 체크 (필요시에만)
+                    ai_analysis = await self.ai_engine.analyze_technical_signal(
+                        crypto, technical_signal, "암호화폐 전략 - 월금 거래"
+                    )
                     
-                    # 통합 판단
-                    final_decision = self._combine_analysis(signal, ai_analysis)
+                    # 최종 판단
+                    final_decision = self._make_final_decision(technical_signal, ai_analysis)
                     
                     if final_decision['action'] == 'BUY' and final_decision['confidence'] > 0.7:
                         # 매수 실행
@@ -2104,7 +1885,7 @@ class CryptoStrategy:
                                 'amount': allocation_per_crypto,
                                 'price': final_decision['price'],
                                 'confidence': final_decision['confidence'],
-                                'ai_reasoning': ai_analysis.reasoning if ai_analysis else '기술적 분석만'
+                                'ai_used': ai_analysis is not None and ai_analysis.confidence != technical_signal.get('confidence', 0.5)
                             })
                             
                             self.logger.info(f"✅ 암호화폐 매수: {crypto} {allocation_per_crypto:,.0f}원")
@@ -2115,10 +1896,13 @@ class CryptoStrategy:
             
             # 결과 알림
             if buy_results:
-                message = f"💰 암호화폐 전략 매수 완료 (AI 분석)\n"
+                ai_used_count = sum(1 for r in buy_results if r['ai_used'])
+                message = f"💰 암호화폐 전략 매수 완료\n"
                 message += f"시장 상태: {market_condition['status']}\n"
+                message += f"AI 사용: {ai_used_count}/{len(buy_results)}건\n"
                 for result in buy_results:
-                    message += f"• {result['symbol']}: {result['amount']:,.0f}원\n"
+                    ai_icon = "🤖" if result['ai_used'] else "📊"
+                    message += f"• {ai_icon} {result['symbol']}: {result['amount']:,.0f}원\n"
                 
                 await self.notification_manager.send_notification(
                     message, 'success', '암호화폐 전략 매수'
@@ -2129,7 +1913,7 @@ class CryptoStrategy:
                 'buy_count': len(buy_results),
                 'total_investment': sum(r['amount'] for r in buy_results),
                 'market_condition': market_condition['status'],
-                'ai_analysis_used': self.config.OPENAI_ANALYSIS_ENABLED
+                'ai_calls_used': sum(1 for r in buy_results if r['ai_used'])
             }
             
         except Exception as e:
@@ -2140,11 +1924,11 @@ class CryptoStrategy:
             return {'success': False, 'error': str(e)}
     
     async def _analyze_crypto_market(self) -> Dict[str, Any]:
-        """암호화폐 시장 분석"""
+        """암호화폐 시장 분석 (간소화)"""
         try:
             # BTC 기준 시장 분석
             btc_price = pyupbit.get_current_price("KRW-BTC")
-            btc_data = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=30)
+            btc_data = pyupbit.get_ohlcv("KRW-BTC", interval="day", count=20)
             
             if btc_data is None or btc_price is None:
                 return {'status': 'neutral', 'confidence': 0.5}
@@ -2176,18 +1960,18 @@ class CryptoStrategy:
             return {'status': 'neutral', 'confidence': 0.5}
     
     async def _select_cryptos(self, market_condition: Dict) -> List[str]:
-        """암호화폐 선별"""
+        """암호화폐 선별 (최적화)"""
         try:
-            # 시장 상태에 따른 선별
+            # 시장 상태에 따른 선별 (AI 비용 절약)
             if market_condition['status'] == 'bullish':
-                # 강세장: 알트코인 포함
-                selected = self.crypto_universe[:8]
-            elif market_condition['status'] == 'bearish':
-                # 약세장: 메이저코인만
-                selected = ['KRW-BTC', 'KRW-ETH', 'KRW-BNB']
-            else:
-                # 중립: 균형
+                # 강세장: 알트코인 포함 (6개)
                 selected = self.crypto_universe[:6]
+            elif market_condition['status'] == 'bearish':
+                # 약세장: 메이저코인만 (2개)
+                selected = ['KRW-BTC', 'KRW-ETH']
+            else:
+                # 중립: 균형 (4개)
+                selected = self.crypto_universe[:4]
             
             self.logger.info(f"암호화폐 선별: {selected}")
             return selected
@@ -2197,7 +1981,7 @@ class CryptoStrategy:
             return []
     
     async def _analyze_crypto(self, symbol: str, market_condition: Dict) -> Dict[str, Any]:
-        """개별 암호화폐 분석"""
+        """개별 암호화폐 기술적 분석"""
         try:
             price = pyupbit.get_current_price(symbol)
             data = pyupbit.get_ohlcv(symbol, interval="day", count=14)
@@ -2233,11 +2017,11 @@ class CryptoStrategy:
                 reason = '기술적+시장 강세'
             elif technical_bullish:
                 action = 'BUY'
-                confidence = 0.7
+                confidence = 0.6  # 애매한 구간 (AI 호출 대상)
                 reason = '기술적 강세'
             else:
                 action = 'HOLD'
-                confidence = 0.5
+                confidence = 0.5  # 애매한 구간 (AI 호출 대상)
                 reason = '중립'
             
             return {
@@ -2259,74 +2043,19 @@ class CryptoStrategy:
                 'reason': f'분석 실패: {str(e)}'
             }
     
-    async def _get_ai_analysis(self, symbol: str, technical_signal: Dict[str, Any], 
-                             market_condition: Dict[str, Any]) -> Optional[AIAnalysisResult]:
-        """AI 분석 수행"""
-        if not self.config.OPENAI_ANALYSIS_ENABLED or not self.ai_engine.client_available:
-            return None
-        
-        try:
-            # 시장 데이터 준비
-            market_data = {
-                'symbol': symbol,
-                'current_price': technical_signal['price'],
-                'currency': 'KRW',
-                'market_condition': market_condition,
-                'technical_signal': technical_signal,
-                'rsi': technical_signal.get('rsi', 50),
-                'ma5': technical_signal.get('ma5', 0),
-                'ma10': technical_signal.get('ma10', 0)
-            }
-            
-            # AI 분석 수행
-            ai_analysis = await self.ai_engine.analyze_symbol(
-                symbol, market_data, "암호화폐 전략 - 월금 거래, 월 5-7% 최적화"
-            )
-            
-            return ai_analysis
-            
-        except Exception as e:
-            self.logger.error(f"AI 분석 실패 {symbol}: {e}")
-            return None
-    
-    def _combine_analysis(self, technical_signal: Dict[str, Any], 
-                         ai_analysis: Optional[AIAnalysisResult]) -> Dict[str, Any]:
-        """기술적 분석과 AI 분석 통합"""
-        if not ai_analysis:
+    def _make_final_decision(self, technical_signal: Dict[str, Any], 
+                           ai_analysis: Optional[TechnicalAnalysisResult]) -> Dict[str, Any]:
+        """최종 매매 결정"""
+        if not ai_analysis or ai_analysis.confidence == technical_signal.get('confidence', 0.5):
             return technical_signal
         
         # 암호화폐 특성상 AI 분석 가중치 높임
-        tech_action = technical_signal['action']
-        ai_action = ai_analysis.action
-        
-        # 가중 평균으로 신뢰도 계산
-        tech_weight = 0.3
-        ai_weight = 0.7
-        
-        combined_confidence = (
-            technical_signal['confidence'] * tech_weight +
-            ai_analysis.confidence * ai_weight
-        )
-        
-        # 액션 결정
-        if tech_action == ai_action:
-            final_action = tech_action
-            final_confidence = min(combined_confidence * 1.15, 1.0)
-        elif ai_analysis.confidence > 0.8:
-            # AI 신뢰도가 높으면 AI 추천 따름
-            final_action = ai_action
-            final_confidence = combined_confidence
-        else:
-            final_action = 'HOLD'
-            final_confidence = combined_confidence * 0.6
-        
         return {
-            'action': final_action,
-            'confidence': final_confidence,
+            'action': ai_analysis.action,
+            'confidence': ai_analysis.confidence,
             'price': technical_signal['price'],
-            'reason': f"기술적: {technical_signal['reason']}, AI: {ai_analysis.reasoning[:30]}...",
-            'ai_target_price': ai_analysis.target_price,
-            'ai_risk_level': ai_analysis.risk_level
+            'reason': f"AI 확신도 체크: {ai_analysis.reasoning[:30]}...",
+            'ai_used': True
         }
     
     async def _execute_crypto_buy(self, symbol: str, amount: float, signal: Dict) -> bool:
@@ -2363,286 +2092,12 @@ class CryptoStrategy:
             return False
 
 # ============================================================================
-# 🤖 OpenAI 전용 전략
-# ============================================================================
-class OpenAIStrategy:
-    """OpenAI 기반 전용 투자 전략"""
-    
-    def __init__(self, config: TradingConfig, ibkr_manager: IBKRManager,
-                 position_manager: PositionManager, notification_manager: NotificationManager,
-                 ai_engine: OpenAIAnalysisEngine):
-        self.config = config
-        self.ibkr_manager = ibkr_manager
-        self.position_manager = position_manager
-        self.notification_manager = notification_manager
-        self.ai_engine = ai_engine
-        
-        self.logger = logging.getLogger('OpenAIStrategy')
-        
-        # AI 전용 글로벌 유니버스
-        self.global_universe = [
-            # 미국 대형주
-            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA',
-            # 성장주
-            'CRM', 'SNOW', 'PLTR', 'ROKU', 'ZM', 'SHOP',
-            # ETF
-            'SPY', 'QQQ', 'IWM', 'VTI', 'VEA', 'VWO'
-        ]
-    
-    def is_trading_day(self) -> bool:
-        """매일 거래 (AI가 판단)"""
-        return True  # AI가 시장 상황을 고려하여 매매 여부 결정
-    
-    async def run_strategy(self) -> Dict[str, Any]:
-        """OpenAI 전용 전략 실행"""
-        try:
-            if not self.ai_engine.client_available:
-                self.logger.warning("OpenAI API가 설정되지 않았습니다")
-                return {'success': False, 'reason': 'openai_not_available'}
-            
-            await self.notification_manager.send_notification(
-                f"🤖 OpenAI 전용 전략 시작\n"
-                f"투자 한도: {self.config.TOTAL_PORTFOLIO_VALUE * self.config.OPENAI_ALLOCATION:,.0f}원",
-                'info', 'OpenAI 전략'
-            )
-            
-            # AI 시장 보고서 생성
-            market_report = await self.ai_engine.generate_market_report()
-            
-            # AI 기반 종목 선별
-            selected_stocks = await self._ai_stock_selection()
-            
-            if not selected_stocks:
-                self.logger.warning("AI가 선별한 종목이 없습니다")
-                return {'success': False, 'reason': 'no_ai_selections'}
-            
-            # 포트폴리오 리스크 분석
-            current_positions = self.position_manager.get_portfolio_summary()
-            risk_analysis = await self.ai_engine.analyze_portfolio_risk(current_positions)
-            
-            # AI 추천 기반 매매 실행
-            trade_results = []
-            allocation_per_stock = (self.config.TOTAL_PORTFOLIO_VALUE * self.config.OPENAI_ALLOCATION) / len(selected_stocks)
-            
-            for stock_data in selected_stocks:
-                symbol = stock_data['symbol']
-                ai_analysis = stock_data['analysis']
-                
-                try:
-                    if ai_analysis.action == 'BUY' and ai_analysis.confidence > 0.75:
-                        # 리스크 조정
-                        risk_adjusted_amount = self._adjust_for_risk(
-                            allocation_per_stock, ai_analysis.risk_level, risk_analysis
-                        )
-                        
-                        if risk_adjusted_amount > 1000:  # 최소 투자금
-                            quantity = int(risk_adjusted_amount / ai_analysis.target_price / 100) * 100
-                            
-                            if quantity > 0:
-                                success = await self.ibkr_manager.place_order(
-                                    symbol, 'BUY', quantity, 'USD'
-                                )
-                                
-                                if success:
-                                    self.position_manager.record_trade(
-                                        symbol, 'OPENAI', 'BUY', quantity, ai_analysis.target_price, 'USD'
-                                    )
-                                    
-                                    self.position_manager.record_ai_analysis(ai_analysis, 'OPENAI')
-                                    
-                                    trade_results.append({
-                                        'symbol': symbol,
-                                        'action': 'BUY',
-                                        'quantity': quantity,
-                                        'price': ai_analysis.target_price,
-                                        'confidence': ai_analysis.confidence,
-                                        'reasoning': ai_analysis.reasoning
-                                    })
-                                    
-                                    self.logger.info(f"🤖 AI 매수: {symbol} {quantity}주")
-                
-                except Exception as e:
-                    self.logger.error(f"AI 전략 매수 실패 {symbol}: {e}")
-                    continue
-            
-            # 결과 알림
-            if trade_results:
-                message = f"🤖 OpenAI 전략 실행 완료\n\n"
-                message += f"📊 시장 분석:\n{market_report[:200]}...\n\n"
-                message += f"⚠️ 포트폴리오 리스크: {risk_analysis.get('overall_risk_level', 'UNKNOWN')}\n\n"
-                message += "💼 거래 내역:\n"
-                
-                for result in trade_results:
-                    message += f"• {result['symbol']}: {result['action']} {result['quantity']}주\n"
-                    message += f"  신뢰도: {result['confidence']:.1%}, 이유: {result['reasoning'][:50]}...\n"
-                
-                await self.notification_manager.send_notification(
-                    message, 'success', 'OpenAI 전략 완료'
-                )
-            
-            return {
-                'success': True,
-                'trade_count': len(trade_results),
-                'market_report': market_report,
-                'risk_analysis': risk_analysis,
-                'total_investment': sum(r['quantity'] * r['price'] for r in trade_results)
-            }
-            
-        except Exception as e:
-            self.logger.error(f"OpenAI 전략 실행 실패: {e}")
-            await self.notification_manager.send_notification(
-                f"🤖 OpenAI 전략 오류: {str(e)}", 'warning'
-            )
-            return {'success': False, 'error': str(e)}
-    
-    async def _ai_stock_selection(self) -> List[Dict[str, Any]]:
-        """AI 기반 종목 선별"""
-        try:
-            selected_stocks = []
-            
-            # 각 종목에 대해 AI 분석 수행
-            for symbol in self.global_universe[:12]:  # 상위 12개 분석
-                try:
-                    # 기본 시장 데이터 수집
-                    market_data = await self._collect_market_data(symbol)
-                    
-                    if not market_data:
-                        continue
-                    
-                    # AI 분석 수행
-                    ai_analysis = await self.ai_engine.analyze_symbol(
-                        symbol, market_data, "OpenAI 전용 글로벌 전략 - 매일 분석"
-                    )
-                    
-                    if ai_analysis and ai_analysis.confidence > 0.6:
-                        selected_stocks.append({
-                            'symbol': symbol,
-                            'analysis': ai_analysis,
-                            'market_data': market_data
-                        })
-                        
-                except Exception as e:
-                    self.logger.debug(f"AI 종목 분석 실패 {symbol}: {e}")
-                    continue
-            
-            # 신뢰도순 정렬
-            selected_stocks.sort(key=lambda x: x['analysis'].confidence, reverse=True)
-            
-            # 상위 5개 선택
-            top_selections = selected_stocks[:5]
-            
-            self.logger.info(f"AI 선별 종목: {[s['symbol'] for s in top_selections]}")
-            return top_selections
-            
-        except Exception as e:
-            self.logger.error(f"AI 종목 선별 실패: {e}")
-            return []
-    
-    async def _collect_market_data(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """시장 데이터 수집"""
-        try:
-            if not YAHOO_AVAILABLE:
-                return None
-            
-            stock = yf.Ticker(symbol)
-            
-            # 가격 데이터
-            hist_data = stock.history(period="3mo")
-            if hist_data.empty:
-                return None
-            
-            # 기본 정보
-            info = stock.info
-            
-            current_price = float(hist_data['Close'].iloc[-1])
-            
-            # 기술적 지표 계산
-            closes = hist_data['Close']
-            volume = hist_data['Volume']
-            
-            # 이동평균
-            ma20 = closes.rolling(20).mean().iloc[-1]
-            ma50 = closes.rolling(50).mean().iloc[-1]
-            
-            # RSI
-            delta = closes.diff()
-            gain = delta.where(delta > 0, 0).rolling(14).mean()
-            loss = -delta.where(delta < 0, 0).rolling(14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            current_rsi = rsi.iloc[-1]
-            
-            # 거래량 분석
-            avg_volume = volume.rolling(20).mean().iloc[-1]
-            current_volume = volume.iloc[-1]
-            volume_ratio = current_volume / avg_volume
-            
-            # 변동성 계산
-            returns = closes.pct_change().dropna()
-            volatility = returns.std() * np.sqrt(252)  # 연환산
-            
-            market_data = {
-                'symbol': symbol,
-                'current_price': current_price,
-                'ma20': ma20,
-                'ma50': ma50,
-                'rsi': current_rsi,
-                'volume_ratio': volume_ratio,
-                'volatility': volatility,
-                'market_cap': info.get('marketCap', 0),
-                'pe_ratio': info.get('trailingPE', 0),
-                'price_to_book': info.get('priceToBook', 0),
-                '52w_high': info.get('fiftyTwoWeekHigh', current_price),
-                '52w_low': info.get('fiftyTwoWeekLow', current_price),
-                'sector': info.get('sector', 'Unknown'),
-                'industry': info.get('industry', 'Unknown')
-            }
-            
-            return market_data
-            
-        except Exception as e:
-            self.logger.debug(f"시장 데이터 수집 실패 {symbol}: {e}")
-            return None
-    
-    def _adjust_for_risk(self, base_amount: float, risk_level: str, 
-                        portfolio_risk: Dict[str, Any]) -> float:
-        """리스크에 따른 투자금 조정"""
-        try:
-            # 기본 조정 비율
-            risk_multipliers = {
-                'LOW': 1.2,
-                'MEDIUM': 1.0,
-                'HIGH': 0.6
-            }
-            
-            base_multiplier = risk_multipliers.get(risk_level, 1.0)
-            
-            # 포트폴리오 전체 리스크 고려
-            portfolio_risk_level = portfolio_risk.get('overall_risk_level', 'MEDIUM')
-            portfolio_adjustment = {
-                'LOW': 1.1,
-                'MEDIUM': 1.0,
-                'HIGH': 0.8
-            }
-            
-            portfolio_multiplier = portfolio_adjustment.get(portfolio_risk_level, 1.0)
-            
-            # 최종 조정된 금액
-            adjusted_amount = base_amount * base_multiplier * portfolio_multiplier
-            
-            return max(adjusted_amount, 0)
-            
-        except Exception as e:
-            self.logger.error(f"리스크 조정 실패: {e}")
-            return base_amount
-
-# ============================================================================
-# 🌐 네트워크 모니터링
+# 🌐 네트워크 모니터링 (간소화)
 # ============================================================================
 class NetworkMonitor:
-    """네트워크 연결 모니터링"""
+    """네트워크 연결 모니터링 (간소화)"""
     
-    def __init__(self, config: TradingConfig, ibkr_manager: IBKRManager, 
+    def __init__(self, config: OptimizedTradingConfig, ibkr_manager: IBKRManager, 
                  notification_manager: NotificationManager):
         self.config = config
         self.ibkr_manager = ibkr_manager
@@ -2666,10 +2121,10 @@ class NetworkMonitor:
                 await asyncio.sleep(self.config.NETWORK_CHECK_INTERVAL)
             except Exception as e:
                 self.logger.error(f"네트워크 모니터링 오류: {e}")
-                await asyncio.sleep(60)
+                await asyncio.sleep(120)  # 2분 대기
     
     async def _check_connections(self):
-        """연결 상태 체크"""
+        """연결 상태 체크 (간소화)"""
         # 인터넷 연결 체크
         internet_ok = await self._check_internet()
         
@@ -2678,14 +2133,11 @@ class NetworkMonitor:
             self.ibkr_manager.ib.isConnected() if self.ibkr_manager.ib else False
         )
         
-        # API 서버 체크
-        api_ok = await self._check_api_servers()
-        
-        if not internet_ok or (IBKR_AVAILABLE and not ibkr_ok) or not api_ok:
+        if not internet_ok or (IBKR_AVAILABLE and not ibkr_ok):
             self.connection_failures += 1
             
             # IBKR 없이 운영시 더 관대한 기준
-            if not IBKR_AVAILABLE and api_ok and internet_ok:
+            if not IBKR_AVAILABLE and internet_ok:
                 if self.connection_failures == 1:
                     self.logger.info("ℹ️ IBKR 없이 운영 중 (암호화폐 전략만 사용)")
                 self.connection_failures = 0
@@ -2693,19 +2145,16 @@ class NetworkMonitor:
             
             self.logger.warning(
                 f"⚠️ 연결 실패 {self.connection_failures}회: "
-                f"인터넷={internet_ok}, IBKR={ibkr_ok}, API={api_ok}"
+                f"인터넷={internet_ok}, IBKR={ibkr_ok}"
             )
             
             # 연속 실패시 응급 조치
             if self.connection_failures >= 5:
                 await self.notification_manager.send_notification(
                     f"🚨 네트워크 연결 실패 {self.connection_failures}회\n"
-                    f"인터넷: {internet_ok}, IBKR: {ibkr_ok}, API: {api_ok}",
+                    f"인터넷: {internet_ok}, IBKR: {ibkr_ok}",
                     'emergency'
                 )
-                
-                if self.ibkr_manager.connected:
-                    await self.ibkr_manager.emergency_sell_all()
                 
                 self.monitoring = False
         else:
@@ -2724,45 +2173,22 @@ class NetworkMonitor:
                     return response.status == 200
         except:
             return False
-    
-    async def _check_api_servers(self) -> bool:
-        """API 서버 연결 체크"""
-        try:
-            servers = [
-                'https://api.upbit.com/v1/market/all',
-                'https://query1.finance.yahoo.com'
-            ]
-            
-            success_count = 0
-            for server in servers:
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(server, timeout=5) as response:
-                            if response.status == 200
-                             if response.status == 200:
-                                success_count += 1
-                except:
-                    continue
-            
-            return success_count > 0
-        except:
-            return False
 
 # ============================================================================
-# 🏆 메인 거래 시스템
+# 🏆 메인 최적화 거래 시스템
 # ============================================================================
-class TradingSystem:
-    """퀸트프로젝트 통합 거래 시스템 (OpenAI 포함)"""
+class OptimizedTradingSystem:
+    """퀸트프로젝트 최적화 거래 시스템 (4대 전략 + AI 비용 최적화)"""
     
     def __init__(self):
         # 설정 로드
-        self.config = TradingConfig()
+        self.config = OptimizedTradingConfig()
         
         # 로깅 설정
         self._setup_logging()
         
         # 로거 초기화
-        self.logger = logging.getLogger('TradingSystem')
+        self.logger = logging.getLogger('OptimizedTradingSystem')
         
         # 핵심 컴포넌트 초기화
         self.emergency_detector = EmergencyDetector(self.config)
@@ -2771,10 +2197,10 @@ class TradingSystem:
         self.position_manager = PositionManager(self.config, self.ibkr_manager)
         self.network_monitor = NetworkMonitor(self.config, self.ibkr_manager, self.notification_manager)
         
-        # OpenAI 엔진 초기화
-        self.ai_engine = OpenAIAnalysisEngine(self.config)
+        # 최적화된 AI 엔진 초기화
+        self.ai_engine = OptimizedAIEngine(self.config)
         
-        # 전략 초기화
+        # 4대 전략 초기화
         self.strategies = {}
         self._init_strategies()
         
@@ -2794,7 +2220,7 @@ class TradingSystem:
         log_dir = Path('./logs')
         log_dir.mkdir(exist_ok=True)
         
-        file_handler = logging.FileHandler(log_dir / 'trading_system.log', encoding='utf-8')
+        file_handler = logging.FileHandler(log_dir / 'trading_optimized.log', encoding='utf-8')
         file_handler.setFormatter(logging.Formatter(log_format))
         
         # 루트 로거 설정
@@ -2804,7 +2230,7 @@ class TradingSystem:
         root_logger.addHandler(file_handler)
     
     def _init_strategies(self):
-        """전략 초기화"""
+        """4대 전략 초기화"""
         try:
             # 미국 전략
             if self.config.US_ENABLED:
@@ -2812,7 +2238,7 @@ class TradingSystem:
                     self.config, self.ibkr_manager, self.position_manager, 
                     self.notification_manager, self.ai_engine
                 )
-                self.logger.info("✅ 미국 전략 초기화 완료 (AI 포함)")
+                self.logger.info("✅ 미국 전략 초기화 완료 (AI 최적화)")
             
             # 일본 전략
             if self.config.JAPAN_ENABLED:
@@ -2820,7 +2246,7 @@ class TradingSystem:
                     self.config, self.ibkr_manager, self.position_manager, 
                     self.notification_manager, self.ai_engine
                 )
-                self.logger.info("✅ 일본 전략 초기화 완료 (AI 포함)")
+                self.logger.info("✅ 일본 전략 초기화 완료 (AI 최적화)")
             
             # 인도 전략
             if self.config.INDIA_ENABLED:
@@ -2828,22 +2254,14 @@ class TradingSystem:
                     self.config, self.ibkr_manager, self.position_manager, 
                     self.notification_manager, self.ai_engine
                 )
-                self.logger.info("✅ 인도 전략 초기화 완료 (AI 포함)")
+                self.logger.info("✅ 인도 전략 초기화 완료 (AI 최적화)")
             
             # 암호화폐 전략
             if self.config.CRYPTO_ENABLED:
                 self.strategies['CRYPTO'] = CryptoStrategy(
                     self.config, self.position_manager, self.notification_manager, self.ai_engine
                 )
-                self.logger.info("✅ 암호화폐 전략 초기화 완료 (AI 포함)")
-            
-            # OpenAI 전용 전략
-            if self.config.OPENAI_ENABLED:
-                self.strategies['OPENAI'] = OpenAIStrategy(
-                    self.config, self.ibkr_manager, self.position_manager, 
-                    self.notification_manager, self.ai_engine
-                )
-                self.logger.info("✅ OpenAI 전용 전략 초기화 완료")
+                self.logger.info("✅ 암호화폐 전략 초기화 완료 (AI 최적화)")
             
             if not self.strategies:
                 self.logger.warning("⚠️ 활성화된 전략이 없습니다")
@@ -2854,7 +2272,7 @@ class TradingSystem:
     async def start_system(self):
         """시스템 시작"""
         try:
-            self.logger.info("🏆 퀸트프로젝트 통합 거래 시스템 시작! (OpenAI 포함)")
+            self.logger.info("🏆 퀸트프로젝트 최적화 거래 시스템 시작! (AI 비용 최적화)")
             self.start_time = datetime.now()
             self.running = True
             
@@ -2862,23 +2280,13 @@ class TradingSystem:
             if IBKR_AVAILABLE:
                 await self.ibkr_manager.connect()
             
-            # AI 시장 분석 보고서 생성
-            if self.ai_engine.client_available:
-                try:
-                    market_report = await self.ai_engine.generate_market_report()
-                    await self.notification_manager.send_notification(
-                        f"🤖 AI 시장 분석 보고서\n\n{market_report}",
-                        'info', 'AI 시장 분석'
-                    )
-                except Exception as e:
-                    self.logger.warning(f"AI 시장 분석 실패: {e}")
-            
             # 시작 알림
             await self.notification_manager.send_notification(
-                f"🚀 퀸트프로젝트 거래 시스템 시작\n"
+                f"🚀 퀸트프로젝트 최적화 시스템 시작\n"
                 f"활성 전략: {', '.join(self.strategies.keys())}\n"
                 f"IBKR 연결: {'✅' if self.ibkr_manager.connected else '❌'}\n"
-                f"OpenAI 연결: {'✅' if self.ai_engine.client_available else '❌'}\n"
+                f"AI 엔진: {'✅' if self.ai_engine.client_available else '❌'}\n"
+                f"AI 일일 제한: {self.config.AI_DAILY_CALL_LIMIT}회\n"
                 f"총 포트폴리오: {self.config.TOTAL_PORTFOLIO_VALUE:,.0f}원",
                 'success', '시스템 시작'
             )
@@ -2887,8 +2295,7 @@ class TradingSystem:
             tasks = [
                 asyncio.create_task(self._main_trading_loop()),
                 asyncio.create_task(self._monitoring_loop()),
-                asyncio.create_task(self.network_monitor.start_monitoring()),
-                asyncio.create_task(self._ai_analysis_loop())
+                asyncio.create_task(self.network_monitor.start_monitoring())
             ]
             
             # 모든 태스크 실행
@@ -2914,7 +2321,7 @@ class TradingSystem:
                 weekday_names = ['월', '화', '수', '목', '금', '토', '일']
                 today_name = weekday_names[current_weekday]
                 
-                self.logger.info(f"📅 {today_name}요일 전략 체크")
+                self.logger.info(f"📅 {today_name}요일 전략 체크 (AI 호출: {self.config.AI_CALL_COUNTER}/{self.config.AI_DAILY_CALL_LIMIT})")
                 
                 for strategy_name, strategy_instance in self.strategies.items():
                     try:
@@ -2923,7 +2330,8 @@ class TradingSystem:
                             result = await strategy_instance.run_strategy()
                             
                             if result.get('success'):
-                                self.logger.info(f"✅ {strategy_name} 전략 완료")
+                                ai_calls = result.get('ai_calls_used', 0)
+                                self.logger.info(f"✅ {strategy_name} 전략 완료 (AI 호출: {ai_calls}회)")
                             else:
                                 self.logger.warning(f"⚠️ {strategy_name} 전략 실패: {result.get('reason', 'unknown')}")
                                 
@@ -2951,14 +2359,13 @@ class TradingSystem:
             'US': [1, 3],      # 화목
             'JAPAN': [1, 3],   # 화목
             'INDIA': [2],      # 수요일
-            'CRYPTO': [0, 4],  # 월금
-            'OPENAI': list(range(7))  # 매일 (AI가 판단)
+            'CRYPTO': [0, 4]   # 월금
         }
         
         return weekday in strategy_schedules.get(strategy_name, [])
     
     async def _monitoring_loop(self):
-        """모니터링 루프"""
+        """모니터링 루프 (간소화)"""
         while self.running:
             try:
                 # 포지션 모니터링
@@ -2977,88 +2384,32 @@ class TradingSystem:
                             'emergency'
                         )
                 
-                # 주기적 상태 보고 (6시간마다)
-                if datetime.now().hour % 6 == 0 and datetime.now().minute < 10:
+                # 주기적 상태 보고 (12시간마다, 간소화)
+                if datetime.now().hour % 12 == 0 and datetime.now().minute < 10:
                     await self._send_status_report(portfolio_summary)
                 
-                await asyncio.sleep(300)  # 5분마다
+                await asyncio.sleep(600)  # 10분마다
                 
             except Exception as e:
                 self.logger.error(f"모니터링 루프 오류: {e}")
-                await asyncio.sleep(60)
-    
-    async def _ai_analysis_loop(self):
-        """AI 분석 루프"""
-        while self.running:
-            try:
-                if not self.ai_engine.client_available:
-                    await asyncio.sleep(3600)  # 1시간 대기
-                    continue
-                
-                # 매 4시간마다 포트폴리오 리스크 분석
-                if datetime.now().hour % 4 == 0 and datetime.now().minute < 10:
-                    await self._perform_ai_risk_analysis()
-                
-                # 매일 오전 9시에 시장 보고서 생성
-                if datetime.now().hour == 9 and datetime.now().minute < 10:
-                    await self._generate_daily_ai_report()
-                
-                await asyncio.sleep(600)  # 10분마다 체크
-                
-            except Exception as e:
-                self.logger.error(f"AI 분석 루프 오류: {e}")
-                await asyncio.sleep(600)
-    
-    async def _perform_ai_risk_analysis(self):
-        """AI 포트폴리오 리스크 분석"""
-        try:
-            portfolio_summary = self.position_manager.get_portfolio_summary()
-            risk_analysis = await self.ai_engine.analyze_portfolio_risk(portfolio_summary)
-            
-            if risk_analysis.get('overall_risk_level') == 'HIGH':
-                await self.notification_manager.send_notification(
-                    f"⚠️ AI 포트폴리오 리스크 경고\n"
-                    f"위험 수준: {risk_analysis.get('overall_risk_level')}\n"
-                    f"주요 위험: {', '.join(risk_analysis.get('main_risks', []))}\n"
-                    f"추천사항: {', '.join(risk_analysis.get('recommendations', []))}",
-                    'warning', 'AI 리스크 분석'
-                )
-            
-        except Exception as e:
-            self.logger.error(f"AI 리스크 분석 실패: {e}")
-    
-    async def _generate_daily_ai_report(self):
-        """일일 AI 보고서 생성"""
-        try:
-            market_report = await self.ai_engine.generate_market_report()
-            
-            await self.notification_manager.send_notification(
-                f"🌅 AI 일일 시장 보고서\n\n{market_report}",
-                'info', 'AI 일일 보고서'
-            )
-            
-        except Exception as e:
-            self.logger.error(f"AI 일일 보고서 생성 실패: {e}")
+                await asyncio.sleep(120)
     
     async def _send_status_report(self, portfolio_summary: Dict):
-        """상태 보고서 전송"""
+        """상태 보고서 전송 (간소화)"""
         try:
             uptime = datetime.now() - self.start_time if self.start_time else timedelta(0)
             
             report = (
-                f"📊 퀸트프로젝트 상태 보고 (AI 포함)\n\n"
+                f"📊 퀸트프로젝트 최적화 상태\n\n"
                 f"🕐 가동시간: {uptime}\n"
                 f"💼 총 포지션: {portfolio_summary['total_positions']}개\n"
                 f"💰 미실현 손익: {portfolio_summary['total_unrealized_pnl']:+,.0f}원\n"
-                f"📈 수익 포지션: {portfolio_summary['profitable_positions']}개\n"
-                f"📉 손실 포지션: {portfolio_summary['losing_positions']}개\n"
-                f"🤖 AI 엔진: {'✅ 활성' if self.ai_engine.client_available else '❌ 비활성'}\n\n"
+                f"🤖 AI 호출: {self.config.AI_CALL_COUNTER}/{self.config.AI_DAILY_CALL_LIMIT}회\n\n"
                 f"전략별 현황:\n"
             )
             
             for strategy, data in portfolio_summary['by_strategy'].items():
-                ai_icon = "🤖" if strategy == "OPENAI" else ""
-                report += f"  {ai_icon}{strategy}: {data['count']}개 ({data['pnl']:+,.0f}원)\n"
+                report += f"  {strategy}: {data['count']}개 ({data['pnl']:+,.0f}원)\n"
             
             await self.notification_manager.send_notification(report, 'info', '상태 보고')
             
@@ -3094,7 +2445,9 @@ class TradingSystem:
             # 종료 알림
             uptime = datetime.now() - self.start_time if self.start_time else timedelta(0)
             await self.notification_manager.send_notification(
-                f"🛑 시스템 정상 종료\n가동시간: {uptime}",
+                f"🛑 시스템 정상 종료\n"
+                f"가동시간: {uptime}\n"
+                f"AI 사용량: {self.config.AI_CALL_COUNTER}회",
                 'info'
             )
             
@@ -3112,12 +2465,13 @@ class TradingSystem:
             self.logger.error(f"정상 종료 실패: {e}")
 
 # ============================================================================
-# 🎮 편의 함수들
+# 🎮 편의 함수들 (최적화)
 # ============================================================================
 async def get_system_status():
     """시스템 상태 조회"""
-    system = TradingSystem()
-    await system.ibkr_manager.connect()
+    system = OptimizedTradingSystem()
+    if IBKR_AVAILABLE:
+        await system.ibkr_manager.connect()
     await system.position_manager.update_positions()
     
     summary = system.position_manager.get_portfolio_summary()
@@ -3125,7 +2479,9 @@ async def get_system_status():
     return {
         'strategies': list(system.strategies.keys()),
         'ibkr_connected': system.ibkr_manager.connected,
-        'openai_available': system.ai_engine.client_available,
+        'ai_available': system.ai_engine.client_available,
+        'ai_calls_today': system.config.AI_CALL_COUNTER,
+        'ai_limit': system.config.AI_DAILY_CALL_LIMIT,
         'total_positions': summary['total_positions'],
         'total_unrealized_pnl': summary['total_unrealized_pnl'],
         'by_strategy': summary['by_strategy']
@@ -3133,7 +2489,7 @@ async def get_system_status():
 
 async def test_notifications():
     """알림 시스템 테스트"""
-    config = TradingConfig()
+    config = OptimizedTradingConfig()
     notifier = NotificationManager(config)
     
     test_results = {}
@@ -3141,7 +2497,7 @@ async def test_notifications():
     # 텔레그램 테스트
     if config.TELEGRAM_ENABLED:
         success = await notifier.send_notification(
-            "🧪 퀸트프로젝트 알림 시스템 테스트 (OpenAI 포함)",
+            "🧪 퀸트프로젝트 최적화 시스템 테스트 (AI 비용 절약)",
             'info', '테스트'
         )
         test_results['telegram'] = success
@@ -3149,40 +2505,39 @@ async def test_notifications():
     # 이메일 테스트
     if config.EMAIL_ENABLED:
         success = await notifier.send_notification(
-            "퀸트프로젝트 이메일 알림 테스트입니다. (OpenAI 기능 추가)",
+            "퀸트프로젝트 최적화 이메일 알림 테스트입니다.",
             'warning', '이메일 테스트'
         )
         test_results['email'] = success
     
     return test_results
 
-async def test_openai_analysis():
-    """OpenAI 분석 시스템 테스트"""
-    config = TradingConfig()
-    ai_engine = OpenAIAnalysisEngine(config)
+async def test_ai_analysis():
+    """AI 분석 시스템 테스트"""
+    config = OptimizedTradingConfig()
+    ai_engine = OptimizedAIEngine(config)
     
     if not ai_engine.client_available:
         return {'success': False, 'error': 'OpenAI API 키가 설정되지 않았습니다'}
     
     try:
-        # 테스트 시장 데이터
+        # 테스트 기술적 데이터
         test_data = {
-            'symbol': 'AAPL',
-            'current_price': 150.0,
-            'ma20': 148.0,
-            'ma50': 145.0,
-            'rsi': 55.0,
-            'volume_ratio': 1.2
+            'action': 'BUY',
+            'confidence': 0.5,  # 애매한 구간 (AI 호출 대상)
+            'price': 150.0,
+            'reason': '테스트 기술적 분석'
         }
         
         # AI 분석 수행
-        analysis = await ai_engine.analyze_symbol(
+        analysis = await ai_engine.analyze_technical_signal(
             'AAPL', test_data, "테스트 분석"
         )
         
         if analysis:
             return {
                 'success': True,
+                'ai_called': analysis.confidence != test_data['confidence'],
                 'analysis': {
                     'symbol': analysis.symbol,
                     'action': analysis.action,
@@ -3190,7 +2545,8 @@ async def test_openai_analysis():
                     'reasoning': analysis.reasoning,
                     'target_price': analysis.target_price,
                     'risk_level': analysis.risk_level
-                }
+                },
+                'ai_calls_used': config.AI_CALL_COUNTER
             }
         else:
             return {'success': False, 'error': 'AI 분석 결과 없음'}
@@ -3200,7 +2556,7 @@ async def test_openai_analysis():
 
 async def run_single_strategy(strategy_name: str):
     """단일 전략 실행"""
-    system = TradingSystem()
+    system = OptimizedTradingSystem()
     
     if strategy_name.upper() not in system.strategies:
         return {'success': False, 'error': f'전략 {strategy_name}을 찾을 수 없습니다'}
@@ -3208,11 +2564,16 @@ async def run_single_strategy(strategy_name: str):
     try:
         # IBKR 연결 (필요시)
         if strategy_name.upper() not in ['CRYPTO']:
-            await system.ibkr_manager.connect()
+            if IBKR_AVAILABLE:
+                await system.ibkr_manager.connect()
         
         # 전략 실행
         strategy = system.strategies[strategy_name.upper()]
         result = await strategy.run_strategy()
+        
+        # AI 사용량 추가
+        if 'ai_calls_used' not in result:
+            result['ai_calls_used'] = system.config.AI_CALL_COUNTER
         
         return result
         
@@ -3221,8 +2582,9 @@ async def run_single_strategy(strategy_name: str):
 
 async def analyze_portfolio_performance():
     """포트폴리오 성과 분석"""
-    system = TradingSystem()
-    await system.ibkr_manager.connect()
+    system = OptimizedTradingSystem()
+    if IBKR_AVAILABLE:
+        await system.ibkr_manager.connect()
     await system.position_manager.update_positions()
     
     summary = system.position_manager.get_portfolio_summary()
@@ -3241,35 +2603,12 @@ async def analyze_portfolio_performance():
         'win_rate': (summary['profitable_positions'] / summary['total_positions'] * 100) if summary['total_positions'] > 0 else 0,
         'by_strategy': summary['by_strategy'],
         'by_currency': summary['by_currency'],
-        'openai_available': system.ai_engine.client_available
+        'ai_available': system.ai_engine.client_available,
+        'ai_calls_today': system.config.AI_CALL_COUNTER,
+        'ai_limit': system.config.AI_DAILY_CALL_LIMIT
     }
     
     return performance
-
-async def get_ai_market_report():
-    """AI 시장 보고서 조회"""
-    config = TradingConfig()
-    ai_engine = OpenAIAnalysisEngine(config)
-    
-    if not ai_engine.client_available:
-        return "OpenAI API가 설정되지 않았습니다."
-    
-    try:
-        report = await ai_engine.generate_market_report()
-        return report
-    except Exception as e:
-        return f"AI 시장 보고서 생성 실패: {str(e)}"
-
-async def emergency_sell_all():
-    """응급 전량 매도"""
-    system = TradingSystem()
-    await system.ibkr_manager.connect()
-    
-    if system.ibkr_manager.connected:
-        results = await system.ibkr_manager.emergency_sell_all()
-        return results
-    else:
-        return {}
 
 # ============================================================================
 # 🏁 메인 실행부
@@ -3285,18 +2624,19 @@ async def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # 거래 시스템 생성
-    system = TradingSystem()
+    # 최적화 거래 시스템 생성
+    system = OptimizedTradingSystem()
     
     try:
         print("🏆" + "="*70)
-        print("🏆 퀸트프로젝트 통합 거래 시스템 v2.1.0 (OpenAI 포함)")
+        print("🏆 퀸트프로젝트 최적화 거래 시스템 v3.0.0 (AI 비용 절약)")
         print("🏆" + "="*70)
-        print("🇺🇸 미국 전략 (화목) - 서머타임 자동 처리 + AI 분석")
-        print("🇯🇵 일본 전략 (화목) - 엔화 자동 환전 + AI 분석")
-        print("🇮🇳 인도 전략 (수요일) - 루피 자동 환전 + AI 분석")
-        print("💰 암호화폐 전략 (월금) - 월 5-7% 최적화 + AI 분석")
-        print("🤖 OpenAI 전용 전략 (매일) - GPT-4 기반 분석")
+        print("🇺🇸 미국 전략 (화목) - AI 기술적 분석만")
+        print("🇯🇵 일본 전략 (화목) - AI 기술적 분석만")
+        print("🇮🇳 인도 전략 (수요일) - AI 기술적 분석만")
+        print("💰 암호화폐 전략 (월금) - AI 기술적 분석만")
+        print("🤖 AI 최적화: 애매한 신호(0.4-0.7)에서만 호출")
+        print("💰 월 AI 비용: 5천원 이하 목표")
         print("🔔 통합 알림 시스템 (텔레그램/이메일)")
         print("🚨 응급 오류 감지 + 네트워크 모니터링")
         print("📊 통합 포지션 관리 + 성과 추적")
@@ -3309,24 +2649,32 @@ async def main():
         print(f"  IBKR 연결: {'설정됨' if IBKR_AVAILABLE else '미설정'}")
         print(f"  업비트 연결: {'설정됨' if UPBIT_AVAILABLE else '미설정'}")
         print(f"  OpenAI 연결: {'설정됨' if OPENAI_AVAILABLE else '미설정'}")
+        print(f"  AI 모델: {system.config.OPENAI_MODEL}")
+        print(f"  AI 일일 제한: {system.config.AI_DAILY_CALL_LIMIT}회")
         print(f"  알림 시스템: {'활성' if system.config.TELEGRAM_ENABLED else '비활성'}")
         
         # 전략별 배분
-        print(f"\n💰 전략별 자금 배분:")
+        print(f"\n💰 4대 전략 자금 배분:")
         print(f"  🇺🇸 미국: {system.config.US_ALLOCATION:.1%} ({system.config.TOTAL_PORTFOLIO_VALUE * system.config.US_ALLOCATION:,.0f}원)")
         print(f"  🇯🇵 일본: {system.config.JAPAN_ALLOCATION:.1%} ({system.config.TOTAL_PORTFOLIO_VALUE * system.config.JAPAN_ALLOCATION:,.0f}원)")
-        print(f"  💰 암호화폐: {system.config.CRYPTO_ALLOCATION:.1%} ({system.config.TOTAL_PORTFOLIO_VALUE * system.config.CRYPTO_ALLOCATION:,.0f}원)")
         print(f"  🇮🇳 인도: {system.config.INDIA_ALLOCATION:.1%} ({system.config.TOTAL_PORTFOLIO_VALUE * system.config.INDIA_ALLOCATION:,.0f}원)")
-        print(f"  🤖 OpenAI: {system.config.OPENAI_ALLOCATION:.1%} ({system.config.TOTAL_PORTFOLIO_VALUE * system.config.OPENAI_ALLOCATION:,.0f}원)")
+        print(f"  💰 암호화폐: {system.config.CRYPTO_ALLOCATION:.1%} ({system.config.TOTAL_PORTFOLIO_VALUE * system.config.CRYPTO_ALLOCATION:,.0f}원)")
         
         # 거래 스케줄
-        print(f"\n📅 거래 스케줄:")
-        print(f"  월요일: 💰 암호화폐 전략, 🤖 OpenAI 전략")
-        print(f"  화요일: 🇺🇸 미국 전략, 🇯🇵 일본 전략, 🤖 OpenAI 전략")
-        print(f"  수요일: 🇮🇳 인도 전략, 🤖 OpenAI 전략")
-        print(f"  목요일: 🇺🇸 미국 전략, 🇯🇵 일본 전략, 🤖 OpenAI 전략")
-        print(f"  금요일: 💰 암호화폐 전략, 🤖 OpenAI 전략")
-        print(f"  주말: 🤖 OpenAI 전략 (시장 분석)")
+        print(f"\n📅 최적화 거래 스케줄:")
+        print(f"  월요일: 💰 암호화폐 전략")
+        print(f"  화요일: 🇺🇸 미국 전략, 🇯🇵 일본 전략")
+        print(f"  수요일: 🇮🇳 인도 전략")
+        print(f"  목요일: 🇺🇸 미국 전략, 🇯🇵 일본 전략")
+        print(f"  금요일: 💰 암호화폐 전략")
+        print(f"  주말: 시스템 휴식")
+        
+        # AI 최적화 정보
+        print(f"\n🤖 AI 비용 최적화:")
+        print(f"  기술적 신뢰도 {system.config.AI_CONFIDENCE_THRESHOLD_MIN}-{system.config.AI_CONFIDENCE_THRESHOLD_MAX}에서만 AI 호출")
+        print(f"  뉴스/시장심리 분석 제거 → 기술적 분석만")
+        print(f"  최대 토큰: {system.config.OPENAI_MAX_TOKENS}개")
+        print(f"  캐시 시간: 2시간")
         
         print(f"\n🚀 시스템 실행 옵션:")
         print(f"  1. 🏆 전체 시스템 자동 실행")
@@ -3335,22 +2683,19 @@ async def main():
         print(f"  4. 🇯🇵 일본 전략만 실행")
         print(f"  5. 🇮🇳 인도 전략만 실행")
         print(f"  6. 💰 암호화폐 전략만 실행")
-        print(f"  7. 🤖 OpenAI 전략만 실행")
-        print(f"  8. 🔔 알림 시스템 테스트")
-        print(f"  9. 📈 포트폴리오 성과 분석")
-        print(f"  A. 🤖 OpenAI 분석 테스트")
-        print(f"  B. 🤖 AI 시장 보고서 조회")
-        print(f"  C. 🚨 응급 전량 매도")
+        print(f"  7. 🔔 알림 시스템 테스트")
+        print(f"  8. 📈 포트폴리오 성과 분석")
+        print(f"  9. 🤖 AI 분석 테스트")
         print(f"  0. 종료")
         
         while True:
             try:
-                choice = input("\n선택하세요 (0-9, A-C): ").strip().upper()
+                choice = input("\n선택하세요 (0-9): ").strip()
                 
                 if choice == '1':
                     print("\n🏆 전체 시스템 자동 실행!")
-                    print("🔄 5대 전략이 요일별로 자동 실행됩니다.")
-                    print("🤖 OpenAI 분석이 모든 전략에 통합됩니다.")
+                    print("🔄 4대 전략이 요일별로 자동 실행됩니다.")
+                    print("🤖 AI는 애매한 신호에서만 호출됩니다 (비용 절약).")
                     print("🚨 Ctrl+C로 안전하게 종료할 수 있습니다.")
                     confirm = input("시작하시겠습니까? (y/N): ").strip().lower()
                     if confirm == 'y':
@@ -3363,42 +2708,45 @@ async def main():
                     
                     print(f"활성 전략: {', '.join(status['strategies'])}")
                     print(f"IBKR 연결: {'✅' if status['ibkr_connected'] else '❌'}")
-                    print(f"OpenAI 연결: {'✅' if status['openai_available'] else '❌'}")
+                    print(f"AI 연결: {'✅' if status['ai_available'] else '❌'}")
+                    print(f"AI 호출: {status['ai_calls_today']}/{status['ai_limit']}회")
                     print(f"총 포지션: {status['total_positions']}개")
                     print(f"미실현 손익: {status['total_unrealized_pnl']:+,.0f}원")
                     
                     if status['by_strategy']:
                         print("전략별 현황:")
                         for strategy, data in status['by_strategy'].items():
-                            ai_icon = "🤖" if strategy == "OPENAI" else ""
-                            print(f"  {ai_icon}{strategy}: {data['count']}개 ({data['pnl']:+,.0f}원)")
+                            print(f"  {strategy}: {data['count']}개 ({data['pnl']:+,.0f}원)")
                 
                 elif choice == '3':
-                    print("\n🇺🇸 미국 전략 실행 중 (AI 분석 포함)...")
+                    print("\n🇺🇸 미국 전략 실행 중 (AI 최적화)...")
                     result = await run_single_strategy('US')
                     print(f"결과: {result}")
+                    if 'ai_calls_used' in result:
+                        print(f"AI 호출: {result['ai_calls_used']}회")
                 
                 elif choice == '4':
-                    print("\n🇯🇵 일본 전략 실행 중 (AI 분석 포함)...")
+                    print("\n🇯🇵 일본 전략 실행 중 (AI 최적화)...")
                     result = await run_single_strategy('JAPAN')
                     print(f"결과: {result}")
+                    if 'ai_calls_used' in result:
+                        print(f"AI 호출: {result['ai_calls_used']}회")
                 
                 elif choice == '5':
-                    print("\n🇮🇳 인도 전략 실행 중 (AI 분석 포함)...")
+                    print("\n🇮🇳 인도 전략 실행 중 (AI 최적화)...")
                     result = await run_single_strategy('INDIA')
                     print(f"결과: {result}")
+                    if 'ai_calls_used' in result:
+                        print(f"AI 호출: {result['ai_calls_used']}회")
                 
                 elif choice == '6':
-                    print("\n💰 암호화폐 전략 실행 중 (AI 분석 포함)...")
+                    print("\n💰 암호화폐 전략 실행 중 (AI 최적화)...")
                     result = await run_single_strategy('CRYPTO')
                     print(f"결과: {result}")
+                    if 'ai_calls_used' in result:
+                        print(f"AI 호출: {result['ai_calls_used']}회")
                 
                 elif choice == '7':
-                    print("\n🤖 OpenAI 전용 전략 실행 중...")
-                    result = await run_single_strategy('OPENAI')
-                    print(f"결과: {result}")
-                
-                elif choice == '8':
                     print("\n🔔 알림 시스템 테스트 중...")
                     test_results = await test_notifications()
                     
@@ -3406,7 +2754,7 @@ async def main():
                         status = "✅ 성공" if success else "❌ 실패"
                         print(f"  {channel}: {status}")
                 
-                elif choice == '9':
+                elif choice == '8':
                     print("\n📈 포트폴리오 성과 분석 중...")
                     performance = await analyze_portfolio_performance()
                     
@@ -3416,57 +2764,37 @@ async def main():
                     print(f"수익 포지션: {performance['profitable_positions']}개")
                     print(f"손실 포지션: {performance['losing_positions']}개")
                     print(f"승률: {performance['win_rate']:.1f}%")
-                    print(f"OpenAI 사용 가능: {'✅' if performance['openai_available'] else '❌'}")
+                    print(f"AI 사용: {performance['ai_calls_today']}/{performance['ai_limit']}회")
                     
                     if performance['by_strategy']:
                         print("\n전략별 성과:")
                         for strategy, data in performance['by_strategy'].items():
-                            ai_icon = "🤖" if strategy == "OPENAI" else ""
-                            print(f"  {ai_icon}{strategy}: {data['count']}개 포지션, {data['pnl']:+,.0f}원")
+                            print(f"  {strategy}: {data['count']}개 포지션, {data['pnl']:+,.0f}원")
                 
-                elif choice == 'A':
-                    print("\n🤖 OpenAI 분석 시스템 테스트 중...")
-                    test_result = await test_openai_analysis()
+                elif choice == '9':
+                    print("\n🤖 AI 분석 시스템 테스트 중...")
+                    test_result = await test_ai_analysis()
                     
                     if test_result['success']:
                         analysis = test_result['analysis']
-                        print(f"✅ OpenAI 분석 성공!")
+                        print(f"✅ AI 분석 테스트 성공!")
+                        print(f"  AI 호출됨: {'예' if test_result['ai_called'] else '아니오'}")
                         print(f"  종목: {analysis['symbol']}")
                         print(f"  추천: {analysis['action']}")
                         print(f"  신뢰도: {analysis['confidence']:.1%}")
                         print(f"  목표가: ${analysis['target_price']:.2f}")
                         print(f"  위험도: {analysis['risk_level']}")
                         print(f"  분석 근거: {analysis['reasoning'][:100]}...")
+                        print(f"  AI 호출 카운터: {test_result['ai_calls_used']}회")
                     else:
-                        print(f"❌ OpenAI 분석 실패: {test_result['error']}")
-                
-                elif choice == 'B':
-                    print("\n🤖 AI 시장 보고서 생성 중...")
-                    report = await get_ai_market_report()
-                    print(f"\n📊 AI 시장 분석 보고서:")
-                    print("="*50)
-                    print(report)
-                    print("="*50)
-                
-                elif choice == 'C':
-                    print("\n🚨 응급 전량 매도!")
-                    print("⚠️ 모든 포지션이 시장가로 매도됩니다!")
-                    confirm = input("정말 실행하시겠습니까? (YES 입력): ").strip()
-                    if confirm == 'YES':
-                        results = await emergency_sell_all()
-                        print(f"응급 매도 결과: {len(results)}개 종목")
-                        for symbol, success in results.items():
-                            status = "✅ 성공" if success else "❌ 실패"
-                            print(f"  {symbol}: {status}")
-                    else:
-                        print("취소되었습니다.")
+                        print(f"❌ AI 분석 테스트 실패: {test_result['error']}")
                 
                 elif choice == '0':
-                    print("👋 퀸트프로젝트 거래 시스템을 종료합니다!")
+                    print("👋 퀸트프로젝트 최적화 거래 시스템을 종료합니다!")
                     break
                     
                 else:
-                    print("❌ 잘못된 선택입니다. 0-9, A-C 중 선택하세요.")
+                    print("❌ 잘못된 선택입니다. 0-9 중 선택하세요.")
                     
             except KeyboardInterrupt:
                 print("\n👋 프로그램을 종료합니다.")
@@ -3483,10 +2811,10 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        print("🏆 퀸트프로젝트 통합 거래 시스템 로딩... (OpenAI 포함)")
+        print("🏆 퀸트프로젝트 최적화 거래 시스템 로딩... (AI 비용 절약)")
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n👋 퀸트프로젝트 거래 시스템 종료")
+        print("\n👋 퀸트프로젝트 최적화 시스템 종료")
         sys.exit(0)
     except Exception as e:
         print(f"\n❌ 실행 오류: {e}")
