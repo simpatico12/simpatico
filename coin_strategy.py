@@ -1969,7 +1969,7 @@ if __name__ == "__main__":
             print("  • 월 5-7% 수익 최적화")
     else:
         # 기본 실행: 전체 전략
-        asyncio.run(main())2주 완료: {holding_days}일, {profit_ratio*100:.1f}% 수익으로 매도'
+         'details': f'2주 완료: {holding_days}일, {profit_ratio*100:.1f}% 수익으로 매도'
                 }
         elif holding_days >= 16:  # 2주 초과시 무조건
             return {
