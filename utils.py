@@ -14,10 +14,10 @@
 - 성과 분석 도구
 - 로깅 및 알림 헬퍼
 - 파일 I/O 유틸리티
-- OpenAI API 통합 (GPT-4, 텍스트 분석, 투자 조언)
+- OpenAI API 통합 (기술적 분석만)
 
 Author: 퀸트마스터팀
-Version: 1.2.0 (OpenAI 통합 유틸리티)
+Version: 1.2.0 (기술적 분석 전용)
 """
 
 import asyncio
@@ -86,15 +86,10 @@ class OpenAIModel(Enum):
     GPT_4 = "gpt-4"
     GPT_4_TURBO = "gpt-4-turbo-preview"
     GPT_3_5_TURBO = "gpt-3.5-turbo"
-    TEXT_EMBEDDING_ADA_002 = "text-embedding-ada-002"
 
 class AnalysisType(Enum):
-    """분석 유형"""
+    """분석 유형 (기술적 분석만)"""
     TECHNICAL = "TECHNICAL"
-    FUNDAMENTAL = "FUNDAMENTAL"
-    SENTIMENT = "SENTIMENT"
-    RISK = "RISK"
-    PORTFOLIO = "PORTFOLIO"
 
 # ============================================================================
 # 📊 데이터 처리 유틸리티
@@ -172,7 +167,7 @@ class DataProcessor:
         return DataProcessor.safe_divide(value * 100, total, 0.0)
 
 # ============================================================================
-# 🤖 OpenAI 통합 유틸리티
+# 🤖 OpenAI 기술적 분석 전용
 # ============================================================================
 @dataclass
 class OpenAIConfig:
@@ -184,18 +179,18 @@ class OpenAIConfig:
     timeout: int = 30
 
 @dataclass
-class AIAnalysisResult:
-    """AI 분석 결과"""
-    analysis_type: str
+class TechnicalAnalysisResult:
+    """기술적 분석 결과"""
     symbol: str
     analysis: str
     confidence: float
     recommendations: List[str]
     risk_level: str
+    technical_signals: Dict[str, Any]
     timestamp: datetime
 
-class OpenAIHelper:
-    """OpenAI API 통합 헬퍼"""
+class TechnicalAnalysisAI:
+    """기술적 분석 전용 AI 클래스"""
     
     def __init__(self, config: OpenAIConfig):
         if not OPENAI_AVAILABLE:
@@ -205,226 +200,189 @@ class OpenAIHelper:
         openai.api_key = config.api_key
         self.logger = logging.getLogger(__name__)
     
-    async def analyze_stock(self, symbol: str, market_data: Dict[str, Any], 
-                           analysis_type: AnalysisType = AnalysisType.TECHNICAL) -> AIAnalysisResult:
-        """주식 분석"""
+    async def analyze_technical(self, symbol: str, market_data: Dict[str, Any]) -> TechnicalAnalysisResult:
+        """기술적 분석"""
         try:
+            # 기술지표 계산
+            technical_signals = self._calculate_technical_indicators(market_data)
+            
             # 프롬프트 생성
-            prompt = self._generate_analysis_prompt(symbol, market_data, analysis_type)
+            prompt = self._generate_technical_prompt(symbol, market_data, technical_signals)
             
             # OpenAI API 호출
             response = await self._call_openai_api(prompt)
             
             # 결과 파싱
-            analysis_result = self._parse_analysis_response(response, symbol, analysis_type)
+            analysis_result = self._parse_technical_response(response, symbol, technical_signals)
             
             return analysis_result
         
         except Exception as e:
-            self.logger.error(f"AI 주식 분석 실패: {e}")
-            return AIAnalysisResult(
-                analysis_type=analysis_type.value,
+            self.logger.error(f"기술적 분석 실패: {e}")
+            return TechnicalAnalysisResult(
                 symbol=symbol,
                 analysis="분석 중 오류가 발생했습니다.",
                 confidence=0.0,
                 recommendations=["전문가와 상담하세요."],
                 risk_level="HIGH",
+                technical_signals={},
                 timestamp=datetime.now()
             )
     
-    async def generate_trading_strategy(self, portfolio_data: Dict[str, Any], 
-                                      risk_tolerance: str = "MEDIUM") -> str:
-        """거래 전략 생성"""
+    async def generate_trading_signals(self, symbol: str, market_data: Dict[str, Any], 
+                                     strategy_type: str = "TREND_FOLLOWING") -> Dict[str, Any]:
+        """거래 신호 생성"""
         try:
+            # 기술지표 계산
+            technical_signals = self._calculate_technical_indicators(market_data)
+            
             prompt = f"""
-다음 포트폴리오 데이터를 바탕으로 거래 전략을 제안해주세요:
+다음 기술적 분석 데이터를 바탕으로 {strategy_type} 전략의 거래 신호를 생성해주세요:
 
-포트폴리오 정보:
-{json.dumps(portfolio_data, indent=2, ensure_ascii=False)}
-
-리스크 허용도: {risk_tolerance}
+종목: {symbol}
+기술지표: {json.dumps(technical_signals, indent=2, ensure_ascii=False)}
+시장 데이터: {json.dumps(market_data, indent=2, ensure_ascii=False)}
 
 다음 형식으로 답변해주세요:
-1. 현재 포트폴리오 분석
-2. 리스크 평가
-3. 추천 거래 전략
-4. 구체적인 액션 아이템
-5. 주의사항
+1. 현재 신호: BUY/SELL/HOLD
+2. 신호 강도: 1-10 (10이 가장 강함)
+3. 진입 조건
+4. 청산 조건
+5. 리스크 요인
+6. 예상 보유 기간
 
-전문적이고 실용적인 조언을 제공해주세요.
-"""
-            
-            response = await self._call_openai_api(prompt)
-            return response
-        
-        except Exception as e:
-            self.logger.error(f"거래 전략 생성 실패: {e}")
-            return "거래 전략 생성 중 오류가 발생했습니다. 전문가와 상담하세요."
-    
-    async def analyze_market_sentiment(self, news_articles: List[str], 
-                                     symbols: List[str] = None) -> Dict[str, Any]:
-        """시장 감성 분석"""
-        try:
-            # 뉴스 기사들을 하나의 텍스트로 결합
-            combined_text = "\n\n".join(news_articles[:10])  # 최대 10개 기사
-            
-            symbol_filter = f"특히 {', '.join(symbols)} 종목에 대해 " if symbols else ""
-            
-            prompt = f"""
-다음 뉴스 기사들을 분석하여 시장 감성을 평가해주세요:
-
-{combined_text}
-
-{symbol_filter}다음 항목들을 분석해주세요:
-1. 전체적인 시장 감성 (POSITIVE/NEUTRAL/NEGATIVE)
-2. 감성 점수 (0-100)
-3. 주요 감성 키워드
-4. 투자자들이 주의해야 할 포인트
-5. 단기/중기 시장 전망
-
-JSON 형식으로 구조화된 결과를 제공해주세요.
+기술적 분석에 기반한 명확한 근거를 제시해주세요.
 """
             
             response = await self._call_openai_api(prompt)
             
-            # JSON 파싱 시도
-            try:
-                sentiment_data = json.loads(response)
-            except:
-                # JSON 파싱 실패시 기본 구조 반환
-                sentiment_data = {
-                    "overall_sentiment": "NEUTRAL",
-                    "sentiment_score": 50,
-                    "key_keywords": ["시장", "분석"],
-                    "analysis": response
-                }
+            # 신호 추출
+            signal_data = self._extract_trading_signals(response)
+            signal_data['technical_indicators'] = technical_signals
+            signal_data['timestamp'] = datetime.now().isoformat()
             
-            return sentiment_data
+            return signal_data
         
         except Exception as e:
-            self.logger.error(f"시장 감성 분석 실패: {e}")
+            self.logger.error(f"거래 신호 생성 실패: {e}")
             return {
-                "overall_sentiment": "NEUTRAL",
-                "sentiment_score": 50,
+                "signal": "HOLD",
+                "strength": 0,
                 "error": str(e)
             }
     
-    async def get_investment_advice(self, user_profile: Dict[str, Any], 
-                                  market_conditions: Dict[str, Any]) -> str:
-        """개인 맞춤 투자 조언"""
+    def _calculate_technical_indicators(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """기술지표 계산"""
+        indicators = {}
+        
         try:
-            prompt = f"""
-다음 투자자 프로필과 시장 상황을 바탕으로 개인 맞춤 투자 조언을 제공해주세요:
-
-투자자 프로필:
-{json.dumps(user_profile, indent=2, ensure_ascii=False)}
-
-현재 시장 상황:
-{json.dumps(market_conditions, indent=2, ensure_ascii=False)}
-
-다음 내용을 포함해서 조언해주세요:
-1. 현재 포트폴리오 평가
-2. 리스크 관리 방안
-3. 자산 배분 조정 제안
-4. 투자 타이밍 조언
-5. 장기 투자 전략
-
-투자자의 위험 성향과 투자 목표에 맞는 구체적이고 실용적인 조언을 제공해주세요.
-"""
-            
-            response = await self._call_openai_api(prompt)
-            return response
+            if 'prices' in market_data:
+                prices = market_data['prices']
+                
+                if len(prices) >= 20:
+                    # 이동평균
+                    sma_20 = TechnicalIndicators.sma(prices, 20)
+                    sma_50 = TechnicalIndicators.sma(prices, 50) if len(prices) >= 50 else []
+                    
+                    indicators['sma_20'] = sma_20[-1] if sma_20 else None
+                    indicators['sma_50'] = sma_50[-1] if sma_50 else None
+                    
+                    # 현재가 vs 이동평균
+                    current_price = prices[-1]
+                    if sma_20:
+                        indicators['price_vs_sma20_pct'] = (current_price - sma_20[-1]) / sma_20[-1] * 100
+                    
+                    # RSI
+                    rsi_values = TechnicalIndicators.rsi(prices)
+                    if rsi_values:
+                        indicators['rsi'] = rsi_values[-1]
+                        indicators['rsi_signal'] = (
+                            'OVERSOLD' if rsi_values[-1] < 30 else
+                            'OVERBOUGHT' if rsi_values[-1] > 70 else
+                            'NEUTRAL'
+                        )
+                    
+                    # 볼린저 밴드
+                    upper, middle, lower = TechnicalIndicators.bollinger_bands(prices)
+                    if upper and middle and lower:
+                        indicators['bollinger'] = {
+                            'upper': upper[-1],
+                            'middle': middle[-1],
+                            'lower': lower[-1],
+                            'bb_position': (current_price - lower[-1]) / (upper[-1] - lower[-1]) if (upper[-1] - lower[-1]) > 0 else 0.5
+                        }
+                    
+                    # MACD
+                    macd_line, signal_line, histogram = TechnicalIndicators.macd(prices)
+                    if macd_line and signal_line:
+                        indicators['macd'] = {
+                            'macd': macd_line[-1],
+                            'signal': signal_line[-1],
+                            'histogram': histogram[-1] if histogram else 0,
+                            'trend': 'BULLISH' if macd_line[-1] > signal_line[-1] else 'BEARISH'
+                        }
+                    
+                    # 추세 분석
+                    if len(prices) >= 10:
+                        short_trend = (prices[-1] - prices[-5]) / prices[-5] * 100
+                        long_trend = (prices[-1] - prices[-10]) / prices[-10] * 100
+                        
+                        indicators['trend'] = {
+                            'short_term_pct': short_trend,
+                            'long_term_pct': long_trend,
+                            'direction': 'UP' if short_trend > 0 and long_trend > 0 else 'DOWN' if short_trend < 0 and long_trend < 0 else 'SIDEWAYS'
+                        }
         
         except Exception as e:
-            self.logger.error(f"투자 조언 생성 실패: {e}")
-            return "투자 조언 생성 중 오류가 발생했습니다. 전문가와 상담하세요."
-    
-    async def explain_financial_terms(self, terms: List[str], 
-                                    language: str = "Korean") -> Dict[str, str]:
-        """금융 용어 설명"""
-        try:
-            terms_text = ", ".join(terms)
-            
-            prompt = f"""
-다음 금융 용어들을 {language}로 쉽고 명확하게 설명해주세요:
-{terms_text}
-
-각 용어에 대해:
-1. 정의
-2. 실제 사용 예시
-3. 투자에서의 중요성
-
-일반인도 이해할 수 있도록 쉬운 언어로 설명해주세요.
-"""
-            
-            response = await self._call_openai_api(prompt)
-            
-            # 응답을 파싱하여 각 용어별로 분리
-            explanations = {}
-            lines = response.split('\n')
-            current_term = None
-            current_explanation = []
-            
-            for line in lines:
-                line = line.strip()
-                if any(term in line for term in terms):
-                    if current_term:
-                        explanations[current_term] = '\n'.join(current_explanation)
-                    current_term = next((term for term in terms if term in line), None)
-                    current_explanation = [line]
-                elif current_term and line:
-                    current_explanation.append(line)
-            
-            if current_term:
-                explanations[current_term] = '\n'.join(current_explanation)
-            
-            return explanations
+            self.logger.error(f"기술지표 계산 실패: {e}")
+            indicators['error'] = str(e)
         
-        except Exception as e:
-            self.logger.error(f"금융 용어 설명 실패: {e}")
-            return {term: "설명을 생성할 수 없습니다." for term in terms}
+        return indicators
     
-    async def generate_market_report(self, market_data: Dict[str, Any], 
-                                   timeframe: str = "daily") -> str:
-        """시장 보고서 생성"""
-        try:
-            prompt = f"""
-다음 시장 데이터를 바탕으로 {timeframe} 시장 보고서를 작성해주세요:
+    def _generate_technical_prompt(self, symbol: str, market_data: Dict[str, Any], 
+                                 technical_signals: Dict[str, Any]) -> str:
+        """기술적 분석 프롬프트 생성"""
+        return f"""
+{symbol} 종목에 대한 기술적 분석을 수행해주세요.
 
+시장 데이터:
 {json.dumps(market_data, indent=2, ensure_ascii=False)}
 
-보고서 구성:
-1. 시장 개요 및 주요 동향
-2. 섹터별 성과 분석
-3. 주요 이슈 및 이벤트
-4. 기술적 분석 요약
-5. 투자자 행동 분석
-6. 향후 전망 및 주목 포인트
+계산된 기술지표:
+{json.dumps(technical_signals, indent=2, ensure_ascii=False)}
 
-전문적이면서도 이해하기 쉬운 보고서를 작성해주세요.
+다음 요소들을 종합적으로 분석해주세요:
+1. 가격 추세 분석 (단기/중기 트렌드)
+2. 거래량 분석
+3. 지지/저항선 분석
+4. 기술적 지표 해석:
+   - 이동평균 (SMA 20, 50)
+   - RSI (과매수/과매도 구간)
+   - 볼린저 밴드 (밴드 내 위치)
+   - MACD (신호선과의 관계)
+5. 차트 패턴 식별
+6. 매매 시점 제안
+
+분석 결과를 다음 형식으로 제공해주세요:
+- 종합 의견: BUY/HOLD/SELL
+- 신뢰도: 0-100%
+- 주요 근거 3가지
+- 리스크 요인
+- 구체적인 투자 제안사항
+
+기술적 분석에만 기반하여 객관적이고 전문적인 분석을 제공해주세요.
 """
-            
-            response = await self._call_openai_api(prompt)
-            return response
-        
-        except Exception as e:
-            self.logger.error(f"시장 보고서 생성 실패: {e}")
-            return "시장 보고서 생성 중 오류가 발생했습니다."
     
-    async def _call_openai_api(self, prompt: str, system_message: str = None) -> str:
+    async def _call_openai_api(self, prompt: str) -> str:
         """OpenAI API 호출"""
         try:
-            messages = []
-            
-            if system_message:
-                messages.append({"role": "system", "content": system_message})
-            else:
-                messages.append({
+            messages = [
+                {
                     "role": "system", 
-                    "content": "당신은 전문적인 금융 분석가이자 투자 advisor입니다. 정확하고 실용적인 조언을 제공하되, 투자 위험에 대해서도 명확히 안내해주세요."
-                })
-            
-            messages.append({"role": "user", "content": prompt})
+                    "content": "당신은 전문적인 기술적 분석가입니다. 차트와 기술지표만을 사용하여 정확하고 객관적인 분석을 제공합니다. 투자 위험에 대해서도 명확히 안내해주세요."
+                },
+                {"role": "user", "content": prompt}
+            ]
             
             response = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -443,60 +401,9 @@ JSON 형식으로 구조화된 결과를 제공해주세요.
             self.logger.error(f"OpenAI API 호출 실패: {e}")
             raise
     
-    def _generate_analysis_prompt(self, symbol: str, market_data: Dict[str, Any], 
-                                analysis_type: AnalysisType) -> str:
-        """분석 프롬프트 생성"""
-        base_prompt = f"""
-{symbol} 종목에 대한 {analysis_type.value} 분석을 수행해주세요.
-
-시장 데이터:
-{json.dumps(market_data, indent=2, ensure_ascii=False)}
-"""
-        
-        if analysis_type == AnalysisType.TECHNICAL:
-            base_prompt += """
-기술적 분석 요소:
-1. 가격 추세 분석
-2. 거래량 분석
-3. 지지/저항선
-4. 기술적 지표 (RSI, MACD, 볼린저 밴드 등)
-5. 차트 패턴
-6. 매매 시점 제안
-"""
-        elif analysis_type == AnalysisType.FUNDAMENTAL:
-            base_prompt += """
-기본적 분석 요소:
-1. 재무 건전성
-2. 성장성 지표
-3. 밸류에이션
-4. 업종 전망
-5. 경쟁력 분석
-6. 투자 가치 평가
-"""
-        elif analysis_type == AnalysisType.SENTIMENT:
-            base_prompt += """
-감성 분석 요소:
-1. 시장 심리
-2. 뉴스 및 이슈 분석
-3. 투자자 행동 패턴
-4. 소셜 미디어 감성
-5. 전문가 의견 종합
-"""
-        
-        base_prompt += """
-분석 결과를 다음 형식으로 제공해주세요:
-- 종합 의견 (BUY/HOLD/SELL)
-- 신뢰도 (0-100%)
-- 주요 근거 3가지
-- 리스크 요인
-- 투자 제안사항
-"""
-        
-        return base_prompt
-    
-    def _parse_analysis_response(self, response: str, symbol: str, 
-                               analysis_type: AnalysisType) -> AIAnalysisResult:
-        """분석 응답 파싱"""
+    def _parse_technical_response(self, response: str, symbol: str, 
+                                technical_signals: Dict[str, Any]) -> TechnicalAnalysisResult:
+        """기술적 분석 응답 파싱"""
         # 신뢰도 추출
         confidence = 50.0  # 기본값
         if "신뢰도" in response or "%" in response:
@@ -521,15 +428,56 @@ JSON 형식으로 구조화된 결과를 제공해주세요.
         elif confidence > 80:
             risk_level = "LOW"
         
-        return AIAnalysisResult(
-            analysis_type=analysis_type.value,
+        return TechnicalAnalysisResult(
             symbol=symbol,
             analysis=response,
             confidence=confidence,
             recommendations=recommendations,
             risk_level=risk_level,
+            technical_signals=technical_signals,
             timestamp=datetime.now()
         )
+    
+    def _extract_trading_signals(self, response: str) -> Dict[str, Any]:
+        """거래 신호 추출"""
+        signal_data = {
+            "signal": "HOLD",
+            "strength": 5,
+            "entry_condition": "",
+            "exit_condition": "",
+            "risk_factors": "",
+            "holding_period": ""
+        }
+        
+        try:
+            # 신호 추출
+            if "BUY" in response.upper() or "매수" in response:
+                signal_data["signal"] = "BUY"
+            elif "SELL" in response.upper() or "매도" in response:
+                signal_data["signal"] = "SELL"
+            
+            # 강도 추출
+            import re
+            strength_match = re.search(r'신호\s*강도[:\s]*(\d+)', response)
+            if strength_match:
+                signal_data["strength"] = int(strength_match.group(1))
+            
+            # 조건들 추출 (간단한 키워드 기반)
+            lines = response.split('\n')
+            for line in lines:
+                if "진입" in line and "조건" in line:
+                    signal_data["entry_condition"] = line.strip()
+                elif "청산" in line and "조건" in line:
+                    signal_data["exit_condition"] = line.strip()
+                elif "리스크" in line or "위험" in line:
+                    signal_data["risk_factors"] = line.strip()
+                elif "보유" in line and "기간" in line:
+                    signal_data["holding_period"] = line.strip()
+        
+        except Exception as e:
+            self.logger.error(f"신호 추출 실패: {e}")
+        
+        return signal_data
 
 # ============================================================================
 # 📈 기술지표 계산
@@ -1628,195 +1576,6 @@ def retry_on_failure(max_retries: int = 3, delay: float = 1.0, exponential_backo
     return decorator
 
 # ============================================================================
-# 🤖 AI 기반 분석 통합 클래스
-# ============================================================================
-class AIAnalysisIntegrator:
-    """AI 분석 통합 관리 클래스"""
-    
-    def __init__(self, openai_config: OpenAIConfig):
-        if not OPENAI_AVAILABLE:
-            logging.warning("OpenAI가 사용 불가능합니다. AI 분석 기능이 제한됩니다.")
-            self.openai_helper = None
-        else:
-            self.openai_helper = OpenAIHelper(openai_config)
-        
-        self.logger = logging.getLogger(__name__)
-    
-    async def comprehensive_analysis(self, symbol: str, market_data: Dict[str, Any], 
-                                   news_data: List[str] = None, 
-                                   user_profile: Dict[str, Any] = None) -> Dict[str, Any]:
-        """종합 분석 (기술적 + 기본적 + 감성 분석)"""
-        results = {
-            'symbol': symbol,
-            'timestamp': datetime.now().isoformat(),
-            'technical_analysis': {},
-            'fundamental_analysis': {},
-            'sentiment_analysis': {},
-            'ai_recommendations': {},
-            'risk_assessment': {},
-            'overall_score': 0
-        }
-        
-        if not self.openai_helper:
-            results['error'] = "OpenAI가 사용 불가능합니다."
-            return results
-        
-        try:
-            # 1. 기술적 분석
-            if 'prices' in market_data:
-                prices = market_data['prices']
-                results['technical_analysis'] = await self._technical_analysis(prices)
-            
-            # 2. AI 기반 분석
-            if self.openai_helper:
-                # 기술적 분석
-                tech_analysis = await self.openai_helper.analyze_stock(
-                    symbol, market_data, AnalysisType.TECHNICAL
-                )
-                results['ai_technical'] = asdict(tech_analysis)
-                
-                # 기본적 분석
-                fund_analysis = await self.openai_helper.analyze_stock(
-                    symbol, market_data, AnalysisType.FUNDAMENTAL
-                )
-                results['ai_fundamental'] = asdict(fund_analysis)
-                
-                # 감성 분석
-                if news_data:
-                    sentiment = await self.openai_helper.analyze_market_sentiment(
-                        news_data, [symbol]
-                    )
-                    results['sentiment_analysis'] = sentiment
-                
-                # 개인 맞춤 조언
-                if user_profile:
-                    advice = await self.openai_helper.get_investment_advice(
-                        user_profile, market_data
-                    )
-                    results['personalized_advice'] = advice
-            
-            # 3. 종합 점수 계산
-            results['overall_score'] = self._calculate_overall_score(results)
-            
-        except Exception as e:
-            self.logger.error(f"종합 분석 실패: {e}")
-            results['error'] = str(e)
-        
-        return results
-    
-    async def _technical_analysis(self, prices: List[float]) -> Dict[str, Any]:
-        """기술적 분석 수행"""
-        analysis = {}
-        
-        try:
-            if len(prices) >= 20:
-                # 이동평균
-                sma_20 = TechnicalIndicators.sma(prices, 20)
-                sma_50 = TechnicalIndicators.sma(prices, 50) if len(prices) >= 50 else []
-                
-                analysis['sma_20'] = sma_20[-1] if sma_20 else None
-                analysis['sma_50'] = sma_50[-1] if sma_50 else None
-                
-                # 현재가 vs 이동평균
-                current_price = prices[-1]
-                if sma_20:
-                    analysis['price_vs_sma20'] = (current_price - sma_20[-1]) / sma_20[-1] * 100
-                
-                # RSI
-                rsi_values = TechnicalIndicators.rsi(prices)
-                if rsi_values:
-                    analysis['rsi'] = rsi_values[-1]
-                    analysis['rsi_signal'] = (
-                        'OVERSOLD' if rsi_values[-1] < 30 else
-                        'OVERBOUGHT' if rsi_values[-1] > 70 else
-                        'NEUTRAL'
-                    )
-                
-                # 볼린저 밴드
-                upper, middle, lower = TechnicalIndicators.bollinger_bands(prices)
-                if upper and middle and lower:
-                    analysis['bollinger'] = {
-                        'upper': upper[-1],
-                        'middle': middle[-1],
-                        'lower': lower[-1],
-                        'position': (
-                            'UPPER' if current_price > upper[-1] else
-                            'LOWER' if current_price < lower[-1] else
-                            'MIDDLE'
-                        )
-                    }
-                
-                # MACD
-                macd_line, signal_line, histogram = TechnicalIndicators.macd(prices)
-                if macd_line and signal_line:
-                    analysis['macd'] = {
-                        'macd': macd_line[-1],
-                        'signal': signal_line[-1],
-                        'histogram': histogram[-1] if histogram else 0,
-                        'trend': 'BULLISH' if macd_line[-1] > signal_line[-1] else 'BEARISH'
-                    }
-        
-        except Exception as e:
-            self.logger.error(f"기술적 분석 실패: {e}")
-            analysis['error'] = str(e)
-        
-        return analysis
-    
-    def _calculate_overall_score(self, results: Dict[str, Any]) -> float:
-        """종합 점수 계산 (0-100)"""
-        score = 50  # 기본 점수
-        
-        try:
-            # 기술적 분석 점수
-            tech_score = 0
-            if 'technical_analysis' in results:
-                tech = results['technical_analysis']
-                
-                # RSI 점수
-                if 'rsi' in tech:
-                    rsi = tech['rsi']
-                    if 30 <= rsi <= 70:
-                        tech_score += 10
-                    elif rsi < 30:
-                        tech_score += 15  # 과매도 - 매수 기회
-                    else:
-                        tech_score -= 5   # 과매수 - 위험
-                
-                # 가격 vs 이동평균
-                if 'price_vs_sma20' in tech:
-                    if tech['price_vs_sma20'] > 0:
-                        tech_score += 10
-                    else:
-                        tech_score -= 10
-                
-                # MACD 트렌드
-                if 'macd' in tech and tech['macd'].get('trend') == 'BULLISH':
-                    tech_score += 10
-            
-            # AI 분석 점수
-            ai_score = 0
-            if 'ai_technical' in results:
-                confidence = results['ai_technical'].get('confidence', 50)
-                ai_score += (confidence - 50) / 5  # 신뢰도를 점수로 변환
-            
-            # 감성 분석 점수
-            sentiment_score = 0
-            if 'sentiment_analysis' in results:
-                sentiment = results['sentiment_analysis']
-                if sentiment.get('overall_sentiment') == 'POSITIVE':
-                    sentiment_score += 15
-                elif sentiment.get('overall_sentiment') == 'NEGATIVE':
-                    sentiment_score -= 15
-            
-            # 최종 점수 계산
-            score = max(0, min(100, score + tech_score + ai_score + sentiment_score))
-        
-        except Exception as e:
-            self.logger.error(f"점수 계산 실패: {e}")
-        
-        return score
-
-# ============================================================================
 # 🎯 편의 함수들
 # ============================================================================
 
@@ -1869,46 +1628,53 @@ def truncate_string(text: str, max_length: int = 100, suffix: str = "...") -> st
         return text
     return text[:max_length - len(suffix)] + suffix
 
-# OpenAI 관련 편의 함수들
-async def quick_stock_analysis(symbol: str, prices: List[float], 
-                             openai_api_key: str = None) -> Dict[str, Any]:
-    """빠른 주식 분석"""
+# 기술적 분석 전용 편의 함수들
+async def quick_technical_analysis(symbol: str, prices: List[float], 
+                                 openai_api_key: str = None) -> Dict[str, Any]:
+    """빠른 기술적 분석"""
     if not openai_api_key or not OPENAI_AVAILABLE:
         # 기본 기술적 분석만 수행
+        basic_analysis = {}
+        if len(prices) > 14:
+            basic_analysis['rsi'] = TechnicalIndicators.rsi(prices)[-1]
+        if len(prices) >= 20:
+            basic_analysis['sma_20'] = TechnicalIndicators.sma(prices, 20)[-1]
+        
         return {
             'symbol': symbol,
             'technical_only': True,
-            'rsi': TechnicalIndicators.rsi(prices)[-1] if len(prices) > 14 else None,
-            'sma_20': TechnicalIndicators.sma(prices, 20)[-1] if len(prices) >= 20 else None
+            'basic_indicators': basic_analysis
         }
     
     try:
         config = OpenAIConfig(api_key=openai_api_key)
-        integrator = AIAnalysisIntegrator(config)
+        analyzer = TechnicalAnalysisAI(config)
         
         market_data = {'prices': prices, 'symbol': symbol}
-        return await integrator.comprehensive_analysis(symbol, market_data)
+        result = await analyzer.analyze_technical(symbol, market_data)
+        
+        return asdict(result)
     
     except Exception as e:
-        logging.error(f"빠른 분석 실패: {e}")
+        logging.error(f"빠른 기술적 분석 실패: {e}")
         return {'error': str(e)}
 
-async def ai_investment_advice(portfolio: Dict[str, Any], 
-                             user_profile: Dict[str, Any],
-                             openai_api_key: str) -> str:
-    """AI 투자 조언"""
+async def generate_trading_signals(symbol: str, prices: List[float], 
+                                 strategy_type: str, openai_api_key: str) -> Dict[str, Any]:
+    """거래 신호 생성"""
     if not openai_api_key or not OPENAI_AVAILABLE:
-        return "OpenAI API 키가 필요합니다."
+        return {"error": "OpenAI API 키가 필요합니다."}
     
     try:
         config = OpenAIConfig(api_key=openai_api_key)
-        helper = OpenAIHelper(config)
+        analyzer = TechnicalAnalysisAI(config)
         
-        return await helper.get_investment_advice(user_profile, portfolio)
+        market_data = {'prices': prices, 'symbol': symbol}
+        return await analyzer.generate_trading_signals(symbol, market_data, strategy_type)
     
     except Exception as e:
-        logging.error(f"AI 투자 조언 실패: {e}")
-        return f"조언 생성 실패: {str(e)}"
+        logging.error(f"거래 신호 생성 실패: {e}")
+        return {"error": str(e)}
 
 # ============================================================================
 # 🎊 시스템 정보 출력
@@ -1918,7 +1684,7 @@ def print_system_banner():
     banner = f"""
 🛠️ ═══════════════════════════════════════════════════════════════════════════ 🛠️
 🛠️                        퀸트프로젝트 유틸리티 모듈 v1.2.0                         🛠️
-🛠️                               🤖 OpenAI 통합 버전                               🛠️
+🛠️                             🤖 기술적 분석 전용 버전                              🛠️
 🛠️ ═══════════════════════════════════════════════════════════════════════════ 🛠️
 
 ✨ 핵심 기능:
@@ -1930,11 +1696,10 @@ def print_system_banner():
   📊 데이터베이스 도구          🔧 시스템 모니터링
   🎨 데이터 시각화              🔄 재시도 및 복구
 
-🤖 AI 통합 기능:
-  🎯 AI 기반 주식 분석          📊 시장 감성 분석
-  💡 개인 맞춤 투자 조언        📰 뉴스 분석 및 요약
-  📈 거래 전략 생성             📚 금융 용어 설명
-  📋 시장 보고서 자동 생성      🔍 종합 분석 시스템
+🤖 AI 기술적 분석 기능:
+  🎯 AI 기반 기술적 분석        📊 차트 패턴 인식
+  📈 거래 신호 생성             📋 기술지표 해석
+  🔍 추세 분석                 ⚖️ 리스크 평가
 
 🎯 지원 시장: 🇺🇸 미국주식 | 🇰🇷 한국주식 | 🇯🇵 일본주식 | 🇮🇳 인도주식 | 💰 암호화폐
 
@@ -1956,13 +1721,21 @@ if __name__ == "__main__":
     print(f"  • 현재 시간: {TimeUtils.get_current_time()}")
     print(f"  • 시스템 정보: CPU {SystemMonitor.get_system_info().get('cpu', {}).get('percent', 0):.1f}%")
     
+    # 샘플 데이터로 기술지표 테스트
+    sample_prices = [100, 102, 98, 105, 103, 107, 104, 106, 109, 108, 112, 110, 115, 113, 118, 116, 120, 119, 122, 121, 125]
+    if len(sample_prices) >= 20:
+        sma_20 = TechnicalIndicators.sma(sample_prices, 20)
+        rsi = TechnicalIndicators.rsi(sample_prices)
+        print(f"  • SMA(20): {sma_20[-1]:.2f}" if sma_20 else "  • SMA(20): 계산 불가")
+        print(f"  • RSI: {rsi[-1]:.2f}" if rsi else "  • RSI: 계산 불가")
+    
     if OPENAI_AVAILABLE:
-        print("🤖 OpenAI 기능:")
-        print("  • AI 주식 분석 준비 완료")
-        print("  • 시장 감성 분석 준비 완료")
-        print("  • 투자 조언 시스템 준비 완료")
+        print("🤖 AI 기술적 분석:")
+        print("  • 기술적 분석 AI 준비 완료")
+        print("  • 거래 신호 생성 준비 완료")
+        print("  • 차트 패턴 인식 준비 완료")
     else:
         print("⚠️  OpenAI 설치 필요:")
         print("  • pip install openai")
     
-    print("✅ 모든 유틸리티 정상 로드 완료!")
+    print("✅ 기술적 분석 전용 유틸리티 정상 로드 완료!")
