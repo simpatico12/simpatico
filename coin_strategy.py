@@ -1970,7 +1970,6 @@ if __name__ == "__main__":
     else:
         # 기본 실행: 전체 전략
          'details': f'2주 완료: {holding_days}일, {profit_ratio*100:.1f}% 수익으로 매도'
-                }
         elif holding_days >= 16:  # 2주 초과시 무조건
             return {
                 'action': 'sell_all',
