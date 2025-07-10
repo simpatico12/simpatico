@@ -550,8 +550,7 @@ class QuantumCycleMatrix:
             volatility = recent_returns.std()
             momentum = recent_returns.mean()
             
-            if abs(momentum) > volatility *
-if abs(momentum) > volatility * 1.5:
+            if abs(momentum) > volatility * 1.5:
                 return 'momentum'
             elif volatility > 0.03:  # 3% 이상 변동성
                 return 'reversal'
@@ -1736,7 +1735,6 @@ class LegendaryQuantMaster:
         print(f"   • 2차 익절: 15-25% 수익시 40-50% 매도")
         print(f"   • 3차 익절: 삭제 (무제한 홀딩)")
         print(f"   • 손절선: -5~8% (품질별 차등)")
-        print(f"   • 매매일: 월요일 매수, 금
         print(f"   • 매매일: 월요일 매수, 금요일 매도")
         print(f"   • 홀딩: 최대 2주")
         
