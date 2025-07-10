@@ -248,7 +248,7 @@ class NeuralQualityEngine:
         # 가중치 (기술력 30%, 생태계 30%, 커뮤니티 20%, 채택도 20%)
         self.weights = [0.30, 0.30, 0.20, 0.20]
         self.openai_analyzer = openai_analyzer
-async def neural_quality_score(self, symbol: str, market_data: Dict, volume_rank: int) -> Dict:
+    async def neural_quality_score(self, symbol: str, market_data: Dict, volume_rank: int) -> Dict:
         """종합 품질 점수 계산 + OpenAI 기술분석"""
         try:
             coin_name = symbol.replace('KRW-', '')
