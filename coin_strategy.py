@@ -1967,8 +1967,8 @@ if __name__ == "__main__":
             print("  • 일일 50회 제한으로 월 비용 5천원 이하")
             print("  • 기술분석 전용 (뉴스/심리분석 제거)")
             print("  • 월 5-7% 수익 최적화")
-    else:
-    # 기본 실행: 전체 전략
+            
+   else:
     if holding_days >= 16:  # 2주 초과시 무조건
         return {
             'action': 'sell_all',
