@@ -3,7 +3,7 @@
 """
 🏆 퀸트프로젝트 통합 스케줄러 시스템 (scheduler.py)
 =======================================================
-🕐 시간 기반 자동 거래 스케줄링 + 📊 전략 실행 관리 + 🤖 AI 분석
+🕐 시간 기반 자동 거래 스케줄링 + 📊 전략 실행 관리 + 🤖 AI 기술적 분석
 
 ✨ 핵심 기능:
 - 시간대별 전략 자동 실행
@@ -14,12 +14,11 @@
 - 스케줄 설정 관리
 - 실행 결과 추적
 - 🚨 스케줄 실패 감지
-- 🤖 OpenAI 기반 시장 분석
-- 🧠 AI 트레이딩 전략 추천
-- 📈 포트폴리오 AI 최적화
+- 🤖 OpenAI 기반 기술적 분석 (신뢰도 0.4-0.7 구간만)
+- 📈 매매신호 확신도 체크
 
 Author: 퀸트마스터팀
-Version: 1.0.0 (시간 기반 자동 스케줄링 + AI)
+Version: 1.1.0 (AI 최적화 버전)
 """
 
 import asyncio
@@ -118,12 +117,7 @@ class MarketType(Enum):
     KOREA = "KOREA"
 
 class AIAnalysisType(Enum):
-    """AI 분석 타입"""
-    MARKET_SENTIMENT = "market_sentiment"
-    PORTFOLIO_OPTIMIZATION = "portfolio_optimization"
-    RISK_ASSESSMENT = "risk_assessment"
-    TRADING_STRATEGY = "trading_strategy"
-    NEWS_ANALYSIS = "news_analysis"
+    """AI 분석 타입 (기술적 분석만)"""
     TECHNICAL_ANALYSIS = "technical_analysis"
 
 @dataclass
@@ -148,7 +142,7 @@ class ScheduleJob:
     run_count: int = 0
     success_count: int = 0
     failure_count: int = 0
-    ai_enabled: bool = False  # AI 분석 활성화 여부
+    ai_enabled: bool = False  # AI 기술적 분석 활성화 여부
 
 @dataclass
 class ExecutionResult:
@@ -166,7 +160,7 @@ class ExecutionResult:
 
 @dataclass
 class AIAnalysisResult:
-    """AI 분석 결과"""
+    """AI 분석 결과 (기술적 분석만)"""
     analysis_type: AIAnalysisType
     timestamp: datetime
     model_used: str
@@ -178,16 +172,17 @@ class AIAnalysisResult:
     execution_time: float
 
 # ============================================================================
-# 🤖 OpenAI 통합 관리자
+# 🤖 OpenAI 기술적 분석 관리자 (최적화 버전)
 # ============================================================================
-class OpenAIManager:
-    """OpenAI 통합 관리"""
+class OpenAITechnicalAnalyzer:
+    """OpenAI 기술적 분석 전용 (비용 최적화)"""
     
     def __init__(self, config):
         self.config = config
-        self.logger = logging.getLogger('OpenAIManager')
+        self.logger = logging.getLogger('OpenAITechnicalAnalyzer')
         self.client = None
-        self.model = "gpt-4"
+        self.model = "gpt-3.5-turbo"  # 비용 절약을 위해 3.5 사용
+        self.max_tokens = 150  # 토큰 제한으로 비용 절약
         
         self._init_openai()
     
@@ -204,40 +199,68 @@ class OpenAIManager:
                 return
             
             self.client = AsyncOpenAI(api_key=api_key)
-            self.logger.info("✅ OpenAI 클라이언트 초기화 완료")
+            self.logger.info("✅ OpenAI 기술적 분석기 초기화 완료")
             
         except Exception as e:
             self.logger.error(f"OpenAI 초기화 실패: {e}")
     
-    async def analyze_market_sentiment(self, market_data: Dict[str, Any]) -> AIAnalysisResult:
-        """시장 센티먼트 분석"""
+    def should_analyze_signal(self, signal_data: Dict[str, Any]) -> bool:
+        """신호 분석이 필요한지 판단 (신뢰도 0.4-0.7 구간만)"""
+        try:
+            confidence = signal_data.get('confidence', 0.5)
+            
+            # 확실한 신호는 AI 분석 불필요
+            if confidence >= 0.8 or confidence <= 0.3:
+                self.logger.debug(f"신뢰도 {confidence:.2f} - AI 분석 불필요")
+                return False
+            
+            # 애매한 구간만 AI 분석
+            if 0.4 <= confidence <= 0.7:
+                self.logger.info(f"신뢰도 {confidence:.2f} - AI 기술적 분석 필요")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"신호 분석 필요성 판단 실패: {e}")
+            return False
+    
+    async def analyze_trading_signal(self, signal_data: Dict[str, Any]) -> AIAnalysisResult:
+        """매매신호 기술적 분석 (확신도 체크)"""
         try:
             start_time = time.time()
             
+            # 간단한 프롬프트로 토큰 절약
+            signal_summary = {
+                'action': signal_data.get('action', 'UNKNOWN'),
+                'confidence': signal_data.get('confidence', 0.5),
+                'price': signal_data.get('current_price', 0),
+                'indicators': signal_data.get('technical_indicators', {})
+            }
+            
             prompt = f"""
-            다음 시장 데이터를 분석하고 시장 센티먼트를 평가해주세요:
+매매신호 기술적 분석:
+신호: {signal_summary['action']}
+신뢰도: {signal_summary['confidence']:.2f}
+현재가: {signal_summary['price']}
+지표: {signal_summary['indicators']}
 
-            시장 데이터:
-            {json.dumps(market_data, indent=2, ensure_ascii=False)}
-
-            다음 형태로 응답해주세요:
-            1. 전체 시장 센티먼트 (매우 부정적/부정적/중립/긍정적/매우 긍정적)
-            2. 주요 영향 요인 3가지
-            3. 단기 전망 (1-3일)
-            4. 위험 수준 (낮음/보통/높음/매우 높음)
-            5. 투자 추천사항 3가지
-
-            JSON 형태로 응답해주세요.
-            """
+다음 JSON 형태로 짧게 답변:
+{{
+    "확신도": 0.0-1.0,
+    "위험도": "낮음/보통/높음",
+    "추천": "매수/매도/대기"
+}}
+"""
             
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "당신은 전문적인 금융 시장 분석가입니다. 데이터를 기반으로 정확하고 실용적인 분석을 제공합니다."},
+                    {"role": "system", "content": "기술적 분석 전문가. 간결하게 답변."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,
-                max_tokens=1500
+                temperature=0.2,
+                max_tokens=self.max_tokens
             )
             
             analysis_text = response.choices[0].message.content
@@ -246,256 +269,46 @@ class OpenAIManager:
             try:
                 analysis_json = json.loads(analysis_text)
             except json.JSONDecodeError:
-                # JSON 파싱 실패시 텍스트로 저장
-                analysis_json = {"raw_analysis": analysis_text}
+                # 파싱 실패시 기본값
+                analysis_json = {
+                    "확신도": signal_data.get('confidence', 0.5),
+                    "위험도": "보통",
+                    "추천": "대기",
+                    "원본응답": analysis_text
+                }
             
             execution_time = time.time() - start_time
             
-            return AIAnalysisResult(
-                analysis_type=AIAnalysisType.MARKET_SENTIMENT,
-                timestamp=datetime.now(),
-                model_used=self.model,
-                input_data=market_data,
-                analysis_result=analysis_json,
-                confidence_score=0.85,  # 기본값
-                recommendations=analysis_json.get("투자추천사항", []),
-                risk_level=analysis_json.get("위험수준", "보통"),
-                execution_time=execution_time
-            )
-            
-        except Exception as e:
-            self.logger.error(f"시장 센티먼트 분석 실패: {e}")
-            raise
-    
-    async def optimize_portfolio(self, portfolio_data: Dict[str, Any]) -> AIAnalysisResult:
-        """포트폴리오 최적화 분석"""
-        try:
-            start_time = time.time()
-            
-            prompt = f"""
-            다음 포트폴리오 데이터를 분석하고 최적화 방안을 제시해주세요:
-
-            포트폴리오 데이터:
-            {json.dumps(portfolio_data, indent=2, ensure_ascii=False)}
-
-            다음 항목들을 분석해주세요:
-            1. 현재 포트폴리오의 위험도 평가
-            2. 자산 배분 최적화 제안
-            3. 리밸런싱 필요성
-            4. 개선 가능한 포지션들
-            5. 예상 수익률 향상 방안
-
-            JSON 형태로 응답해주세요.
-            """
-            
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "당신은 포트폴리오 최적화 전문가입니다. 위험 관리와 수익 극대화의 균형을 추구합니다."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2,
-                max_tokens=2000
-            )
-            
-            analysis_text = response.choices[0].message.content
-            
-            try:
-                analysis_json = json.loads(analysis_text)
-            except json.JSONDecodeError:
-                analysis_json = {"raw_analysis": analysis_text}
-            
-            execution_time = time.time() - start_time
+            # 비용 로깅
+            estimated_cost = self._estimate_cost(len(prompt), len(analysis_text))
+            self.logger.info(f"💰 예상 비용: ${estimated_cost:.4f}")
             
             return AIAnalysisResult(
-                analysis_type=AIAnalysisType.PORTFOLIO_OPTIMIZATION,
+                analysis_type=AIAnalysisType.TECHNICAL_ANALYSIS,
                 timestamp=datetime.now(),
                 model_used=self.model,
-                input_data=portfolio_data,
+                input_data=signal_data,
                 analysis_result=analysis_json,
-                confidence_score=0.8,
-                recommendations=analysis_json.get("개선방안", []),
+                confidence_score=analysis_json.get("확신도", 0.5),
+                recommendations=[analysis_json.get("추천", "대기")],
                 risk_level=analysis_json.get("위험도", "보통"),
                 execution_time=execution_time
             )
             
         except Exception as e:
-            self.logger.error(f"포트폴리오 최적화 분석 실패: {e}")
+            self.logger.error(f"기술적 분석 실패: {e}")
             raise
     
-    async def assess_trading_risk(self, trading_data: Dict[str, Any]) -> AIAnalysisResult:
-        """트레이딩 위험 평가"""
-        try:
-            start_time = time.time()
-            
-            prompt = f"""
-            다음 트레이딩 데이터를 분석하고 위험을 평가해주세요:
-
-            트레이딩 데이터:
-            {json.dumps(trading_data, indent=2, ensure_ascii=False)}
-
-            다음을 평가해주세요:
-            1. 전체 위험 수준 (1-10점)
-            2. 주요 위험 요인들
-            3. 위험 완화 방안
-            4. 포지션 크기 조정 제안
-            5. 스톱로스 레벨 제안
-
-            JSON 형태로 응답해주세요.
-            """
-            
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "당신은 리스크 관리 전문가입니다. 보수적이고 신중한 접근을 선호합니다."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                max_tokens=1500
-            )
-            
-            analysis_text = response.choices[0].message.content
-            
-            try:
-                analysis_json = json.loads(analysis_text)
-            except json.JSONDecodeError:
-                analysis_json = {"raw_analysis": analysis_text}
-            
-            execution_time = time.time() - start_time
-            
-            return AIAnalysisResult(
-                analysis_type=AIAnalysisType.RISK_ASSESSMENT,
-                timestamp=datetime.now(),
-                model_used=self.model,
-                input_data=trading_data,
-                analysis_result=analysis_json,
-                confidence_score=0.9,
-                recommendations=analysis_json.get("위험완화방안", []),
-                risk_level=analysis_json.get("위험수준", "높음"),
-                execution_time=execution_time
-            )
-            
-        except Exception as e:
-            self.logger.error(f"트레이딩 위험 평가 실패: {e}")
-            raise
-    
-    async def generate_trading_strategy(self, market_context: Dict[str, Any]) -> AIAnalysisResult:
-        """트레이딩 전략 생성"""
-        try:
-            start_time = time.time()
-            
-            prompt = f"""
-            다음 시장 상황을 바탕으로 트레이딩 전략을 생성해주세요:
-
-            시장 상황:
-            {json.dumps(market_context, indent=2, ensure_ascii=False)}
-
-            다음을 포함한 전략을 제시해주세요:
-            1. 전략 개요
-            2. 진입 조건
-            3. 종료 조건
-            4. 리스크 관리 방법
-            5. 예상 수익률 및 위험도
-            6. 타임프레임
-            7. 자금 배분 제안
-
-            JSON 형태로 응답해주세요.
-            """
-            
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "당신은 경험이 풍부한 퀀트 트레이더입니다. 데이터 기반의 체계적인 전략을 수립합니다."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.4,
-                max_tokens=2500
-            )
-            
-            analysis_text = response.choices[0].message.content
-            
-            try:
-                analysis_json = json.loads(analysis_text)
-            except json.JSONDecodeError:
-                analysis_json = {"raw_analysis": analysis_text}
-            
-            execution_time = time.time() - start_time
-            
-            return AIAnalysisResult(
-                analysis_type=AIAnalysisType.TRADING_STRATEGY,
-                timestamp=datetime.now(),
-                model_used=self.model,
-                input_data=market_context,
-                analysis_result=analysis_json,
-                confidence_score=0.75,
-                recommendations=analysis_json.get("전략제안", []),
-                risk_level=analysis_json.get("위험도", "보통"),
-                execution_time=execution_time
-            )
-            
-        except Exception as e:
-            self.logger.error(f"트레이딩 전략 생성 실패: {e}")
-            raise
-    
-    async def analyze_news_impact(self, news_data: List[Dict[str, Any]]) -> AIAnalysisResult:
-        """뉴스 영향도 분석"""
-        try:
-            start_time = time.time()
-            
-            # 뉴스 데이터를 텍스트로 변환
-            news_text = "\n".join([f"제목: {news.get('title', '')}\n내용: {news.get('content', '')[:500]}\n---" 
-                                  for news in news_data[:10]])  # 최대 10개 뉴스만
-            
-            prompt = f"""
-            다음 뉴스들이 금융 시장에 미칠 영향을 분석해주세요:
-
-            뉴스 데이터:
-            {news_text}
-
-            다음을 분석해주세요:
-            1. 각 뉴스의 시장 영향도 (1-10점)
-            2. 영향받을 섹터/자산
-            3. 단기/중기 영향 전망
-            4. 투자 기회 또는 위험
-            5. 대응 전략
-
-            JSON 형태로 응답해주세요.
-            """
-            
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "당신은 뉴스와 시장의 상관관계를 분석하는 전문가입니다."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                max_tokens=2000
-            )
-            
-            analysis_text = response.choices[0].message.content
-            
-            try:
-                analysis_json = json.loads(analysis_text)
-            except json.JSONDecodeError:
-                analysis_json = {"raw_analysis": analysis_text}
-            
-            execution_time = time.time() - start_time
-            
-            return AIAnalysisResult(
-                analysis_type=AIAnalysisType.NEWS_ANALYSIS,
-                timestamp=datetime.now(),
-                model_used=self.model,
-                input_data={"news_count": len(news_data)},
-                analysis_result=analysis_json,
-                confidence_score=0.7,
-                recommendations=analysis_json.get("대응전략", []),
-                risk_level=analysis_json.get("위험수준", "보통"),
-                execution_time=execution_time
-            )
-            
-        except Exception as e:
-            self.logger.error(f"뉴스 영향도 분석 실패: {e}")
-            raise
+    def _estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
+        """비용 추정 (GPT-3.5-turbo 기준)"""
+        # GPT-3.5-turbo 가격 (2024년 기준)
+        input_cost_per_1k = 0.0005  # $0.0005 per 1K tokens
+        output_cost_per_1k = 0.0015  # $0.0015 per 1K tokens
+        
+        input_cost = (input_tokens / 1000) * input_cost_per_1k
+        output_cost = (output_tokens / 1000) * output_cost_per_1k
+        
+        return input_cost + output_cost
 
 # ============================================================================
 # 🎯 스케줄러 설정 관리자
@@ -513,19 +326,20 @@ class SchedulerConfig:
         self.RETRY_ENABLED = os.getenv('RETRY_ENABLED', 'true').lower() == 'true'
         self.MAX_RETRIES = int(os.getenv('MAX_RETRIES', 3))
         
-        # AI 설정
+        # AI 설정 (최적화 버전)
         self.AI_ENABLED = os.getenv('AI_ENABLED', 'true').lower() == 'true'
-        self.AI_MODEL = os.getenv('AI_MODEL', 'gpt-4')
-        self.AI_ANALYSIS_INTERVAL = int(os.getenv('AI_ANALYSIS_INTERVAL', 6))  # 시간
-        self.AI_MAX_TOKENS = int(os.getenv('AI_MAX_TOKENS', 2000))
+        self.AI_MODEL = os.getenv('AI_MODEL', 'gpt-3.5-turbo')  # 비용 절약
+        self.AI_MAX_TOKENS = int(os.getenv('AI_MAX_TOKENS', 150))  # 토큰 제한
+        self.AI_CONFIDENCE_MIN = float(os.getenv('AI_CONFIDENCE_MIN', 0.4))
+        self.AI_CONFIDENCE_MAX = float(os.getenv('AI_CONFIDENCE_MAX', 0.7))
         
         # 시장 시간 설정 (각 국가의 현지 시간 기준)
-        self.US_MARKET_OPEN = dt_time(9, 30)  # 미국 동부 서머타임 9:30 EDT (한국시간 23:30)
-        self.US_MARKET_CLOSE = dt_time(16, 0)  # 미국 동부 서머타임 16:00 EDT (한국시간 06:00)
-        self.JAPAN_MARKET_OPEN = dt_time(9, 0)  # 일본 시간 9:00 (한국시간 9:00)
-        self.JAPAN_MARKET_CLOSE = dt_time(15, 0)  # 일본 시간 15:00 (한국시간 15:00)
-        self.INDIA_MARKET_OPEN = dt_time(9, 15)  # 인도 시간 9:15 (한국시간 12:45)
-        self.INDIA_MARKET_CLOSE = dt_time(15, 30)  # 인도 시간 15:30 (한국시간 19:00)
+        self.US_MARKET_OPEN = dt_time(9, 30)  # 미국 동부 서머타임 9:30 EDT
+        self.US_MARKET_CLOSE = dt_time(16, 0)  # 미국 동부 서머타임 16:00 EDT
+        self.JAPAN_MARKET_OPEN = dt_time(9, 0)  # 일본 시간 9:00
+        self.JAPAN_MARKET_CLOSE = dt_time(15, 0)  # 일본 시간 15:00
+        self.INDIA_MARKET_OPEN = dt_time(9, 15)  # 인도 시간 9:15
+        self.INDIA_MARKET_CLOSE = dt_time(15, 30)  # 인도 시간 15:30
         
         # 알림 설정
         self.SCHEDULE_NOTIFICATIONS = os.getenv('SCHEDULE_NOTIFICATIONS', 'true').lower() == 'true'
@@ -679,7 +493,7 @@ class JobManager:
                 )
             ''')
             
-            # AI 분석 결과 테이블
+            # AI 분석 결과 테이블 (기술적 분석만)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ai_analyses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -691,7 +505,8 @@ class JobManager:
                     confidence_score REAL,
                     recommendations TEXT,
                     risk_level TEXT,
-                    execution_time REAL
+                    execution_time REAL,
+                    estimated_cost REAL
                 )
             ''')
             
@@ -712,7 +527,7 @@ class JobManager:
             self._create_default_jobs()
     
     def _create_default_jobs(self):
-        """기본 작업 설정 생성"""
+        """기본 작업 설정 생성 (AI 최적화 버전)"""
         default_jobs = [
             # 미국 전략 - 화목 밤 23:30 (미국 동부 서머타임 09:30 EDT에 맞춤)
             ScheduleJob(
@@ -776,59 +591,7 @@ class JobManager:
                 schedule_value="18:00",
                 market_type=MarketType.CRYPTO,  # 24시간 가능
                 conditions={},
-                ai_enabled=True
-            ),
-            
-            # AI 시장 분석 - 6시간마다
-            ScheduleJob(
-                id="ai_market_analysis",
-                name="AI 시장 분석",
-                strategy="AI",
-                function="analyze_market_sentiment",
-                schedule_type="cron",
-                schedule_value="0 */6 * * *",  # 6시간마다
-                market_type=MarketType.CRYPTO,
-                conditions={},
-                ai_enabled=True
-            ),
-            
-            # AI 포트폴리오 최적화 - 매일 자정
-            ScheduleJob(
-                id="ai_portfolio_optimization",
-                name="AI 포트폴리오 최적화",
-                strategy="AI",
-                function="optimize_portfolio",
-                schedule_type="daily",
-                schedule_value="00:00",
-                market_type=MarketType.CRYPTO,
-                conditions={},
-                ai_enabled=True
-            ),
-            
-            # AI 위험 평가 - 매일 오전 6시, 오후 6시
-            ScheduleJob(
-                id="ai_risk_assessment",
-                name="AI 위험 평가",
-                strategy="AI",
-                function="assess_trading_risk",
-                schedule_type="daily",
-                schedule_value="06:00,18:00",
-                market_type=MarketType.CRYPTO,
-                conditions={},
-                ai_enabled=True
-            ),
-            
-            # AI 뉴스 분석 - 3시간마다
-            ScheduleJob(
-                id="ai_news_analysis",
-                name="AI 뉴스 분석",
-                strategy="AI",
-                function="analyze_news_impact",
-                schedule_type="cron",
-                schedule_value="0 */3 * * *",  # 3시간마다
-                market_type=MarketType.CRYPTO,
-                conditions={},
-                ai_enabled=True
+                ai_enabled=False  # 포트폴리오 모니터링은 AI 불필요
             ),
             
             # 시스템 상태 체크 - 매시간
@@ -859,7 +622,8 @@ class JobManager:
         for job in default_jobs:
             self.jobs[job.id] = job
         
-        self.logger.info(f"✅ {len(default_jobs)}개 기본 작업 생성 (AI 통합 포함)")
+        ai_enabled_count = sum(1 for job in default_jobs if job.ai_enabled)
+        self.logger.info(f"✅ {len(default_jobs)}개 기본 작업 생성 (AI 활성화: {ai_enabled_count}개)")
     
     def get_all_jobs_status(self) -> List[Dict[str, Any]]:
         """모든 작업 상태 조회"""
@@ -883,7 +647,7 @@ class JobManager:
         return results
 
 # ============================================================================
-# ⚡ 작업 실행 엔진
+# ⚡ 작업 실행 엔진 (AI 최적화 버전)
 # ============================================================================
 class JobExecutor:
     """작업 실행 엔진"""
@@ -901,9 +665,9 @@ class JobExecutor:
         self.core_system = None
         self._init_core_system()
         
-        # AI 관리자
-        self.ai_manager = None
-        self._init_ai_manager()
+        # AI 기술적 분석기 (최적화 버전)
+        self.ai_analyzer = None
+        self._init_ai_analyzer()
         
         self.logger = logging.getLogger('JobExecutor')
     
@@ -938,14 +702,14 @@ class JobExecutor:
         except Exception as e:
             self.logger.error(f"코어 시스템 초기화 실패: {e}")
     
-    def _init_ai_manager(self):
-        """AI 관리자 초기화"""
+    def _init_ai_analyzer(self):
+        """AI 기술적 분석기 초기화"""
         try:
             if self.config.AI_ENABLED and OPENAI_AVAILABLE:
-                self.ai_manager = OpenAIManager(self.config)
-                self.logger.info("✅ AI 관리자 인스턴스 생성")
+                self.ai_analyzer = OpenAITechnicalAnalyzer(self.config)
+                self.logger.info("✅ AI 기술적 분석기 인스턴스 생성")
         except Exception as e:
-            self.logger.error(f"AI 관리자 초기화 실패: {e}")
+            self.logger.error(f"AI 분석기 초기화 실패: {e}")
     
     async def execute_job(self, job: ScheduleJob) -> ExecutionResult:
         """작업 실행"""
@@ -973,14 +737,15 @@ class JobExecutor:
             # 작업 실행
             result_data = await timeout_task
             
-            # AI 분석 수행 (AI 활성화된 경우)
-            if job.ai_enabled and self.ai_manager and job.strategy != 'AI':
+            # AI 기술적 분석 수행 (조건부 - 신뢰도 0.4-0.7 구간만)
+            if job.ai_enabled and self.ai_analyzer and job.strategy != 'CORE':
                 try:
-                    ai_analysis = await self._perform_ai_analysis(job, result_data)
-                    execution_result.ai_analysis = ai_analysis
-                    result_data['ai_analysis'] = ai_analysis
+                    ai_analysis = await self._perform_conditional_ai_analysis(job, result_data)
+                    if ai_analysis:
+                        execution_result.ai_analysis = ai_analysis
+                        result_data['ai_analysis'] = ai_analysis
                 except Exception as e:
-                    self.logger.warning(f"AI 분석 실패 (작업은 성공): {e}")
+                    self.logger.warning(f"AI 기술적 분석 실패 (작업은 성공): {e}")
             
             execution_result.status = ScheduleStatus.COMPLETED
             execution_result.result_data = result_data
@@ -1066,9 +831,6 @@ class JobExecutor:
             if job.strategy == 'CORE':
                 # 코어 시스템 함수 실행
                 return await self._execute_core_function(job.function)
-            elif job.strategy == 'AI':
-                # AI 함수 실행
-                return await self._execute_ai_function(job.function)
             else:
                 # 전략 함수 실행
                 return await self._execute_strategy_function(job.strategy, job.function)
@@ -1098,42 +860,6 @@ class JobExecutor:
         else:
             raise Exception(f"알 수 없는 코어 함수: {function_name}")
     
-    async def _execute_ai_function(self, function_name: str) -> Dict[str, Any]:
-        """AI 함수 실행"""
-        if not self.ai_manager:
-            raise Exception("AI 관리자가 초기화되지 않음")
-        
-        if function_name == 'analyze_market_sentiment':
-            # 시장 데이터 수집
-            market_data = await self._collect_market_data()
-            analysis = await self.ai_manager.analyze_market_sentiment(market_data)
-            self._save_ai_analysis(analysis)
-            return {'ai_analysis': analysis.__dict__}
-            
-        elif function_name == 'optimize_portfolio':
-            # 포트폴리오 데이터 수집
-            portfolio_data = await self._collect_portfolio_data()
-            analysis = await self.ai_manager.optimize_portfolio(portfolio_data)
-            self._save_ai_analysis(analysis)
-            return {'ai_analysis': analysis.__dict__}
-            
-        elif function_name == 'assess_trading_risk':
-            # 거래 데이터 수집
-            trading_data = await self._collect_trading_data()
-            analysis = await self.ai_manager.assess_trading_risk(trading_data)
-            self._save_ai_analysis(analysis)
-            return {'ai_analysis': analysis.__dict__}
-            
-        elif function_name == 'analyze_news_impact':
-            # 뉴스 데이터 수집
-            news_data = await self._collect_news_data()
-            analysis = await self.ai_manager.analyze_news_impact(news_data)
-            self._save_ai_analysis(analysis)
-            return {'ai_analysis': analysis.__dict__}
-            
-        else:
-            raise Exception(f"알 수 없는 AI 함수: {function_name}")
-    
     async def _execute_strategy_function(self, strategy_name: str, function_name: str) -> Dict[str, Any]:
         """전략 함수 실행"""
         strategy_instance = self.strategy_instances.get(strategy_name)
@@ -1152,128 +878,70 @@ class JobExecutor:
         else:
             raise Exception(f"알 수 없는 전략 함수: {function_name}")
     
-    async def _perform_ai_analysis(self, job: ScheduleJob, result_data: Dict[str, Any]) -> Dict[str, Any]:
-        """AI 분석 수행"""
+    async def _perform_conditional_ai_analysis(self, job: ScheduleJob, result_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """조건부 AI 기술적 분석 (신뢰도 0.4-0.7 구간만)"""
         try:
-            if job.strategy == 'US':
-                # 미국 전략 결과에 대한 AI 분석
-                analysis = await self.ai_manager.assess_trading_risk(result_data)
-            elif job.strategy in ['JAPAN', 'INDIA', 'CRYPTO']:
-                # 기타 전략 결과에 대한 AI 분석
-                analysis = await self.ai_manager.assess_trading_risk(result_data)
-            elif job.strategy == 'CORE' and job.function == 'update_portfolio_status':
-                # 포트폴리오 모니터링에 대한 AI 분석
-                analysis = await self.ai_manager.optimize_portfolio(result_data)
-            else:
+            # 전략 결과에서 신호 데이터 추출
+            signal_data = self._extract_signal_data(result_data)
+            
+            # AI 분석 필요성 판단
+            if not self.ai_analyzer.should_analyze_signal(signal_data):
+                self.logger.debug(f"AI 분석 불필요: {job.name}")
                 return None
             
+            # AI 기술적 분석 수행
+            self.logger.info(f"🤖 AI 기술적 분석 수행: {job.name}")
+            analysis = await self.ai_analyzer.analyze_trading_signal(signal_data)
+            
+            # 분석 결과 저장
             self._save_ai_analysis(analysis)
+            
             return analysis.__dict__
             
         except Exception as e:
-            self.logger.error(f"AI 분석 실행 실패: {e}")
+            self.logger.error(f"조건부 AI 분석 실패: {e}")
             return None
     
-    async def _collect_market_data(self) -> Dict[str, Any]:
-        """시장 데이터 수집"""
+    def _extract_signal_data(self, result_data: Dict[str, Any]) -> Dict[str, Any]:
+        """전략 결과에서 신호 데이터 추출"""
         try:
-            # 시장 상태 정보
-            market_status = self.market_manager.get_market_status_summary()
+            strategy_result = result_data.get('strategy_result', {})
             
-            # 포트폴리오 요약 (있는 경우)
-            portfolio_summary = {}
-            if self.core_system:
-                try:
-                    portfolio_summary = self.core_system.position_manager.get_portfolio_summary()
-                except:
-                    pass
+            # 기본 신호 데이터 구조
+            signal_data = {
+                'action': strategy_result.get('action', 'HOLD'),
+                'confidence': strategy_result.get('confidence', 0.5),
+                'current_price': strategy_result.get('price', 0),
+                'technical_indicators': {},
+                'timestamp': datetime.now().isoformat()
+            }
             
-            # 최근 실행 결과들
-            recent_results = self.job_manager.execution_history[-10:] if self.job_manager.execution_history else []
+            # 기술적 지표 추출 (trend_analysis 오류 해결)
+            try:
+                indicators = strategy_result.get('indicators', {})
+                if isinstance(indicators, dict):
+                    # 안전하게 지표 데이터 추출
+                    signal_data['technical_indicators'] = {
+                        'rsi': indicators.get('rsi', 50),
+                        'macd': indicators.get('macd', 0),
+                        'bb_position': indicators.get('bollinger_position', 0.5),
+                        'volume_ratio': indicators.get('volume_ratio', 1.0)
+                    }
+            except Exception as e:
+                self.logger.warning(f"기술적 지표 추출 실패: {e}")
+                signal_data['technical_indicators'] = {}
             
+            return signal_data
+            
+        except Exception as e:
+            self.logger.error(f"신호 데이터 추출 실패: {e}")
             return {
-                'timestamp': datetime.now().isoformat(),
-                'market_status': market_status,
-                'portfolio_summary': portfolio_summary,
-                'recent_executions': len(recent_results),
-                'system_health': {
-                    'cpu_usage': self._get_system_cpu_usage(),
-                    'memory_usage': self._get_system_memory_usage()
-                }
+                'action': 'HOLD',
+                'confidence': 0.5,
+                'current_price': 0,
+                'technical_indicators': {},
+                'timestamp': datetime.now().isoformat()
             }
-            
-        except Exception as e:
-            self.logger.error(f"시장 데이터 수집 실패: {e}")
-            return {'error': str(e)}
-    
-    async def _collect_portfolio_data(self) -> Dict[str, Any]:
-        """포트폴리오 데이터 수집"""
-        try:
-            if not self.core_system:
-                return {'error': '코어 시스템 없음'}
-            
-            portfolio_summary = self.core_system.position_manager.get_portfolio_summary()
-            
-            # 추가 포트폴리오 메트릭
-            portfolio_data = {
-                'summary': portfolio_summary,
-                'timestamp': datetime.now().isoformat(),
-                'market_status': self.market_manager.get_market_status_summary()
-            }
-            
-            return portfolio_data
-            
-        except Exception as e:
-            self.logger.error(f"포트폴리오 데이터 수집 실패: {e}")
-            return {'error': str(e)}
-    
-    async def _collect_trading_data(self) -> Dict[str, Any]:
-        """거래 데이터 수집"""
-        try:
-            # 최근 거래 실행 결과들
-            recent_results = []
-            for result in self.job_manager.execution_history[-5:]:
-                if result.status == ScheduleStatus.COMPLETED:
-                    recent_results.append({
-                        'job_id': result.job_id,
-                        'execution_time': result.execution_time,
-                        'timestamp': result.start_time.isoformat()
-                    })
-            
-            return {
-                'recent_trades': recent_results,
-                'timestamp': datetime.now().isoformat(),
-                'market_status': self.market_manager.get_market_status_summary()
-            }
-            
-        except Exception as e:
-            self.logger.error(f"거래 데이터 수집 실패: {e}")
-            return {'error': str(e)}
-    
-    async def _collect_news_data(self) -> List[Dict[str, Any]]:
-        """뉴스 데이터 수집"""
-        try:
-            # 기본 뉴스 데이터 (실제 구현에서는 뉴스 API 사용)
-            mock_news = [
-                {
-                    'title': 'Fed 금리 결정 발표',
-                    'content': '연방준비제도가 기준금리 동결을 발표했습니다.',
-                    'timestamp': datetime.now().isoformat(),
-                    'source': 'Financial News'
-                },
-                {
-                    'title': '암호화폐 시장 동향',
-                    'content': '비트코인이 새로운 저항선을 돌파했습니다.',
-                    'timestamp': datetime.now().isoformat(),
-                    'source': 'Crypto News'
-                }
-            ]
-            
-            return mock_news
-            
-        except Exception as e:
-            self.logger.error(f"뉴스 데이터 수집 실패: {e}")
-            return []
     
     def _save_ai_analysis(self, analysis: AIAnalysisResult):
         """AI 분석 결과 저장"""
@@ -1281,11 +949,14 @@ class JobExecutor:
             conn = sqlite3.connect(self.config.SCHEDULER_DB_PATH)
             cursor = conn.cursor()
             
+            # 비용 계산
+            estimated_cost = 0.002  # 평균 예상 비용 (GPT-3.5-turbo 기준)
+            
             cursor.execute('''
                 INSERT INTO ai_analyses 
                 (analysis_type, timestamp, model_used, input_data, analysis_result, 
-                 confidence_score, recommendations, risk_level, execution_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 confidence_score, recommendations, risk_level, execution_time, estimated_cost)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 analysis.analysis_type.value,
                 analysis.timestamp.isoformat(),
@@ -1295,11 +966,14 @@ class JobExecutor:
                 analysis.confidence_score,
                 json.dumps(analysis.recommendations),
                 analysis.risk_level,
-                analysis.execution_time
+                analysis.execution_time,
+                estimated_cost
             ))
             
             conn.commit()
             conn.close()
+            
+            self.logger.info(f"💾 AI 분석 결과 저장 완료 (예상 비용: ${estimated_cost:.4f})")
             
         except Exception as e:
             self.logger.error(f"AI 분석 결과 저장 실패: {e}")
@@ -1391,6 +1065,9 @@ class ScheduleCalculator:
             for time_str in time_strings:
                 time_str = time_str.strip()
                 hour, minute = map(int, time_str.split(':'))
+                
+                # 오늘 실행 시간
+                today_run = current_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
                 
                 # 오늘 시간이 지났으면 내일
                 if current_time >= today_run:
@@ -1543,7 +1220,7 @@ class ScheduleCalculator:
             return current_time + timedelta(hours=1)
 
 # ============================================================================
-# 🔔 스케줄러 알림 시스템
+# 🔔 스케줄러 알림 시스템 (최적화 버전)
 # ============================================================================
 class SchedulerNotificationManager:
     """스케줄러 전용 알림 관리"""
@@ -1557,7 +1234,7 @@ class SchedulerNotificationManager:
         if not self.config.SCHEDULE_NOTIFICATIONS:
             return
         
-        ai_status = "🤖 AI 분석 포함" if job.ai_enabled else ""
+        ai_status = "🤖 AI 기술적 분석 포함" if job.ai_enabled else ""
         message = f"🚀 작업 시작: {job.name}\n전략: {job.strategy}\n시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{ai_status}"
         await self._send_notification(message, 'info')
     
@@ -1568,7 +1245,10 @@ class SchedulerNotificationManager:
         
         ai_info = ""
         if execution_result.ai_analysis:
-            ai_info = f"\n🤖 AI 분석: 완료"
+            ai_analysis = execution_result.ai_analysis
+            confidence = ai_analysis.get('confidence_score', 0)
+            recommendation = ai_analysis.get('recommendations', ['없음'])[0]
+            ai_info = f"\n🤖 AI 분석: 확신도 {confidence:.2f}, 추천 {recommendation}"
         
         message = (
             f"✅ 작업 완료: {job.name}\n"
@@ -1590,16 +1270,16 @@ class SchedulerNotificationManager:
         await self._send_notification(message, 'warning')
     
     async def send_ai_analysis_notification(self, analysis: AIAnalysisResult):
-        """AI 분석 결과 알림"""
+        """AI 기술적 분석 결과 알림"""
         if not self.config.AI_NOTIFICATIONS:
             return
         
         message = (
-            f"🤖 AI 분석 완료\n"
-            f"타입: {analysis.analysis_type.value}\n"
+            f"🤖 AI 기술적 분석 완료\n"
+            f"확신도: {analysis.confidence_score:.2f}\n"
             f"위험도: {analysis.risk_level}\n"
-            f"신뢰도: {analysis.confidence_score:.2f}\n"
-            f"추천사항: {len(analysis.recommendations)}개"
+            f"추천: {', '.join(analysis.recommendations)}\n"
+            f"실행시간: {analysis.execution_time:.2f}초"
         )
         await self._send_notification(message, 'info')
     
@@ -1668,10 +1348,10 @@ class SchedulerNotificationManager:
             self.logger.error(f"알림 전송 오류: {e}")
 
 # ============================================================================
-# 🏆 퀸트프로젝트 통합 스케줄러 시스템
+# 🏆 퀸트프로젝트 통합 스케줄러 시스템 (최적화 버전)
 # ============================================================================
 class QuantProjectScheduler:
-    """퀸트프로젝트 통합 스케줄러 시스템"""
+    """퀸트프로젝트 통합 스케줄러 시스템 (AI 최적화)"""
     
     def __init__(self):
         # 설정 로드
@@ -1692,6 +1372,11 @@ class QuantProjectScheduler:
         self.running = False
         self.start_time = None
         self.scheduler_task = None
+        
+        # AI 비용 추적
+        self.daily_ai_cost = 0.0
+        self.monthly_ai_cost = 0.0
+        self.ai_call_count = 0
     
     def _setup_logging(self):
         """로깅 설정"""
@@ -1715,7 +1400,7 @@ class QuantProjectScheduler:
         scheduler_logger.addHandler(file_handler)
         
         # 다른 로거들도 설정
-        for logger_name in ['JobManager', 'JobExecutor', 'MarketTimeManager', 'ScheduleCalculator', 'OpenAIManager']:
+        for logger_name in ['JobManager', 'JobExecutor', 'MarketTimeManager', 'ScheduleCalculator', 'OpenAITechnicalAnalyzer']:
             logger = logging.getLogger(logger_name)
             logger.setLevel(getattr(logging, self.config.LOG_LEVEL))
             logger.addHandler(console_handler)
@@ -1724,7 +1409,7 @@ class QuantProjectScheduler:
     async def start_scheduler(self):
         """스케줄러 시작"""
         try:
-            self.logger.info("🏆 퀸트프로젝트 AI 스케줄러 시작!")
+            self.logger.info("🏆 퀸트프로젝트 AI 최적화 스케줄러 시작!")
             self.start_time = datetime.now()
             self.running = True
             
@@ -1737,10 +1422,12 @@ class QuantProjectScheduler:
             ai_enabled_count = sum(1 for job in jobs_status if job.get('ai_enabled', False))
             
             await self.notification_manager._send_notification(
-                f"🚀 AI 스케줄러 시작\n"
+                f"🚀 AI 최적화 스케줄러 시작\n"
                 f"총 작업: {len(jobs_status)}개\n"
                 f"활성화: {sum(1 for job in jobs_status if job['enabled'])}개\n"
                 f"🤖 AI 활성화: {ai_enabled_count}개\n"
+                f"💰 AI 비용 목표: 월 $5 이하\n"
+                f"📊 신뢰도 {self.config.AI_CONFIDENCE_MIN}-{self.config.AI_CONFIDENCE_MAX} 구간만 AI 분석\n"
                 f"시장 상태: {market_status}",
                 'info'
             )
@@ -1753,7 +1440,7 @@ class QuantProjectScheduler:
                 self.scheduler_task,
                 asyncio.create_task(self._monitoring_loop()),
                 asyncio.create_task(self._cleanup_loop()),
-                asyncio.create_task(self._ai_monitoring_loop())
+                asyncio.create_task(self._ai_cost_monitoring_loop())
             ]
             
             # 모든 태스크 실행
@@ -1825,8 +1512,14 @@ class QuantProjectScheduler:
                             try:
                                 analysis_obj = AIAnalysisResult(**execution_result.ai_analysis)
                                 await self.notification_manager.send_ai_analysis_notification(analysis_obj)
-                            except:
-                                pass
+                                
+                                # AI 비용 추적
+                                self.ai_call_count += 1
+                                self.daily_ai_cost += 0.002  # 평균 비용
+                                self.monthly_ai_cost += 0.002
+                                
+                            except Exception as ai_error:
+                                self.logger.warning(f"AI 알림 처리 실패: {ai_error}")
                         
                         break
                     elif execution_result.status == ScheduleStatus.SKIPPED:
@@ -1879,50 +1572,46 @@ class QuantProjectScheduler:
                 self.logger.error(f"모니터링 루프 오류: {e}")
                 await asyncio.sleep(300)
     
-    async def _ai_monitoring_loop(self):
-        """AI 모니터링 루프"""
+    async def _ai_cost_monitoring_loop(self):
+        """AI 비용 모니터링 루프"""
         while self.running:
             try:
-                # AI 관련 상태 모니터링
-                if self.config.AI_ENABLED and self.job_executor.ai_manager:
-                    # AI 시스템 상태 체크
-                    await self._check_ai_system_health()
+                # 매일 자정에 일일 비용 리셋
+                now = datetime.now()
+                if now.hour == 0 and now.minute < 5:
+                    if self.daily_ai_cost > 0:
+                        self.logger.info(f"💰 일일 AI 비용: ${self.daily_ai_cost:.4f}")
+                    self.daily_ai_cost = 0.0
+                
+                # 매월 1일에 월간 비용 리셋 및 알림
+                if now.day == 1 and now.hour == 0 and now.minute < 5:
+                    if self.monthly_ai_cost > 0:
+                        await self.notification_manager._send_notification(
+                            f"💰 월간 AI 비용 리포트\n"
+                            f"총 비용: ${self.monthly_ai_cost:.4f}\n"
+                            f"호출 횟수: {self.ai_call_count}회\n"
+                            f"목표 대비: {(self.monthly_ai_cost / 5.0 * 100):.1f}%",
+                            'info'
+                        )
+                    self.monthly_ai_cost = 0.0
+                    self.ai_call_count = 0
+                
+                # 비용 한계 체크 (월 $5)
+                if self.monthly_ai_cost > 5.0:
+                    self.logger.warning("⚠️ 월간 AI 비용 한계 초과, AI 기능 일시 비활성화")
+                    await self.notification_manager._send_notification(
+                        "⚠️ 월간 AI 비용 한계($5) 초과\nAI 기능을 일시 비활성화합니다.",
+                        'warning'
+                    )
+                    # AI 기능 일시 비활성화
+                    for job in self.job_manager.jobs.values():
+                        job.ai_enabled = False
                 
                 await asyncio.sleep(1800)  # 30분마다
                 
             except Exception as e:
-                self.logger.error(f"AI 모니터링 루프 오류: {e}")
+                self.logger.error(f"AI 비용 모니터링 루프 오류: {e}")
                 await asyncio.sleep(1800)
-    
-    async def _check_ai_system_health(self):
-        """AI 시스템 상태 체크"""
-        try:
-            if not self.job_executor.ai_manager.client:
-                self.logger.warning("⚠️ AI 클라이언트가 초기화되지 않음")
-                return
-            
-            # 간단한 AI 상태 테스트
-            test_data = {"test": "system_health_check"}
-            start_time = time.time()
-            
-            try:
-                response = await self.job_executor.ai_manager.client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": "Hello"}],
-                    max_tokens=5
-                )
-                response_time = time.time() - start_time
-                
-                if response_time < 10:  # 10초 이내 응답
-                    self.logger.debug(f"✅ AI 시스템 정상 (응답시간: {response_time:.1f}초)")
-                else:
-                    self.logger.warning(f"⚠️ AI 시스템 응답 지연 ({response_time:.1f}초)")
-                    
-            except Exception as e:
-                self.logger.error(f"❌ AI 시스템 상태 체크 실패: {e}")
-                
-        except Exception as e:
-            self.logger.error(f"AI 시스템 상태 체크 오류: {e}")
     
     async def _cleanup_loop(self):
         """정리 루프"""
@@ -2019,7 +1708,7 @@ class QuantProjectScheduler:
     async def shutdown(self):
         """스케줄러 종료"""
         try:
-            self.logger.info("🛑 AI 스케줄러 종료 시작")
+            self.logger.info("🛑 AI 최적화 스케줄러 종료 시작")
             
             # 실행 중인 모든 작업 종료 대기
             if self.job_manager.running_jobs:
@@ -2044,16 +1733,17 @@ class QuantProjectScheduler:
             if self.scheduler_task and not self.scheduler_task.done():
                 self.scheduler_task.cancel()
             
-            # 종료 알림
+            # 종료 알림 (AI 비용 포함)
             uptime = datetime.now() - self.start_time if self.start_time else timedelta(0)
             await self.notification_manager._send_notification(
-                f"🛑 AI 스케줄러 종료\n"
+                f"🛑 AI 최적화 스케줄러 종료\n"
                 f"가동시간: {uptime}\n"
-                f"🤖 AI 기능 포함",
+                f"💰 일일 AI 비용: ${self.daily_ai_cost:.4f}\n"
+                f"🤖 AI 호출 횟수: {self.ai_call_count}회",
                 'info'
             )
             
-            self.logger.info("✅ AI 스케줄러 종료 완료")
+            self.logger.info("✅ AI 최적화 스케줄러 종료 완료")
             
         except Exception as e:
             self.logger.error(f"스케줄러 종료 실패: {e}")
@@ -2078,6 +1768,10 @@ class QuantProjectScheduler:
                 'running_jobs': len(self.job_manager.running_jobs),
                 'ai_enabled_jobs': ai_enabled_jobs,
                 'ai_available': OPENAI_AVAILABLE and self.config.AI_ENABLED,
+                'ai_cost_daily': self.daily_ai_cost,
+                'ai_cost_monthly': self.monthly_ai_cost,
+                'ai_call_count': self.ai_call_count,
+                'ai_confidence_range': f"{self.config.AI_CONFIDENCE_MIN}-{self.config.AI_CONFIDENCE_MAX}",
                 'market_status': market_status,
                 'jobs': jobs_status
             }
@@ -2087,7 +1781,7 @@ class QuantProjectScheduler:
             return {'error': str(e)}
     
     def get_ai_analysis_summary(self) -> Dict[str, Any]:
-        """AI 분석 요약 조회"""
+        """AI 분석 요약 조회 (최적화 버전)"""
         try:
             conn = sqlite3.connect(self.config.SCHEDULER_DB_PATH)
             cursor = conn.cursor()
@@ -2096,38 +1790,31 @@ class QuantProjectScheduler:
             since_time = (datetime.now() - timedelta(hours=24)).isoformat()
             
             cursor.execute('''
-                SELECT analysis_type, COUNT(*), AVG(confidence_score), AVG(execution_time)
+                SELECT COUNT(*), AVG(confidence_score), AVG(execution_time), SUM(estimated_cost)
                 FROM ai_analyses 
                 WHERE timestamp > ?
-                GROUP BY analysis_type
             ''', (since_time,))
             
-            analysis_stats = {}
-            for row in cursor.fetchall():
-                analysis_type, count, avg_confidence, avg_time = row
-                analysis_stats[analysis_type] = {
-                    'count': count,
-                    'avg_confidence': round(avg_confidence, 2) if avg_confidence else 0,
-                    'avg_execution_time': round(avg_time, 2) if avg_time else 0
-                }
+            row = cursor.fetchone()
+            count, avg_confidence, avg_time, total_cost = row if row else (0, 0, 0, 0)
             
             # 최근 분석 결과
             cursor.execute('''
-                SELECT analysis_type, timestamp, confidence_score, risk_level
+                SELECT timestamp, confidence_score, risk_level, recommendations
                 FROM ai_analyses 
                 WHERE timestamp > ?
                 ORDER BY timestamp DESC
-                LIMIT 10
+                LIMIT 5
             ''', (since_time,))
             
             recent_analyses = []
             for row in cursor.fetchall():
-                analysis_type, timestamp, confidence, risk_level = row
+                timestamp, confidence, risk_level, recommendations = row
                 recent_analyses.append({
-                    'type': analysis_type,
                     'timestamp': timestamp,
                     'confidence': confidence,
-                    'risk_level': risk_level
+                    'risk_level': risk_level,
+                    'recommendations': json.loads(recommendations) if recommendations else []
                 })
             
             conn.close()
@@ -2135,9 +1822,17 @@ class QuantProjectScheduler:
             return {
                 'ai_enabled': self.config.AI_ENABLED,
                 'ai_available': OPENAI_AVAILABLE,
-                'analysis_stats_24h': analysis_stats,
-                'recent_analyses': recent_analyses,
-                'total_analyses_24h': sum(stats['count'] for stats in analysis_stats.values())
+                'confidence_range': f"{self.config.AI_CONFIDENCE_MIN}-{self.config.AI_CONFIDENCE_MAX}",
+                'model_used': self.config.AI_MODEL,
+                'analyses_24h': count or 0,
+                'avg_confidence_24h': round(avg_confidence, 2) if avg_confidence else 0,
+                'avg_execution_time_24h': round(avg_time, 2) if avg_time else 0,
+                'total_cost_24h': round(total_cost, 4) if total_cost else 0,
+                'daily_cost': round(self.daily_ai_cost, 4),
+                'monthly_cost': round(self.monthly_ai_cost, 4),
+                'cost_limit': 5.0,
+                'cost_percentage': round((self.monthly_ai_cost / 5.0 * 100), 1),
+                'recent_analyses': recent_analyses
             }
             
         except Exception as e:
@@ -2166,7 +1861,7 @@ def show_current_schedule():
         market_manager = MarketTimeManager(config)
         calculator = ScheduleCalculator(market_manager)
         
-        print("📋 현재 등록된 스케줄:")
+        print("📋 현재 등록된 스케줄 (AI 최적화 버전):")
         print("=" * 80)
         
         for job in job_manager.jobs.values():
@@ -2181,193 +1876,40 @@ def show_current_schedule():
                 print(f"   🌍 시장: {job.market_type.value}")
                 print(f"   📊 실행 횟수: {job.run_count} (성공: {job.success_count})")
                 if job.ai_enabled:
-                    print(f"   🤖 AI 분석: 활성화")
+                    print(f"   🤖 AI 기술적 분석: 신뢰도 {config.AI_CONFIDENCE_MIN}-{config.AI_CONFIDENCE_MAX} 구간만")
                 print()
         
     except Exception as e:
         print(f"❌ 스케줄 조회 실패: {e}")
 
 def show_ai_status():
-    """AI 상태 출력"""
+    """AI 상태 출력 (최적화 버전)"""
     try:
         config = SchedulerConfig()
         
-        print("🤖 AI 시스템 상태:")
-        print("=" * 50)
+        print("🤖 AI 시스템 상태 (최적화 버전):")
+        print("=" * 60)
         print(f"AI 활성화: {'✅' if config.AI_ENABLED else '❌'}")
         print(f"OpenAI 라이브러리: {'✅' if OPENAI_AVAILABLE else '❌'}")
         print(f"API 키 설정: {'✅' if os.getenv('OPENAI_API_KEY') else '❌'}")
-        print(f"사용 모델: {config.AI_MODEL}")
-        print(f"분석 간격: {config.AI_ANALYSIS_INTERVAL}시간")
-        print(f"최대 토큰: {config.AI_MAX_TOKENS}")
+        print(f"사용 모델: {config.AI_MODEL} (비용 최적화)")
+        print(f"최대 토큰: {config.AI_MAX_TOKENS} (비용 절약)")
+        print(f"분석 조건: 신뢰도 {config.AI_CONFIDENCE_MIN}-{config.AI_CONFIDENCE_MAX} 구간만")
+        print(f"월 비용 목표: $5 이하")
         print(f"AI 알림: {'✅' if config.AI_NOTIFICATIONS else '❌'}")
         
         if OPENAI_AVAILABLE and os.getenv('OPENAI_API_KEY'):
             print("\n🧠 지원되는 AI 분석:")
-            print("   • 시장 센티먼트 분석")
-            print("   • 포트폴리오 최적화")
-            print("   • 위험도 평가")
-            print("   • 트레이딩 전략 생성")
-            print("   • 뉴스 영향도 분석")
+            print("   • 기술적 분석 (매매신호 확신도 체크)")
+            print("   • 신뢰도 애매한 구간(0.4-0.7)에서만 호출")
+            print("   • 비용 최적화 프롬프트")
+            print("   • 월간 비용 추적 및 제한")
         
-    except Exception as e:
-        print(f"❌ AI 상태 조회 실패: {e}")
+        print("\n🚫 제거된 기능:")
+        print("   • 시장 센티먼트 분석")
+        print("   • 뉴스 영향도 분석")
+        print("   • 포트폴리오 최적화")
+        print("   • 정기적 AI 분석")
 
-def show_help():
-    """도움말 출력"""
-    help_text = """
-🏆 퀸트프로젝트 AI 스케줄러 시스템 v1.0.0
-
-📋 사용법:
-  python scheduler.py                    # AI 스케줄러 시작
-  python scheduler.py --show-schedule    # 현재 스케줄 보기
-  python scheduler.py --show-ai          # AI 상태 보기
-  python scheduler.py --help             # 도움말
-
-🔧 주요 기능:
-  • 4대 전략 자동 스케줄링
-  • 시장 시간 자동 체크
-  • 실패 시 자동 재시도
-  • 텔레그램 실시간 알림
-  • 실행 기록 추적
-  • 🤖 OpenAI 기반 AI 분석
-  • 🧠 자동 시장 센티먼트 분석
-  • 📈 포트폴리오 AI 최적화
-  • ⚠️ AI 위험도 평가
-  • 📰 뉴스 영향도 분석
-
-📊 스케줄:
-  • 미국 전략: 화목 23:30 (서머타임 적용) + AI 분석
-  • 일본 전략: 화목 08:45 + AI 분석
-  • 인도 전략: 수요일 12:45 + AI 분석
-  • 암호화폐: 월금 09:00 + AI 분석
-  • AI 시장 분석: 6시간마다
-  • AI 포트폴리오 최적화: 매일 자정
-  • AI 위험 평가: 매일 오전 6시, 오후 6시
-  • AI 뉴스 분석: 3시간마다
-
-🤖 AI 설정:
-  환경변수에 다음을 설정하세요:
-  OPENAI_API_KEY=your_api_key
-  AI_ENABLED=true
-  AI_MODEL=gpt-4
-  AI_NOTIFICATIONS=true
-
-🔗 문의: 퀸트마스터팀
-"""
-    print(help_text)
-
-# ============================================================================
-# 🏁 메인 실행부
-# ============================================================================
-
-async def main():
-    """메인 실행 함수"""
-    import signal
-    
-    # 신호 핸들러 설정
-    def signal_handler(signum, frame):
-        print("\n🛑 종료 신호 수신, AI 스케줄러 종료 중...")
-        asyncio.create_task(scheduler.shutdown())
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    # 스케줄러 생성
-    scheduler = QuantProjectScheduler()
-    
-    try:
-        print("🏆" + "="*70)
-        print("🏆 퀸트프로젝트 AI 통합 스케줄러 시스템 v1.0.0")
-        print("🏆" + "="*70)
-        print("⏰ 시간 기반 자동 거래 스케줄링")
-        print("📊 4대 전략 통합 관리")
-        print("🌐 시장 시간 체크")
-        print("🔄 자동 재시도")
-        print("📋 실행 기록 추적")
-        print("🔔 실시간 알림")
-        print("📈 성과 모니터링")
-        print("🤖 OpenAI 기반 AI 분석")
-        print("🧠 자동 시장 센티먼트 분석")
-        print("📈 포트폴리오 AI 최적화")
-        print("⚠️ AI 위험도 평가")
-        print("📰 뉴스 영향도 분석")
-        print("🏆" + "="*70)
-        
-        # AI 상태 출력
-        if OPENAI_AVAILABLE and scheduler.config.AI_ENABLED:
-            print("\n🤖 AI 시스템:")
-            print(f"  OpenAI 모델: {scheduler.config.AI_MODEL}")
-            print(f"  API 키: {'✅ 설정됨' if os.getenv('OPENAI_API_KEY') else '❌ 미설정'}")
-            print(f"  분석 간격: {scheduler.config.AI_ANALYSIS_INTERVAL}시간")
-        else:
-            print("\n⚠️ AI 시스템: 비활성화")
-        
-        # 현재 시장 상태 출력
-        market_status = scheduler.market_manager.get_market_status_summary()
-        print("\n📊 현재 시장 상태:")
-        for market, is_open in market_status.items():
-            status = "🟢 개장" if is_open else "🔴 폐장"
-            print(f"  {market}: {status}")
-        
-        # 등록된 작업 출력
-        jobs_status = scheduler.job_manager.get_all_jobs_status()
-        ai_enabled_jobs = sum(1 for job in jobs_status if job.get('ai_enabled', False))
-        print(f"\n📋 등록된 작업: {len(jobs_status)}개 (🤖 AI 활성화: {ai_enabled_jobs}개)")
-        for job in jobs_status:
-            status_icon = "✅" if job['enabled'] else "⏸️"
-            ai_icon = "🤖" if job.get('ai_enabled', False) else "⚙️"
-            next_run = job['next_run'].strftime('%m-%d %H:%M') if job['next_run'] else "미정"
-            print(f"  {status_icon} {ai_icon} {job['name']}: {next_run}")
-        
-        print("\n🚀 AI 스케줄러 시작...\n")
-        
-        # 스케줄러 시작
-        await scheduler.start_scheduler()
-        
-    except KeyboardInterrupt:
-        print("\n👋 사용자 중단")
-        await scheduler.shutdown()
-    except Exception as e:
-        print(f"\n❌ AI 스케줄러 오류: {e}")
-        await scheduler.shutdown()
-
-if __name__ == "__main__":
-    # 명령행 인자 처리
-    if len(sys.argv) > 1:
-        arg = sys.argv[1]
-        
-        if arg == "--show-schedule":
-            show_current_schedule()
-        elif arg == "--show-ai":
-            show_ai_status()
-        elif arg == "--help" or arg == "-h":
-            show_help()
-        else:
-            print(f"❌ 알 수 없는 옵션: {arg}")
-            print("사용법: python scheduler.py --help")
-    else:
-        # 기본 실행: AI 스케줄러 시작
-        try:
-            asyncio.run(main())
-        except KeyboardInterrupt:
-            print("\n👋 퀸트프로젝트 AI 스케줄러 종료")
-            sys.exit(0)
-        except Exception as e:
-            print(f"\n💥 예상치 못한 오류: {e}")
-            sys.exit(1) 실행 시간
-                today_run = current_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                
-                # 오늘 실행 시간
-                today_run = current_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                
-                # 오늘 시간이 지났으면 내일
-                if current_time >= today_run:
-                    next_run = today_run + timedelta(days=1)
-                else:
-                    next_run = today_run
-                
-                next_runs.append(next_run)
-            
-            # 가장 빠른 시간 반환
-            return min(next_runs)
+   except Exception as e:
+       print(f"❌ AI 상태 조회 실패: {e}") 
