@@ -4,7 +4,6 @@
 🏆 퀸트프로젝트 통합 코어 시스템 (core.py) - 최적화 버전
 =============================================================
 🇺🇸 미국주식 + 🇯🇵 일본주식 + 🇮🇳 인도주식 + 💰 암호화폐 (4대 전략 통합)
-
 ✨ 핵심 기능:
 - 4대 전략 통합 관리 시스템
 - IBKR 자동 환전 기능 (달러 ↔ 엔/루피)
@@ -414,8 +413,7 @@ class AITechnicalConfidenceChecker:
         self.current_month = datetime.now().month
         
         if OPENAI_AVAILABLE and config.OPENAI_API_KEY:
-            openai.api_key = config.OPENAI_API_KEY
-            self.client = openai
+            self.client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
         
         self.logger = logging.getLogger('AIConfidenceChecker')
         
