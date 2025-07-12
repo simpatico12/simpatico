@@ -1910,6 +1910,5 @@ def show_ai_status():
         print("   • 뉴스 영향도 분석")
         print("   • 포트폴리오 최적화")
         print("   • 정기적 AI 분석")
-
-   except Exception as e:
-       print(f"❌ AI 상태 조회 실패: {e}") 
+    except Exception as e:
+        print(f"❌ AI 상태 조회 실패: {e}") 
