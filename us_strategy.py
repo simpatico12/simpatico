@@ -521,7 +521,7 @@ class Position:
             return self.days_held() >= 14
         elif self.mode == 'weekly':
             # 다음 거래일 전까지 또는 목표 수익 달성
-            return False  # 신호 기반으로만 청산
+            return self.days_held() >= 7  # 신호 기반으로만 청산
         return False
         
 # ========================================================================================
@@ -709,7 +709,7 @@ class AdvancedStrategyAnalyzer:
         elif vix >= 30:
             total_score *= 0.9  # 높은 변동성에서 약세
         
-        scores['total'] = total_score
+        scores['total'] = original_score
         scores['vix_adjustment'] = total_score
         
         return total_score, scores
@@ -1500,9 +1500,9 @@ class USStrategy:
             return 0.0
 
     async def _report_portfolio_status(self):
-            """포트폴리오 상태 리포트"""
-            try:
-                if not self.positions:
+        """포트폴리오 상태 리포트"""
+        try:
+            if not self.positions:
                 logging.info("📊 현재 보유 포지션 없음")
                 return
             
@@ -1829,60 +1829,60 @@ class USStrategy:
             return False
 
     async def _save_trade_record(self, record: Dict):
-            """거래 기록 저장"""
-            try:
-                # SQLite DB에 거래 기록 저장
-                import sqlite3
+        """거래 기록 저장"""
+        try:
+            # 비동기 SQLite DB에 거래 기록 저장
+            import aiosqlite
+        
+            db_path = "auto_trading_records.db"
+        
+            async with aiosqlite.connect(db_path) as conn:
+                cursor = await conn.cursor()
             
-                db_path = "auto_trading_records.db"
+                # 테이블 생성 (없으면)
+                await cursor.execute('''
+                CREATE TABLE IF NOT EXISTS trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT,
+                    action TEXT,
+                    quantity INTEGER,
+                    price REAL,
+                    profit_pct REAL,
+                    profit_amount REAL,
+                    confidence REAL,
+                    reasoning TEXT,
+                    reason TEXT,
+                    day_type TEXT,
+                    hold_days INTEGER,
+                    timestamp TEXT
+                )
+            ''')
             
-                with sqlite3.connect(db_path) as conn:
-                    cursor = conn.cursor()
-                
-                    # 테이블 생성 (없으면)
-                    cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS trades (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        symbol TEXT,
-                        action TEXT,
-                        quantity INTEGER,
-                        price REAL,
-                        profit_pct REAL,
-                        profit_amount REAL,
-                        confidence REAL,
-                        reasoning TEXT,
-                        reason TEXT,
-                        day_type TEXT,
-                        hold_days INTEGER,
-                        timestamp TEXT
-                    )
-                ''')
-                
-                # 거래 기록 삽입
-                cursor.execute('''
-                    INSERT INTO trades (symbol, action, quantity, price, profit_pct, 
-                                      profit_amount, confidence, reasoning, reason, 
-                                      day_type, hold_days, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    record.get('symbol', ''),
-                    record.get('action', ''),
-                    record.get('quantity', 0),
-                    record.get('price', 0),
-                    record.get('profit_pct', 0),
-                    record.get('profit_amount', 0),
-                    record.get('confidence', 0),
-                    record.get('reasoning', ''),
-                    record.get('reason', ''),
-                    record.get('day_type', ''),
-                    record.get('hold_days', 0),
-                    record['timestamp'].isoformat()
-                ))
-                
-                conn.commit()
-                
-        except Exception as e:
-            logging.error(f"거래 기록 저장 실패: {e}")
+               # 거래 기록 삽입
+               await cursor.execute('''
+                   INSERT INTO trades (symbol, action, quantity, price, profit_pct, 
+                                     profit_amount, confidence, reasoning, reason, 
+                                     day_type, hold_days, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ''', (
+                   record.get('symbol', ''),
+                   record.get('action', ''),
+                   record.get('quantity', 0),
+                   record.get('price', 0),
+                   record.get('profit_pct', 0),
+                   record.get('profit_amount', 0),
+                   record.get('confidence', 0),
+                   record.get('reasoning', ''),
+                   record.get('reason', ''),
+                   record.get('day_type', ''),
+                   record.get('hold_days', 0),
+                   record['timestamp'].isoformat()
+             ))
+             
+             await conn.commit()
+            
+    except Exception as e:
+        logging.error(f"거래 기록 저장 실패: {e}")
     
     async def _send_trading_report(self):
         """거래 완료 리포트 및 알림"""
@@ -2684,6 +2684,9 @@ async def start_auto_trading_daemon():
     
     strategy = USStrategy()
     
+    max_errors = 10
+    error_count = 0
+    
     while True:
         try:
             current_time = datetime.now()
@@ -2702,6 +2705,9 @@ async def start_auto_trading_daemon():
                     print(f"🎯 {day_type} 자동매매 실행...")
                     await strategy.run_full_auto_trading()
             
+            # 성공시 에러 카운트 리셋 ← 여기도 추가
+            error_count = 0
+            
             # 30분마다 체크
             await asyncio.sleep(1800)
             
@@ -2709,7 +2715,14 @@ async def start_auto_trading_daemon():
             print("👋 자동매매 데몬 종료")
             break
         except Exception as e:
-            print(f"❌ 자동매매 데몬 오류: {e}")
+            # 여기를 수정! ↓
+            error_count += 1
+            print(f"❌ 자동매매 데몬 오류 ({error_count}/{max_errors}): {e}")
+            
+            if error_count >= max_errors:
+                print("💀 최대 에러 횟수 도달, 시스템 종료")
+                break
+                
             await asyncio.sleep(300)  # 5분 후 재시도
 
 async def test_auto_trading_system():
