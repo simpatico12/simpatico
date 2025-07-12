@@ -623,7 +623,7 @@ class LegendaryIndiaStrategy:
                         stock_data['ai_enhanced_score'] = base_score * 0.8
                     else:
                         stock_data['ai_enhanced_score'] = base_score
-                ai_enhanced_stocks.append(stock_data)
+                    ai_enhanced_stocks.append(stock_data)
                     
                 except Exception as e:
                     print(f"❌ {ticker} AI 분석 오류: {e}")
