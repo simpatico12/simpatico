@@ -1499,17 +1499,17 @@ class USStrategy:
         except:
             return 0.0
 
-async def _report_portfolio_status(self):
-        """포트폴리오 상태 리포트"""
-        try:
-            if not self.positions:
+    async def _report_portfolio_status(self):
+            """포트폴리오 상태 리포트"""
+            try:
+                if not self.positions:
                 logging.info("📊 현재 보유 포지션 없음")
                 return
             
-            total_value = 0
-            total_profit = 0
+                total_value = 0
+                total_profit = 0
             
-            logging.info(f"📊 포트폴리오 현황 ({len(self.positions)}개 포지션):")
+                logging.info(f"📊 포트폴리오 현황 ({len(self.positions)}개 포지션):")
             
             for symbol, position in self.positions.items():
                 current_price = await self._get_current_price(symbol)
@@ -1640,7 +1640,7 @@ async def _report_portfolio_status(self):
         except Exception as e:
             logging.error(f"포지션 관리 실패: {e}")
 
-async def _check_auto_exit_conditions(self, position: Position, current_price: float, 
+    async def _check_auto_exit_conditions(self, position: Position, current_price: float, 
                                         profit_pct: float, days_held: int) -> Tuple[bool, str]:
         """자동 청산 조건 확인"""
         try:
@@ -1828,19 +1828,19 @@ async def _check_auto_exit_conditions(self, position: Position, current_price: f
             logging.error(f"{symbol} 자동진입 실행 실패: {e}")
             return False
 
-async def _save_trade_record(self, record: Dict):
-        """거래 기록 저장"""
-        try:
-            # SQLite DB에 거래 기록 저장
-            import sqlite3
+    async def _save_trade_record(self, record: Dict):
+            """거래 기록 저장"""
+            try:
+                # SQLite DB에 거래 기록 저장
+                import sqlite3
             
-            db_path = "auto_trading_records.db"
+                db_path = "auto_trading_records.db"
             
-            with sqlite3.connect(db_path) as conn:
-                cursor = conn.cursor()
+                with sqlite3.connect(db_path) as conn:
+                    cursor = conn.cursor()
                 
-                # 테이블 생성 (없으면)
-                cursor.execute('''
+                    # 테이블 생성 (없으면)
+                    cursor.execute('''
                     CREATE TABLE IF NOT EXISTS trades (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         symbol TEXT,
@@ -2031,9 +2031,9 @@ async def _save_trade_record(self, record: Dict):
         except Exception as e:
             logging.error(f"오류 알림 실패: {e}")
 
-async def auto_select_stocks(self) -> List[str]:
-        """고급 알고리즘 기반 자동 종목 선별"""
-        if not self.enabled:
+    async def auto_select_stocks(self) -> List[str]:
+            """고급 알고리즘 기반 자동 종목 선별"""
+            if not self.enabled:
             return []
         
         try:
@@ -2248,10 +2248,10 @@ async def auto_select_stocks(self) -> List[str]:
         except:
             return True
 
-def _calculate_risk_score(self, data: Dict, vix: float) -> float:
-        """위험 점수 계산 (0-1, 높을수록 위험)"""
-        try:
-            risk_score = 0.0
+    def _calculate_risk_score(self, data: Dict, vix: float) -> float:
+            """위험 점수 계산 (0-1, 높을수록 위험)"""
+            try:
+                risk_score = 0.0
             
             # 변동성 위험
             volatility = data.get('volatility', 25)
