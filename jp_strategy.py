@@ -126,7 +126,7 @@ BB {technical_data.get('bb_signal', 'N/A')}, 현재 확신도 {confidence:.1%}
 
 매수 확신도를 -0.2 ~ +0.2 범위로 조정하세요. 숫자만 답하세요."""
             
-            response = openai.ChatCompletion.create(
+            response = openai.chat.completions.create(
                 model=Config.OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": "기술적 분석 확신도 조정 전문가입니다."},
