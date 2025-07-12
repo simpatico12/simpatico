@@ -1352,7 +1352,7 @@ async def _execute_swing_entries(self):
     async def _execute_weekly_entries(self):
         """주간 진입 실행 (화/목 거래)"""
         try:
-            is_trading, day_type = await self.is_trading_day()
+            is_trading, day_type = self.is_trading_day()
             
             if not is_trading:
                 logging.info("📅 오늘은 거래일이 아닙니다")
