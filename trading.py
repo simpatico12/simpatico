@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Union
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
+from collections import OrderedDict
 from email.mime.text import MimeText
 from email.mime.multipart import MimeMultipart
 import sqlite3
@@ -186,7 +187,7 @@ class OptimizedAIEngine:
             self.logger.warning("OpenAI API 키가 설정되지 않았습니다")
         
         # 분석 캐시 (API 호출 절약)
-        self.analysis_cache = {}
+        self.analysis_cache = OrderedDict()
         self.cache_duration = timedelta(hours=2)  # 2시간 캐시
     
     def _should_use_ai(self, technical_confidence: float) -> bool:
@@ -244,6 +245,9 @@ class OptimizedAIEngine:
             )
             
             # 캐시 저장
+            # 캐시 크기 제한 (메모리 절약)
+            if len(self.analysis_cache) >= 50:
+                self.analysis_cache.popitem(last=False)
             self.analysis_cache[cache_key] = (datetime.now(), analysis_result)
             
             self.logger.info(f"AI 호출 {self.config.AI_CALL_COUNTER}/{self.config.AI_DAILY_CALL_LIMIT}: {symbol}")
@@ -343,7 +347,7 @@ class OptimizedAIEngine:
         """OpenAI API 호출 (최적화 버전)"""
         try:
             response = await asyncio.to_thread(
-                openai.ChatCompletion.create,
+                openai.chat.completions.create,
                 model=self.config.OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
