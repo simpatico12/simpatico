@@ -197,7 +197,7 @@ class TechnicalAnalysisAI:
             raise ImportError("OpenAI 패키지가 설치되지 않았습니다.")
         
         self.config = config
-        openai.api_key = config.api_key
+        self.client = openai.OpenAI(api_key=config.api_key)
         self.logger = logging.getLogger(__name__)
     
     async def analyze_technical(self, symbol: str, market_data: Dict[str, Any]) -> TechnicalAnalysisResult:
@@ -386,7 +386,7 @@ class TechnicalAnalysisAI:
             
             response = await asyncio.wait_for(
                 asyncio.to_thread(
-                    openai.ChatCompletion.create,
+                    self.client.chat.completions.create,
                     model=self.config.model,
                     messages=messages,
                     temperature=self.config.temperature,
@@ -395,7 +395,7 @@ class TechnicalAnalysisAI:
                 timeout=self.config.timeout
             )
             
-            return response.choices[0].message.content.strip()
+            return response.choices[0].message.content
         
         except Exception as e:
             self.logger.error(f"OpenAI API 호출 실패: {e}")
