@@ -1222,7 +1222,7 @@ class SecurityUtils:
         
         # 기본적인 패턴 검사
         import re
-        pattern = r'^[A-Za-z0-9\-_]+
+        pattern = r'^[A-Za-z0-9\-_]+$'
         return bool(re.match(pattern, api_key))
 
 # ============================================================================
