@@ -36,6 +36,7 @@ from email.mime.multipart import MimeMultipart
 from email.mime.image import MimeImage
 from dotenv import load_dotenv
 import aiohttp
+import openai
 import sqlite3
 import requests
 from collections import defaultdict, deque
@@ -572,20 +573,15 @@ emergency, warning, info, success, debug 중 하나를 선택하고 이유를 �
                 "temperature": self.config.OPENAI_TEMPERATURE
             }
             
-            async with self.session.post(
-                'https://api.openai.com/v1/chat/completions',
-                headers=self.headers,
-                json=payload,
-                timeout=30
-            ) as response:
-                
-                if response.status == 200:
-                    result = await response.json()
-                    content = result['choices'][0]['message']['content'].strip()
-                    return content
-                else:
-                    self.logger.error(f"OpenAI API 오류: {response.status}")
-                    return None
+            client = openai.OpenAI(api_key=self.config.OPENAI_API_KEY)
+response = client.chat.completions.create(
+    model=payload["model"],
+    messages=payload["messages"],
+    max_tokens=payload["max_tokens"],
+    temperature=payload["temperature"]
+)
+content = response.choices[0].message.content.strip()
+return content
                     
         except Exception as e:
             self.logger.error(f"OpenAI API 호출 실패: {e}")
