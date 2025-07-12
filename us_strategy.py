@@ -1309,7 +1309,7 @@ class USStrategy:
         except Exception as e:
             logging.error(f"포지션 관리 실패: {e}")
 
-async def _execute_swing_entries(self):
+    async def _execute_swing_entries(self):
         """스윙 진입 실행 (2주 보유)"""
         try:
             # 현재 포지션 수 확인
